@@ -1,0 +1,7 @@
+fastapi
+starlette>=0.27.0
+uvicorn
+jinja2
+pydantic
+python-multipart
+python-dotenv
