@@ -5,3 +5,5 @@ jinja2
 pydantic
 python-multipart
 python-dotenv
+qrcodegen
+Pillow
