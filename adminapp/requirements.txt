@@ -3,3 +3,8 @@ uvicorn
 jinja2
 python-multipart
 python-dotenv
+asyncpg
+aiofiles
+requests
+pandas
+httpx

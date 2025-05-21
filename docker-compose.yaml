@@ -1,6 +1,24 @@
 # version: "3.9"
 
 services:
+  postgres-db:
+    image: postgres:16
+    container_name: fake-login-postgres
+    environment:
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: mypassword
+      POSTGRES_DB: mydatabase
+    ports:
+      - "15432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    # 監控DB是否建好
+    healthcheck:   
+      test: ["CMD", "pg_isready", "-U", "myuser", "-d", "mydatabase"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   login-app:
     build:
       context: ./loginapp
@@ -11,6 +29,11 @@ services:
       - LOG_FILE=${LOG_PATH}
     volumes:
       - ./data:/data
+    # 監控DB是否建好，建好再連線
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+
 
   admin-app:
     build:
@@ -22,3 +45,10 @@ services:
       - LOG_FILE=${LOG_PATH}
     volumes:
       - ./data:/data
+    # 監控DB是否建好，建好再連線
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

@@ -41,3 +41,6 @@ docker-compose up --build
   2. 掃描qrcode：jess系統記錄點擊連結，接著導向到login頁面
   3. 導向到login頁面：adminapp記錄visit(記錄網址、ip)
   4. 登入：adminapp記錄login(記錄網址、ip、輸入內容)
+
+# 新增db以及後台紀錄頁面(react)(20250521更新)
+- bug：googledrive網頁無法記錄登入login

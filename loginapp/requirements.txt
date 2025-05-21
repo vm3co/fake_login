@@ -7,3 +7,5 @@ python-multipart
 python-dotenv
 qrcodegen
 Pillow
+asyncpg
+aiofiles
