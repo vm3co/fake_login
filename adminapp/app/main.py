@@ -7,15 +7,22 @@ from fastapi.requests import Request
 from fastapi import status
 from contextlib import asynccontextmanager
 from dotenv import load_dotenv
+from app.core.db_controller import ApplianceDB
+from app.services.db_user import DBUser
 
-from app.core.db_controller import db
 # 引入分離的路由模組
-from frontend.src.api.data_api import router as log_api
+from frontend.src.api.data_api import get_router as log_router
+from frontend.src.api.user_api import get_router as user_router
+
+
+db = ApplianceDB()
+db_user = DBUser(db=db)
 
 # 引入資料庫
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await db.db_init()
+    await db_user.table_initialize()
     yield
     await db.db_close()
 
@@ -27,7 +34,8 @@ load_dotenv()  # 會自動讀取 .env 檔案（如果存在於當前目錄或上
 LOG_FILE = os.getenv("LOG_FILE", "/data/visit_log.csv")
 
 # 註冊路由
-app.include_router(log_api, prefix="/api")
+app.include_router(log_router(db, db_user), prefix="/api")
+app.include_router(user_router(db, db_user), prefix="/api")
 
 # 設定模板目錄：掛載 React 打包好的靜態檔案（注意路徑）
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"

@@ -19,20 +19,20 @@ services:
       timeout: 5s
       retries: 5
 
-  login-app:
-    build:
-      context: ./loginapp
-    container_name: fake-login-login-app
-    ports:
-      - "${LOGIN_PORT}:8080"
-    environment:
-      - LOG_FILE=${LOG_PATH}
-    volumes:
-      - ./data:/data
-    # 監控DB是否建好，建好再連線
-    depends_on:
-      postgres-db:
-        condition: service_healthy
+  # login-app:
+  #   build:
+  #     context: ./loginapp
+  #   container_name: fake-login-login-app
+  #   ports:
+  #     - "${LOGIN_PORT}:8080"
+  #   environment:
+  #     - LOG_FILE=${LOG_PATH}
+  #   volumes:
+  #     - ./data:/data
+  #   # 監控DB是否建好，建好再連線
+  #   depends_on:
+  #     postgres-db:
+  #       condition: service_healthy
 
 
   admin-app:
