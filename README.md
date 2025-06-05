@@ -44,3 +44,9 @@ docker-compose up --build
 
 # 新增db以及後台紀錄頁面(react)(20250521更新)
 - bug：googledrive網頁無法記錄登入login
+
+# dashboard
+- 顯示任務列表
+- 顯示任務中的總數量、今日預計、今日寄出、今日成功寄出、實際寄出
+
+- futrue：加上寄送的開始結束時間、今日寄送的第一筆時間
