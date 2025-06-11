@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS sendtasks (
     sendtask_create_ut BIGINT NOT NULL,   -- 創建時間
     test_end_ut BIGINT NOT NULL,          -- 任務結束時間
     test_start_ut BIGINT NOT NULL,        -- 任務開始時間
+    is_pause BOOLEAN, -- 是否暫停
     is_active BOOLEAN DEFAULT TRUE 
 );
 
@@ -40,10 +41,13 @@ CREATE TABLE IF NOT EXISTS users (
 -- sendlog_stats 
 CREATE TABLE IF NOT EXISTS sendlog_stats (
     sendtask_uuid VARCHAR(36) PRIMARY KEY,
-    totalplanned INT,
-    todayplanned INT,
-    todaysent INT,
-    todaysuccess INT,
-    totalsent INT,
+    totalplanned BIGINT,
+    todayplanned BIGINT,
+    today_earliest_plan_time BIGINT,
+    today_latest_plan_time BIGINT,
+    all_latest_plan_time BIGINT,
+    todaysent BIGINT,
+    todaysuccess BIGINT,
+    totalsent BIGINT,
     stats_date DATE
 );

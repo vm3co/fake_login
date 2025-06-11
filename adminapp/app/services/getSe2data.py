@@ -7,6 +7,7 @@ Created on Thu May  8 14:32:44 2025
 用api到se2系統抓取資料
 """
 import os
+import time
 import requests
 import json
 import pandas as pd
@@ -14,13 +15,14 @@ import asyncio
 import httpx
 
 from app.services.log_manager import Logger
+from app.services.get_token import get_token
 
 
 logger = Logger().get_logger()
 
 class getSe2data:
     def __init__(self):
-        cookie = 'type2=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiItaXkqUGhlTHhSQXlwKlBmNndNTnJLWlBWayZFWEk2b01IVzNaSGpXYChoKkZBbncmR19AQj5WZEMtQkc-PU1OQ3JRdDxYIiwidHlwZSI6ImFjY2VzcyIsImp0aSI6IjZmOGY1YmQ2LWM3MzUtNGQ1My05MDZlLTQyMmM3OTIyMjliZiIsImV4cCI6MTc0OTExMzIyMiwibmJmIjoxNzQ5MTAyNDIyLCJpYXQiOjE3NDkxMDI0MjJ9.JC6bpmUQerbM6yLMIxkQqorzyqyBsAkjQ78vRo7125c79lujBhthIieXRKj544ZOgyxJBp4fB3MiihhuBRtucA; type1=eyJhbGciOiJFUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiItaXkqUGhlTHhSQXlwKlBmNndNTnJLWlBWayZFWEk2b01IVzNaSGpXYChoKkZBbncmR19AQj5WZEMtQkc-PU1OQ3JRdDxYIiwidHlwZSI6InJlZnJlc2giLCJqdGkiOiIyNWExY2ViNC0yMmI1LTRiNTQtYmZmZS1iNWIwN2FhMzIxNmMiLCJleHAiOjE3NDkxMTMyMjIsIm5iZiI6MTc0OTEwMjQyMiwiaWF0IjoxNzQ5MTAyNDIyfQ._gcOphEMae7Pn2PsIHHljxvZNHHQO0iYwy7VGaSIA38Xssik6zf4sET_hNdIDenCBR0e7LAqhTu0gWrX0D9-RA; type3="eyJuYW1lIjogIk1pa2UiLCAidHlwZS.I6ICJBZG1pbiIsICJyYW5kb21faWQiOiAiODliYTUyODljYTJkNDE4ZWIwNz.FjOTk0MTE0YzE3NzIifQ=="; lang=zh-TW'
+        cookie = get_token.get()
         self.url = "https://se.acsicook.info"
         self.headers = {
             "Content-Type": "application/json",
@@ -36,40 +38,25 @@ class getSe2data:
         verify_name = 'se.acsicook.info.crt'
         self.verify = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'certs', verify_name))
 
-    async def send_post(self, url: str, payload: dict) -> dict | None:
+    async def send_post(self, url: str, payload: dict, isTokenRefreshed=False) -> dict | None:
         '''發送 POST 請求'''
         async with httpx.AsyncClient(timeout=60.0, verify=self.verify) as client:
             try:
                 response = await client.post(url, headers=self.headers, json=payload)
                 response.raise_for_status() # 如果 HTTP 回應的狀態碼不是 2xx（例如 400、401、500 等），就自動拋出一個錯誤
-
                 data = response.json()
                 return data
             except httpx.RequestError as exc:
                 logger.error(f"HTTP error occurred: {exc}")
             except Exception as e:
+                if not isTokenRefreshed:
+                    # 嘗試重新從txt獲取 token 並重試
+                    logger.info("Token expired, re-getting token and retrying...")
+                    self.headers["cookie"] = get_token.get()
+                    return await self.send_post(url, payload, isTokenRefreshed=True)
                 logger.error(f"Unhandled exception: {e}")
             return None
 
-
-    # async def fetch_new_cookie(self):
-    #     url = self.url + "/api/account/refresh_token"
-    #     # 這裡請根據實際需求帶入必要的 cookie 或 header
-    #     cookies = {
-    #         # "type1": "...",
-    #         # "type2": "...",
-    #         # 依需求填入
-    #     }
-    #     async with httpx.AsyncClient() as client:
-    #         response = await client.get(url, cookies=cookies)
-    #         # 取得 Set-Cookie
-    #         set_cookie = response.headers.get("set-cookie")
-    #         if set_cookie:
-    #             # 你可以根據實際需求組合 cookie 字串
-    #             # 例如只取 type1/type2/type3
-    #             cookies_str = "; ".join([c.split(";")[0] for c in set_cookie.split(",")])
-    #             return cookies_str
-    #         return None
 
     async def multiple_pages(self, payload_template: dict, url: str) -> list:
         '''處理多頁面請求'''
@@ -79,15 +66,14 @@ class getSe2data:
             await asyncio.sleep(0.1)  # 加一點延遲避免被擋
             payload = payload_template.copy()
             payload["page_sn"] = page
-            print(f"Requesting page {page}...")
+            logger.info(f"Requesting page {page}...")
             # 發送 POST 請求
             data = await self.send_post(url, payload)
             if data is None:
-                print("API return None, stopping further requests.")
+                logger.warning("API return None, stopping further requests.")
                 break
             page_data = data.get("data", [])
             if not page_data:
-                print("No more data.")
                 break
 
             all_data.extend(page_data)
@@ -96,12 +82,16 @@ class getSe2data:
                 break
 
             page += 1
-        print(f"Total items fetched: {len(all_data)}")
+        logger.info(f"Total items fetched: {len(all_data)}")
         return all_data
 
-    async def get_sendtasks(self) -> pd.DataFrame | None:
-        '''抓取執行中專案清單'''
+    async def get_sendtasks(self, days=30) -> pd.DataFrame | None:
+        '''
+        抓取執行中專案清單(執行完畢的專案，預設只取30天內)
+        :param days: 抓取的天數範圍，預設為30天
+        '''
         # 要發送 POST 的目標網址
+        logger.info("Fetching sendtasks...")
         url = self.url + '/api/case/get_sendtasks'
         payload_template = {
             "end_time": None,
@@ -117,12 +107,44 @@ class getSe2data:
         }
         all_data = await self.multiple_pages(payload_template, url)
         if all_data:
-            return pd.DataFrame(all_data)
+            # 將資料轉換為 DataFrame        
+            sendtasks_df = pd.DataFrame(all_data)
+            # 取得當前時間戳
+            now = int(time.time())
+            # 計算抓取任務範圍的時間戳
+            ago = now - ( days * 24 * 60 * 60 )  # days轉換為秒
+            # 過濾條件(sendtask_create_ut >= 30天前) 或 (pre_test_end_ut > 現在) 或 (test_end_ut > 現在)
+            filtered_df = sendtasks_df[
+                (sendtasks_df["sendtask_create_ut"] >= ago) |
+                (sendtasks_df["pre_test_end_ut"] > now) |
+                (sendtasks_df["test_end_ut"] > now)
+            ]
+            return filtered_df
         return None
+    
+    async def get_sendtask_is_pause(self, uuid: str) -> dict | None:
+        '''
+        抓取單一專案是否被暫停
+        :param uuid: 專案的 UUID
+        '''
+        # 要發送 POST 的目標網址
+        logger.info(f"Checking if sendtask {uuid} is paused...")
+        url = self.url + '/api/case/get_sendtask'
+        payload = {
+            "sendlog_type":"test",  # 預設為 test
+            "sendtask_uuid": uuid
+        }
+        data = await self.send_post(url, payload)
+        if data is None:
+            payload["sendlog_type"] = "pretest"  # 如果沒有資料，改為 pretest
+            data = await self.send_post(url, payload)
+        
+        return None if not data else data.get("metadata", None)
 
     async def get_sendlog(self, uuid: str) -> pd.DataFrame | None:
         '''抓取專案參與人員清單'''
         # 要發送 POST 的目標網址
+        logger.info(f"Fetching sendlog for sendtask {uuid}...")
         url = self.url + '/api/case/get_sendlog'
         payload_template = {
                             "sendtask_uuid": uuid,
@@ -138,35 +160,38 @@ class getSe2data:
                             "stime": None
                         }
         all_data = await self.multiple_pages(payload_template, url)
-        if all_data:
-            return pd.DataFrame(all_data)
-        return None
+        if not all_data:
+            payload_template["sendlog_type"] = "pretest"
+            all_data = await self.multiple_pages(payload_template, url)
+            
+        return None if not all_data else pd.DataFrame(all_data)
 
     async def get_mtmpl_subject_list(self) -> pd.DataFrame | None:
         '''抓取郵件樣板'''
         # 要發送 POST 的目標網址
+        logger.info("Fetching mtemplate subject list...")
         url = self.url + '/api/editor/get_mtmpl_subject_list'
         payload = {
             "just_query": 1
         }        
         data = await self.send_post(url, payload)
-        if data:
-            return pd.DataFrame(data['data'])
-        return None
 
-    async def get_acct_orgs(self, acct_uuid: str):
+        return None if not data else pd.DataFrame(data['data'])
+
+    async def get_acct_orgs(self, acct_uuid: str) -> pd.DataFrame | None:
         '''抓取個別帳號擁有的組織'''
         # 要發送 POST 的目標網址
+        logger.info(f"Fetching organizations for account {acct_uuid}...")
         url = self.url + '/api/account/get_acct'
         payload = {"acct_uuid": acct_uuid}
         data = await self.send_post(url, payload)
-        if data:
-            return data["data"]["orgs"]
-        return None
+
+        return None if not data else pd.DataFrame(data["data"]["orgs"])
 
     async def get_accts(self) -> pd.DataFrame | None:
         '''抓取帳號'''
         # 要發送 POST 的目標網址
+        logger.info("Fetching accounts...")
         url = self.url + '/api/account/get_accts'
         # payload
         payload_template = {
@@ -186,11 +211,8 @@ class getSe2data:
         if all_data:
             for index, data in enumerate(all_data):
                 acct_uuid = data["acct_uuid"]
-                orgs_dict = await self.get_acct_orgs(acct_uuid)
-                orgs_list = []
-                for orgs in orgs_dict:
-                    orgs_list.append(orgs["uuid"])
-                all_data[index]["orgs"] = orgs_list
+                orgs_df = await self.get_acct_orgs(acct_uuid)
+                all_data[index]["orgs"] = list(orgs_df["uuid"])
                 
             return pd.DataFrame(all_data)
             

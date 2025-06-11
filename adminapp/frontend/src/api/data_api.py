@@ -64,6 +64,7 @@ def get_router(db, db_user):
                 ]
             return {"status": "success", "data": my_tasksname_list}
         except Exception as e:
+            logger.error(f"Error in get_sendtasks: {str(e)}")
             return {"status": "error", "message": str(e)}
 
     @router.get("/sendtasks/check")
@@ -109,6 +110,7 @@ def get_router(db, db_user):
             data = {"added": added_list, "removed": removed_list}
             return {"status": "success", "data": data}
         except Exception as e:
+            logger.error(f"Error in check_sendtasks: {str(e)}")
             return {"status": "error", "message": str(e)}
 
     @router.get("/sendtasks/update")
@@ -125,6 +127,7 @@ def get_router(db, db_user):
 
             return {"status": "success", "data": data}
         except Exception as e:
+            logger.error(f"Error in create_participant_data: {str(e)}")
             return {"status": "error", "message": str(e)}
 
     @router.post("/sendlog/refresh")
@@ -150,11 +153,22 @@ def get_router(db, db_user):
                     updated.append(uuid)
             return {"status": "success", "message": f"{len(updated)} 筆寄送現況"}
         except Exception as e:
+            logger.error(f"Error in refresh_sendlog: {str(e)}")
             return {"status": "error", "message": str(e)}
 
 
     @router.post("/sendlog/refresh/today")
     async def refresh_today_sendlog(data: dict = Body(...)):
+        """
+        今日寄送任務資料刷新
+
+        1.  POST /sendlog/refresh/today
+        2.  Body: {"uuids": ["task1_uuid", "task2_uuid", ...]}
+        3.  Response: {"status": "success", "message": "已更新 x 筆今日任務", "updated": [...]}
+
+        :param data: dict, POST request body, keys: uuids
+        :return: dict, status, message, and updated uuids
+        """
         try:
             uuids = data.get("uuids", [])
             if not uuids:
@@ -163,27 +177,44 @@ def get_router(db, db_user):
             updated = []
             for uuid in uuids:
                 df_new = await get_se2_data.get_sendlog(uuid)
-                if df_new is None:
+                if df_new is None or df_new.empty:
                     continue
                 new_data = df_new[sendlog_columns].to_dict(orient="records")
-                db_data = await db.get_db(uuid, column_names=sendlog_columns,include_inactive=True)
+                db_data = await db.get_db(uuid, column_names=sendlog_columns, include_inactive=True)
                 if normalize(new_data) != normalize(db_data):
                     await db.clear_table(uuid)
                     await db.insert_db(uuid, new_data)
                     updated.append(uuid)
+            if updated:
+                await db_user.refresh_sendlog_stats(updated)
             return {"status": "success", "message": f"已更新 {len(updated)} 筆今日任務", "updated": updated}
         except Exception as e:
+            logger.error(f"Error in refresh_today_sendlog: {str(e)}")
             return {"status": "error", "message": str(e)}
 
+
+    class UuidsRequest(BaseModel):
+        uuids: list[str] = []
+
     @router.post("/sendlog_stats/get")
-    async def get_sendlog_stats_batch(request: OrgsRequest):
+    async def get_sendlog_stats_batch(request: UuidsRequest):
+        """
+        取得多個任務的統計資料
+
+        1.  POST /sendlog_stats/get
+        2.  Body: {"uuids": ["task1_uuid", "task2_uuid", ...]}
+
+        :param request: UuidsRequest
+        :return: dict
+        """
         try:
-            uuids = request.data.get("uuids", [])
+            uuids = request.uuids
             if not uuids:
                 return {"status": "error", "message": "沒有收到 uuids", "data": []}
-            rows = await db.get_db("sendlog_stats", condition={"sendtask_uuid": uuids})
+            rows = await db.get_db("sendlog_stats", column_names=["sendtask_uuid"], value=uuids, include_inactive=True)
             return {"status": "success", "data": rows}
         except Exception as e:
+            logger.error(f"Error in get_sendlog_stats_batch: {str(e)}")
             return {"status": "error", "message": str(e), "data": []}
 
     @router.get("/mtmpl/get")
@@ -195,6 +226,7 @@ def get_router(db, db_user):
 
     #         return {"status": "success", "data": data}
     #     except Exception as e:
+    #         logger.error(f"Error in get_mtmpl: {str(e)}")
     #         return {"status": "error", "message": str(e)}
     
     return router

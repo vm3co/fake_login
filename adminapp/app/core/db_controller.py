@@ -60,7 +60,7 @@ class ApplianceDB:
             async with self.db_pool.acquire() as connection:
                 await connection.fetch("SELECT 1")
         except Exception as e:
-            print(f"Database connection lost: {e}. Reinitializing...")
+            logger.error(f"Database connection lost: {e}. Reinitializing...")
             await self.db_close()
             await self.db_init()
 
@@ -125,7 +125,7 @@ class ApplianceDB:
             sql_cmd = f'DELETE FROM "{table_name}"'
             await connection.execute(sql_cmd)
 
-    async def get_db(self, table_name: str, column_names: list[str] = None, value: str = None, include_inactive: bool = False) -> list:
+    async def get_db(self, table_name: str, column_names: list[str] = None, value: str | list[str] = None, include_inactive: bool = False) -> list:
         """
         查詢資料，支援全表查詢、欄位篩選與條件查詢。
         - 預設只查 is_active = TRUE 的資料。
@@ -145,17 +145,24 @@ class ApplianceDB:
         async with self.db_pool.acquire() as connection:
             if column_names and value: 
                 # 查詢指定欄位 = 值，並可選擇是否包含停用資料
-                sql_cmd = f'SELECT * FROM "{table_name}" WHERE {column_names[0]} = $1'
-                sql_cmd = sql_cmd + " AND is_active = TRUE" if not include_inactive else sql_cmd
-                result = await connection.fetch(sql_cmd, value)
+                if not isinstance(value, list):
+                    value = [value]
+                col_str = ", ".join(column_names)
+                placeholders = ', '.join(f'${i+1}' for i in range(len(value)))
+                sql_cmd = f'SELECT * FROM "{table_name}" WHERE {column_names[0]} IN ({placeholders})'
+                if not include_inactive: 
+                    sql_cmd += " AND is_active = TRUE"
+                result = await connection.fetch(sql_cmd, *value)
             elif column_names:
                 col_str = ", ".join(column_names)
                 sql_cmd = f'SELECT {col_str} FROM "{table_name}"'
-                sql_cmd = sql_cmd + " WHERE is_active = TRUE" if not include_inactive else sql_cmd
+                if not include_inactive: 
+                    sql_cmd += " WHERE is_active = TRUE"
                 result = await connection.fetch(sql_cmd)
             else:
                 sql_cmd = f'SELECT * FROM "{table_name}"'
-                sql_cmd = sql_cmd + " WHERE is_active = TRUE" if not include_inactive else sql_cmd
+                if not include_inactive: 
+                    sql_cmd += " WHERE is_active = TRUE"
                 result = await connection.fetch(sql_cmd)
             return [dict(row) for row in result] if result else []
 
