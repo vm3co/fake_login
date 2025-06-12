@@ -143,13 +143,13 @@ const ShowTasks = () => {
   const fetchCheckSends = async (uuid = "") => {
     setIsCheckingSends(true);
   
-    // 只取今日預計非0的任務
+    // 只取今日未寄送最早的 plan_time 非0的任務
     let checkTasks = [];
     if (!uuid) {
       // 如果沒有指定 uuid，則取今日有計劃寄送的任務
       checkTasks = tasksData.filter(row => {
         const stats = statsData[row.sendtask_uuid];
-        return stats && stats.todayplanned > 0;
+        return stats && stats.today_earliest_plan_time > 0;
       });
       // 如果沒有任務就直接結束
       if (checkTasks.length === 0) {
@@ -161,7 +161,6 @@ const ShowTasks = () => {
       // 如果有指定 uuid，則只更新該任務
       checkTasks = tasksData.filter(row => row.sendtask_uuid === uuid);
     }
-
     const uuids = checkTasks.map(row => row.sendtask_uuid);
 
     fetch("/api/sendlog/refresh/today", {
@@ -202,6 +201,7 @@ const ShowTasks = () => {
   const [showTodayOnly, setShowTodayOnly] = useState(true);
   const showTodayTasks = () => {
     setShowTodayOnly(true);
+    setCurrentPage(1);
   };
 
   const showAllTasks = () => {
@@ -213,7 +213,7 @@ const ShowTasks = () => {
   const filteredTasks = showTodayOnly
     ? tasksData.filter(row => {
         const stats = statsData[row.sendtask_uuid];
-        return stats && stats.todayplanned > 0;
+        return stats && stats.today_earliest_plan_time > 0;
       })
     : tasksData;
 
@@ -243,7 +243,7 @@ const ShowTasks = () => {
       <button className="btn btn-primary" onClick={fetchCheckTasks}>更新任務列表</button>
       {!showTodayOnly && <button className="btn btn-primary" onClick={showTodayTasks} >顯示今日寄送任務</button>}
       {showTodayOnly && <button className="btn btn-primary" onClick={showAllTasks} >顯示全部寄送任務</button>}
-      <button className="btn btn-primary" onClick={fetchCheckSends} disabled={isCheckingSends}>更新今日任務寄送現況</button>
+      <button className="btn btn-primary" onClick={() => fetchCheckSends()} disabled={isCheckingSends}>更新今日任務寄送現況</button>
       {/* <button className="btn btn-primary" onClick={fetchAllCheckSends} disabled={isUpdatingSendlog}>更新全部任務寄送現況(所需時間較久)(製作中)</button>
       {isUpdatingSendlog && (
         <span style={{ marginLeft: "1rem", color: "#007bff" }}>
@@ -274,13 +274,13 @@ const ShowTasks = () => {
           </thead>
           <tbody>
             {pagedTasks.map((row, index) => {
-                const stats = statsData[row.sendtask_uuid] || { planned: "-", sent: "-", success: "-" };
+                const stats = statsData[row.sendtask_uuid] || { planned: "-", send: "-", success: "-" };
                 return (
-                  <tr key={index} style={updatedTodayUuids.includes(row.sendtask_uuid) ? { background: "#ffeeba" } : {}}>
+                  <tr key={index} className={updatedTodayUuids.includes(row.sendtask_uuid) ? "updated-task-row" : ""}>
                     {/* <td><Link to={`/showtasks/${row.sendtask_uuid}`}>{row.sendtask_id}</Link></td> */}
                     <td>{row.sendtask_id}</td>
                     <td>{stats.totalplanned}</td>
-                    <td>{stats.totalsent}</td>
+                    <td>{stats.totalsend}</td>
                     <td>
                       {stats.today_earliest_plan_time === 0 || stats.today_earliest_plan_time === undefined
                         ? " - "
@@ -291,8 +291,8 @@ const ShowTasks = () => {
                         ? " - "
                         : formatDate(stats.today_latest_plan_time)}
                     </td>
-                    <td>{stats.todayplanned}</td>
-                    <td>{stats.todaysent}</td>
+                    <td>{stats.todayunsend}</td>
+                    <td>{stats.todaysend}</td>
                     <td>{stats.todaysuccess}</td>
                     <td>
                       {stats.all_latest_plan_time === 0 || stats.all_latest_plan_time === undefined

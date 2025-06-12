@@ -142,3 +142,8 @@ button:hover {
   width: 100%;
   min-width: 1200px; /* 讓表格最小寬度大一點 */
 }
+
+/* 高亮更新的任務 */
+.updated-task-row {
+  background: #ffeeba !important;
+}

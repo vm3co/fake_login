@@ -16,31 +16,29 @@ def calc_stats(stats):
     end_ts = int((datetime.combine(today, datetime.min.time()) + timedelta(days=1)).timestamp())
 
     # 今日寄送：寄送時間>=當天開始時間 & 寄送時間<當天結束時間 & 寄送時間為0
-    todayPlans = [t for t in stats if start_ts <= t.get("plan_time", 0) < end_ts and t.get("send_time", 0) == 0]
-    todaySends = [t for t in stats if start_ts <= t.get("send_time", 0) < end_ts and t.get("send_time", 0) != 0]
+    todayUnsend = [t for t in stats if start_ts <= t.get("plan_time", 0) < end_ts and t.get("send_time", 0) == 0]
+    todaySends = [t for t in stats if start_ts <= t.get("send_time", 0) < end_ts]
     todaySuccess = [t for t in todaySends if str(t.get("send_res", "")).startswith("True")]
     totalSends = [t for t in stats if t.get("send_time", 0) != 0]
 
+    today_plan_time = [t["plan_time"] for t in stats if start_ts <= t.get("plan_time", 0) < end_ts]
     # 今日未寄送最早的 plan_time（如果有的話）
-    today_earliest_plan_time = 0
+    today_earliest_plan_time = min(today_plan_time) if today_plan_time else 0
     # 今日為寄送最後的 plan_time（如果有的話）
-    today_latest_plan_time = 0
-    if todayPlans:
-        today_earliest_plan_time = min(t["plan_time"] for t in todayPlans)
-        today_latest_plan_time = max(t["plan_time"] for t in todayPlans)
+    today_latest_plan_time = max(today_plan_time) if today_plan_time else 0
 
     # 任務最後一封的 plan_time
     all_latest_plan_time = max(t["plan_time"] for t in stats) if stats else 0
 
     return {
         "totalplanned": len(stats),
-        "todayplanned": len(todayPlans),
+        "todayunsend": len(todayUnsend),
         "today_earliest_plan_time": today_earliest_plan_time,
         "today_latest_plan_time": today_latest_plan_time,
         "all_latest_plan_time": all_latest_plan_time,
-        "todaysent": len(todaySends),
+        "todaysend": len(todaySends),
         "todaysuccess": len(todaySuccess),
-        "totalsent": len(totalSends),
+        "totalsend": len(totalSends),
         "stats_date": today
     }
 
@@ -181,6 +179,7 @@ class DBUser:
             tasks_list = await self.db.get_db("sendtasks", column_names=["sendtask_uuid"])
             uuids = [task["sendtask_uuid"] for task in tasks_list]
         for uuid in uuids:
+            logger.info(f"Refreshing sendlog_stats for {uuid}")
             data = await self.db.get_db(uuid, include_inactive=True)
             for dd in data:
                 dd.pop("id", None)

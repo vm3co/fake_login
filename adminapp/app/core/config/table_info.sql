@@ -42,12 +42,12 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS sendlog_stats (
     sendtask_uuid VARCHAR(36) PRIMARY KEY,
     totalplanned BIGINT,
-    todayplanned BIGINT,
     today_earliest_plan_time BIGINT,
     today_latest_plan_time BIGINT,
     all_latest_plan_time BIGINT,
-    todaysent BIGINT,
+    todayunsend BIGINT,
+    todaysend BIGINT,
     todaysuccess BIGINT,
-    totalsent BIGINT,
+    totalsend BIGINT,
     stats_date DATE
 );
