@@ -2,11 +2,21 @@
 Security utilities for password hashing and verification.
 This module provides functions to hash passwords and verify them using bcrypt.
 '''
+import os
+from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from app.core.security import verify_password
 from app.core.security import hash_password
 from app.services.log_manager import Logger
+
+
+logger = Logger().get_logger()
+
+# Load environment variables from .env file
+load_dotenv()
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
 
 
 
@@ -17,7 +27,6 @@ def get_router(db, db_user):
     :param db_user: DBUser instance
     :return: APIRouter instance for user-related endpoints
     """
-    logger = Logger().get_logger()
     router = APIRouter()
 
     class RegisterRequest(BaseModel):
@@ -41,8 +50,14 @@ def get_router(db, db_user):
 
     @router.post("/login")
     async def login(data: LoginRequest):
+        email = data.email
+        password = data.password
+        # 檢查是否為管理員登入
+        if email == ADMIN_EMAIL and password == ADMIN_PASSWORD:
+            return {"status": "success", "msg": "登入成功", "orgs": ["admin"]}
+
         # 查詢使用者
-        user = await db.get_db("users", ["email"], data.email)
+        user = await db.get_db("users", ["email"], email)
         if not user:
             return {"status": "error", "msg": "帳號或密碼錯誤"}
         # 取第一個使用者

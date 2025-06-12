@@ -18,7 +18,7 @@ from app.services.getSe2data import get_se2_data
 
 
 load_dotenv()
-LOG_FILE = os.getenv("LOG_FILE", "/data/visit_log.csv")
+# 確保環境變數已經載入
 
 def has_common_orgs(a: list, b: list) -> bool:
     return any(item in a for item in b)
@@ -57,7 +57,7 @@ def get_router(db, db_user):
         try:
             column_names = ["sendtask_id", "sendtask_uuid", "sendtask_owner_gid", "sendtask_create_ut"]
             my_tasksname_list = await db.get_db("sendtasks", column_names=column_names)
-            if request.orgs:
+            if request.orgs and request.orgs != ["admin"]:
                 my_tasksname_list = [
                     task for task in my_tasksname_list
                     if has_common_orgs(task.get("sendtask_owner_gid", []), request.orgs)
@@ -67,7 +67,7 @@ def get_router(db, db_user):
             logger.error(f"Error in get_sendtasks: {str(e)}")
             return {"status": "error", "message": str(e)}
 
-    @router.get("/sendtasks/check")
+    @router.get("/check_sendtasks")
     async def check_sendtasks():
         """
         檢查sendtask是否有變更
@@ -118,8 +118,18 @@ def get_router(db, db_user):
         pass
 
 
-    @router.get("/sendlog/get/{uuid}")
+    @router.get("/get_sendlog/{uuid}")
     async def create_participant_data(uuid: str): 
+        """
+        取得寄送任務的資料
+
+        1.  GET /get_sendlog/{uuid}
+        2.  Path: uuid, 寄送任務的 UUID
+
+        :param uuid: str, 寄送任務的 UUID
+        :return: dict, status, message, and data
+        """
+
         try:
             data = await db.get_db(uuid, include_inactive=True)
             for dd in data:
@@ -130,8 +140,18 @@ def get_router(db, db_user):
             logger.error(f"Error in create_participant_data: {str(e)}")
             return {"status": "error", "message": str(e)}
 
-    @router.post("/sendlog/refresh")
+    @router.post("/refresh_sendlog")
     async def refresh_sendlog():
+        """
+        刷新所有寄送任務的資料
+
+        1. 從資料庫中取得所有寄送任務的 UUID
+        2. 對每個寄送任務的 UUID，從外部系統抓取最新的寄送資料
+        3. 比較最新資料與資料庫中現有資料
+        4. 如果有變更，清空資料庫中的舊資料，並寫入新資料
+
+        :return: dict, 包含狀態和更新的訊息
+        """
         try:
             # 取得所有 sendtasks
             sendtasks = await db.get_db("sendtasks", column_names=["sendtask_uuid"])
@@ -151,18 +171,18 @@ def get_router(db, db_user):
                     await db.clear_table(uuid)
                     await db.insert_db(uuid, new_data)
                     updated.append(uuid)
-            return {"status": "success", "message": f"{len(updated)} 筆寄送現況"}
+            return {"status": "success", "message": f"{len(updated)} 筆任務"}
         except Exception as e:
             logger.error(f"Error in refresh_sendlog: {str(e)}")
             return {"status": "error", "message": str(e)}
 
 
-    @router.post("/sendlog/refresh/today")
+    @router.post("")
     async def refresh_today_sendlog(data: dict = Body(...)):
         """
         今日寄送任務資料刷新
 
-        1.  POST /sendlog/refresh/today
+        1.  POST /refresh_sendlog_today
         2.  Body: {"uuids": ["task1_uuid", "task2_uuid", ...]}
         3.  Response: {"status": "success", "message": "已更新 x 筆今日任務", "updated": [...]}
 
@@ -196,12 +216,12 @@ def get_router(db, db_user):
     class UuidsRequest(BaseModel):
         uuids: list[str] = []
 
-    @router.post("/sendlog_stats/get")
+    @router.post("/get_sendlog_stats")
     async def get_sendlog_stats_batch(request: UuidsRequest):
         """
         取得多個任務的統計資料
 
-        1.  POST /sendlog_stats/get
+        1.  POST /get_sendlog_stats
         2.  Body: {"uuids": ["task1_uuid", "task2_uuid", ...]}
 
         :param request: UuidsRequest
@@ -217,7 +237,7 @@ def get_router(db, db_user):
             logger.error(f"Error in get_sendlog_stats_batch: {str(e)}")
             return {"status": "error", "message": str(e), "data": []}
 
-    @router.get("/mtmpl/get")
+    @router.get("/get_mtmpl")
     async def get_mtmpl(): 
         return {"status": "error", "message": "test"} 
     #     try:

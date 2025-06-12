@@ -10,8 +10,8 @@ const TaskDetail = () => {
   useEffect(() => {
     setLoading(true);
   Promise.all([
-    fetch("/api/mtmpl/get").then(res => res.json()),
-    fetch(`/api/sendlog/get/${uuid}`).then(res => res.json())
+    fetch("/api/get_mtmpl").then(res => res.json()),
+    fetch(`/api/get_sendlog/${uuid}`).then(res => res.json())
   ])
     .then(([mtmplRes, sendlogRes]) => {
       // 郵件主旨對應處理

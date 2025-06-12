@@ -46,7 +46,7 @@ const ShowTasks = () => {
   const fetchStats = async (uuids) => {
     if (!uuids.length) return;
     // 批次取得所有統計
-    const res = await fetch("/api/sendlog_stats/get", {
+    const res = await fetch("/api/get_sendlog_stats", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ uuids }),
@@ -96,7 +96,7 @@ const ShowTasks = () => {
   const fetchCheckTasks = () => {
     setLoading(true);
     // 先檢查新增或移除的任務
-    fetch("/api/sendtasks/check")
+    fetch("/api/check_sendtasks")
       .then((res) => res.json())
       .then((json) => {
         if (json.status === "success") {
@@ -123,7 +123,7 @@ const ShowTasks = () => {
   // const [isUpdatingSendlog, setIsUpdatingSendlog] = useState(false);
   // const fetchAllCheckSends = () => {
   //   setIsUpdatingSendlog(true);
-  //   fetch("/api/sendlog/refresh", { method: "POST" })
+  //   fetch("/api/refresh_sendlog", { method: "POST" })
   //     .then(res => res.json())
   //     .then(json => {
   //       if (json.status === "success") {
@@ -163,7 +163,7 @@ const ShowTasks = () => {
     }
     const uuids = checkTasks.map(row => row.sendtask_uuid);
 
-    fetch("/api/sendlog/refresh/today", {
+    fetch("/api/refresh_sendlog_today", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ uuids }),
