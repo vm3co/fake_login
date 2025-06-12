@@ -177,7 +177,7 @@ def get_router(db, db_user):
             return {"status": "error", "message": str(e)}
 
 
-    @router.post("")
+    @router.post("/refresh_sendlog_today")
     async def refresh_today_sendlog(data: dict = Body(...)):
         """
         今日寄送任務資料刷新
