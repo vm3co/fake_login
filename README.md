@@ -1,6 +1,6 @@
 # 啟動說明
 
-用「以系統管理員身分執行」命令提示字元，進入 fake_login 目錄，執行 start_all.bat
+啟動start.bat/.sh
 
 # 初始網址
 

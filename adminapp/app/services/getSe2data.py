@@ -85,10 +85,10 @@ class getSe2data:
         logger.info(f"Total items fetched: {len(all_data)}")
         return all_data
 
-    async def get_sendtasks(self, days=30) -> pd.DataFrame | None:
+    async def get_sendtasks(self, days=15) -> pd.DataFrame | None:
         '''
-        抓取執行中專案清單(執行完畢的專案，預設只取30天內)
-        :param days: 抓取的天數範圍，預設為30天
+        抓取執行中專案清單(執行完畢的專案，預設只取15天內)
+        :param days: 抓取的天數範圍，預設為15天
         '''
         # 要發送 POST 的目標網址
         logger.info("Fetching sendtasks...")
@@ -112,10 +112,11 @@ class getSe2data:
             # 取得當前時間戳
             now = int(time.time())
             # 計算抓取任務範圍的時間戳
-            ago = now - ( days * 24 * 60 * 60 )  # days轉換為秒
-            # 過濾條件(sendtask_create_ut >= 30天前) 或 (pre_test_end_ut > 現在) 或 (test_end_ut > 現在)
+            ago = now - (days * 24 * 60 * 60)  # days轉換為秒
+            # 過濾條件(test_end_ut >= days) 或 (pre_test_end_ut >= days) 或 (pre_test_end_ut > 現在) 或 (test_end_ut > 現在)
             filtered_df = sendtasks_df[
-                (sendtasks_df["sendtask_create_ut"] >= ago) |
+                (sendtasks_df["test_end_ut"] >= ago) |
+                (sendtasks_df["pre_test_end_ut"] >= ago) |
                 (sendtasks_df["pre_test_end_ut"] > now) |
                 (sendtasks_df["test_end_ut"] > now)
             ]
