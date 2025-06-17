@@ -12,7 +12,18 @@ echo "------------------------------"
 read -p "請輸入選項 (1-4): " mode
 
 echo ""
+read -p "是否需要重建 frontend (y/n): " rebuild_fe
+
+echo ""
 read -p "是否要背景執行 (y/n): " bg
+
+if [[ "$rebuild_fe" == "y" || "$rebuild_fe" == "Y" ]]; then
+  echo "[ 開始重建 frontend... ]"
+  pushd ./adminapp/frontend
+  npm run build
+  popd
+  echo "[ frontend 重建完成 ]"
+fi
 
 bg_flag=""
 if [[ "$bg" == "y" || "$bg" == "Y" ]]; then

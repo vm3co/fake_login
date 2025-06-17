@@ -14,7 +14,20 @@ echo ---------------------------------
 set /p mode="請輸入選項 (1-4)："
 
 echo.
+set /p rebuild_fe="是否需要重建 frontend (y/n)："
+
+echo.
 set /p bg="是否要在背景模式執行 (y/n)："
+
+if /I "%rebuild_fe%"=="y" (
+    echo [ 開始重建 frontend... ]
+    pushd .\adminapp\frontend
+    call npm run build
+    popd
+    echo [ frontend 重建完成 ]
+)
+
+echo.
 
 set bg_flag=
 if /I "%bg%"=="y" (
