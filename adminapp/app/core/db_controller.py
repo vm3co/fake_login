@@ -1,9 +1,15 @@
+# -*- coding: utf-8 -*-
+'''
+資料庫控制模組，提供資料庫連線、初始化、關閉、檢查連線等功能。
+此模組使用 asyncpg 連接 PostgreSQL 資料庫，並提供基本的資料表操作功能。
+支援的資料表包括 sendtasks、accts、users 等，並提供建立新資料表、清空資料表、檢查資料表是否存在等功能。
+'''
+
 import re
 import asyncpg
 import aiofiles
 
 from app.services.log_manager import Logger
-from app.services.getSe2data import get_se2_data
 
 
 logger = Logger().get_logger()
@@ -11,56 +17,41 @@ logger = Logger().get_logger()
 class ApplianceDB:
     def __init__(self):
         self.db_pool = None
-        self.allowed_tables = {"sendtasks"}
+        # 定義哪些表格有 is_active 欄位
+        self.tables_with_is_active = {"sendtasks", "accts", "users"}
+        self.allowed_tables = {"sendtasks", "accts", "users"}
         self.allowed_columns = {
-            "sendtasks": {"sendtask_id", "sendtask_uuid", "sendtask_create_ut"}
+            "sendtasks": {"sendtask_id", "sendtask_uuid", "sendtask_owner_gid", "sendtask_create_ut"},
+            "accts": {"acct_id", "acct_uuid", "acct_email", "acct_full_name", "acct_full_name_2nd", "acct_activate", "orgs"},
+            "users": {"username", "password_hash", "email", "full_name", "orgs", "create_time"}
         }
 
     async def db_init(self):
-        if self.db_pool is None:
-            logger.debug("Initializing PostgreSQL connection pool...")
-            self.db_pool = await asyncpg.create_pool(
-                host='postgres-db',
-                port=5432,
-                user='myuser',
-                password='mypassword',
-                database='mydatabase',
-                min_size=1,
-                max_size=10
-            )
+        """ 初始化資料庫連線池與資料表 """
+        if self.db_pool is not None:
+            return
+        
+        logger.debug("Initializing PostgreSQL connection pool...")
+        # 使用 asyncpg 建立連線池
+        self.db_pool = await asyncpg.create_pool(
+            host='postgres-db',
+            port=5432,
+            user='myuser',
+            password='mypassword',
+            database='mydatabase',
+            min_size=1,
+            max_size=10
+        )
 
-            async with self.db_pool.acquire() as connection:
-                async with aiofiles.open("app/core/config/table_info.sql", mode="r") as f:
-                    schema_sql = await f.read()
-                    for stmt in schema_sql.strip().split(";"):
-                        stmt = stmt.strip()
-                        if not stmt:
-                            continue  # 跳過空句
-                        await connection.execute(stmt)             
-                logger.debug("Database schema executed successfully.")
+        async with self.db_pool.acquire() as connection:
+            with open("app/core/config/table_info.sql", mode="r") as f:
+                schema_sql = f.read()
+                for stmt in schema_sql.strip().split(";"):
+                    stmt = stmt.strip()
+                    if not stmt:
+                        continue  # skip empty statements
+                    await connection.execute(stmt)
 
-                # 如果sendtasks是新建資料表(empty)，匯入資料
-                df = await get_se2_data.get_sendtasks()
-                if df is None or df.empty:
-                    return
-                column_names = ["sendtask_id", "sendtask_uuid", "sendtask_create_ut"]
-                all_tasksname_list = df[column_names].to_dict(orient="records")
-                await self.insert_if_empty("sendtasks", all_tasksname_list)
-                columns = {"id": "SERIAL PRIMARY KEY", 
-                            "uuid": "TEXT",
-                            "target_email": "TEXT", 
-                            "access_active": "TEXT[]",
-                            "access_ip": "TEXT[]",
-                            "access_time": "BIGINT[]",
-                            "person_info": "TEXT"
-                            }
-                for task in all_tasksname_list:
-                    await self.create_table(task["sendtask_uuid"], columns)
-                    df_sendlog = await get_se2_data.get_sendlog(task["sendtask_uuid"])
-                    if df_sendlog is not None:
-                        sendlog_columns = ["uuid", "target_email", "person_info"]
-                        sendlog = df_sendlog[sendlog_columns].to_dict(orient="records")
-                        await db.insert_db(task["sendtask_uuid"], sendlog)
 
     async def db_close(self):
         if self.db_pool:
@@ -78,29 +69,33 @@ class ApplianceDB:
             async with self.db_pool.acquire() as connection:
                 await connection.fetch("SELECT 1")
         except Exception as e:
-            print(f"Database connection lost: {e}. Reinitializing...")
+            logger.error(f"Database connection lost: {e}. Reinitializing...")
             await self.db_close()
             await self.db_init()
 
-    async def insert_if_empty(self, table_name: str, data_list: list[dict]):
+    async def table_exists(self, table_name: str) -> bool:
+        """ 
+        檢查 table 是否存在 
+        :param table_name: 欲檢查的資料表名稱
+        :return: 如果資料表存在，返回 True，否則返回 False
         """
-        檢查指定資料表是否為空，若為空則插入資料。
-        :param table_name: 資料表名稱
-        :param data_list: 要插入的資料清單(list of dict)
-        """
-        if not data_list:
-            logger.warning(f"No data provided to insert into {table_name}.")
-            return
-
         await self.check_db_connection()
         async with self.db_pool.acquire() as connection:
-            row_count = await connection.fetchval(f"SELECT COUNT(*) FROM {table_name}")
-            if row_count == 0:
-                logger.info(f"{table_name} is empty. Inserting {len(data_list)} records...")
-                await self.insert_db(table_name, data_list)
-                logger.info(f"Inserted {len(data_list)} records into {table_name}.")
-            else:
-                logger.info(f"{table_name} already has {row_count} records. Skipping insert.")
+            query = "SELECT EXISTS (SELECT FROM pg_tables WHERE tablename = $1)"
+            result = await connection.fetchval(query, table_name)
+            return result
+        
+    async def table_empty(self, table_name: str) -> bool:
+        """ 
+        檢查 table 是否為空 
+        :param table_name: 欲檢查的資料表名稱
+        :return: 如果資料表為空，返回 True，否則返回 False
+        """
+        await self.check_db_connection()
+        async with self.db_pool.acquire() as connection:
+            query = f"SELECT COUNT(*) FROM \"{table_name}\""
+            count = await connection.fetchval(query)
+            return count == 0
 
     async def create_table(self, table_name: str, columns: dict):
         """
@@ -132,39 +127,54 @@ class ApplianceDB:
         self.allowed_tables.add(table_name)
         self.allowed_columns[table_name] = set(columns.keys())
 
+    async def clear_table(self, table_name: str):
+        """ 清空整個資料表 """
+        await self.check_db_connection()
+        async with self.db_pool.acquire() as connection:
+            sql_cmd = f'DELETE FROM "{table_name}"'
+            await connection.execute(sql_cmd)
 
-    async def get_db(self, table_name: str, column_names: list[str] = None, value: str = None, include_inactive: bool = False) -> list:
+    async def get_db(self, table_name: str, column_names: list[str] = None, value: str | list[str] = None, include_inactive: bool = False) -> list:
         """
         查詢資料，支援全表查詢、欄位篩選與條件查詢。
         - 預設只查 is_active = TRUE 的資料。
-        - 若需包含停用資料，請傳入 include_inactive=True。
+        - 若需包含停用資料，或是不含is_active，請傳入 include_inactive=True。
         - 安全查詢資料，含欄位與表格名稱白名單限制
         """
         await self.check_db_connection()
 
-        # 檢查白名單
-        if table_name not in self.allowed_tables:
-            raise ValueError("Invalid table name.")
-        valid_columns = self.allowed_columns.get(table_name, set())
-        if column_names:
-            if not set(column_names).issubset(valid_columns):
-                raise ValueError("Invalid column(s) in select_columns.")
+        # 檢查表格是否有 is_active 欄位
+        has_is_active = table_name in self.tables_with_is_active
 
         async with self.db_pool.acquire() as connection:
             if column_names and value: 
-                # 查詢指定欄位 = 值，並可選擇是否包含停用資料
-                sql_cmd = f'SELECT * FROM "{table_name}" WHERE {column_names[0]} = $1'
-                sql_cmd = sql_cmd + " AND is_active = TRUE" if not include_inactive else sql_cmd
-                result = await connection.fetch(sql_cmd, value)
+                if not isinstance(value, list):
+                    value = [value]
+                placeholders = ', '.join(f'${i+1}' for i in range(len(value)))
+                sql_cmd = f'SELECT * FROM "{table_name}" WHERE {column_names[0]} IN ({placeholders})'
+                
+                if has_is_active and not include_inactive: 
+                    sql_cmd += " AND is_active = TRUE"
+                
+                result = await connection.fetch(sql_cmd, *value)
+                
             elif column_names:
                 col_str = ", ".join(column_names)
                 sql_cmd = f'SELECT {col_str} FROM "{table_name}"'
-                sql_cmd = sql_cmd + " WHERE is_active = TRUE" if not include_inactive else sql_cmd
+                
+                if has_is_active and not include_inactive: 
+                    sql_cmd += " WHERE is_active = TRUE"
+                    
                 result = await connection.fetch(sql_cmd)
+                
             else:
                 sql_cmd = f'SELECT * FROM "{table_name}"'
-                sql_cmd = sql_cmd + " WHERE is_active = TRUE" if not include_inactive else sql_cmd
+                
+                if has_is_active and not include_inactive: 
+                    sql_cmd += " WHERE is_active = TRUE"
+                    
                 result = await connection.fetch(sql_cmd)
+                
             return [dict(row) for row in result] if result else []
 
     async def insert_db(self, table_name: str, data: dict | list[dict]):
@@ -233,6 +243,37 @@ class ApplianceDB:
             
             return dict(result) if result else None
 
+    async def upsert_db(self, table_name: str, data: dict, conflict_keys: list[str]) -> str:
+        """
+        有就更新，沒有就新增。資料相同則不做動作。
+        :param table_name: 資料表名稱
+        :param data: 欲 upsert 的 dict
+        :param conflict_keys: 唯一鍵欄位名稱 list
+        :return: "changed"（新增或更新）或 "unchanged"（資料完全一樣）
+        """
+        await self.check_db_connection()
+        columns = list(data.keys())
+        col_str = ', '.join(columns)
+        placeholders = ', '.join(f'${i+1}' for i in range(len(columns)))
+        update_columns = [col for col in columns if col not in conflict_keys]
+        update_str = ', '.join(f"{col} = EXCLUDED.{col}" for col in update_columns)
+        conflict_str = ', '.join(conflict_keys)
+        where_str = ' OR '.join(
+            f'"{table_name}".{col} IS DISTINCT FROM EXCLUDED.{col}' for col in update_columns
+        )
+
+        sql_cmd = (
+            f'INSERT INTO "{table_name}" ({col_str}) VALUES ({placeholders}) '
+            f'ON CONFLICT ({conflict_str}) DO UPDATE SET {update_str} '
+            f'WHERE {where_str} '
+            f'RETURNING true'
+        )
+
+        async with self.db_pool.acquire() as connection:
+            result = await connection.fetchval(sql_cmd, *data.values())
+            return "changed" if result else "unchanged"
+
+
     async def delete_db(self, table_name: str, condition: dict):
         """ 刪除資料 """
         await self.check_db_connection()
@@ -244,5 +285,3 @@ class ApplianceDB:
                 raise ValueError(f"Operation failed on {table_name}, possibly due to missing matching records.")
             
             return dict(result) if result else None
-
-db = ApplianceDB()

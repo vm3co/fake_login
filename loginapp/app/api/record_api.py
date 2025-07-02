@@ -26,10 +26,8 @@ async def writer_db(url_id, new_data):
     for index, dd in enumerate(data):
         if data[dd] is None: data[dd] = []
         data[dd].append(new_data[index])
-        logger.debug(f"{index}: {data[dd]}")
     logger.debug(f"data: {data}")
     condition = {"uuid": person_uuid}
-    logger.debug(f"uuid: {person_uuid}")
     await db.update_db(table_name, data, condition)
 
 # 進入login後記錄id
@@ -38,7 +36,7 @@ class VisitData(BaseModel):
 
 @router.post("/visit")
 async def log_visit(data: VisitData, request: Request):
-    url_id = data.url.split("/")[-1]
+    url_id = data.url.split("/")[-1][:64]
     ip = request.headers.get("x-forwarded-for", request.client.host)           # 記錄使用者的id資訊
     now = int(datetime.now().timestamp())   # 記錄當下時間戳
     new_data = ["visit", ip, now]
@@ -53,7 +51,7 @@ class LoginData(BaseModel):
 
 @router.post("/login")
 async def log_login(data: LoginData, request: Request):
-    url_id = data.url.split("/")[-1]
+    url_id = data.url.split("/")[-1][:64]
     ip = request.headers.get("x-forwarded-for", request.client.host)           # 記錄使用者的ip資訊(抓header上的ip)
     now = int(datetime.now().timestamp())   # 記錄當下時間戳
     new_data = [f"login:{data.email}", ip, now]

@@ -44,7 +44,7 @@ class ApplianceDB:
             async with self.db_pool.acquire() as connection:
                 await connection.fetch("SELECT 1")
         except Exception as e:
-            print(f"Database connection lost: {e}. Reinitializing...")
+            logger.error(f"Database connection lost: {e}. Reinitializing...")
             await self.db_close()
             await self.db_init()
 

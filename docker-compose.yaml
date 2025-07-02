@@ -3,7 +3,7 @@
 services:
   postgres-db:
     image: postgres:16
-    container_name: fake-login-postgres
+    container_name: fake-login-postgres-db
     environment:
       POSTGRES_USER: myuser
       POSTGRES_PASSWORD: mypassword
@@ -11,7 +11,9 @@ services:
     ports:
       - "15432:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - ./data/db:/var/lib/postgresql/data
+      # - pgdata:/var/lib/postgresql/data
+      # - ./pg_backup:/backup
     # 監控DB是否建好
     healthcheck:   
       test: ["CMD", "pg_isready", "-U", "myuser", "-d", "mydatabase"]
@@ -19,20 +21,20 @@ services:
       timeout: 5s
       retries: 5
 
-  login-app:
-    build:
-      context: ./loginapp
-    container_name: fake-login-login-app
-    ports:
-      - "${LOGIN_PORT}:8080"
-    environment:
-      - LOG_FILE=${LOG_PATH}
-    volumes:
-      - ./data:/data
-    # 監控DB是否建好，建好再連線
-    depends_on:
-      postgres-db:
-        condition: service_healthy
+  # login-app:
+  #   build:
+  #     context: ./loginapp
+  #   container_name: fake-login-login-app
+  #   ports:
+  #     - "${LOGIN_PORT}:8080"
+  #   environment:
+  #     - LOG_FILE=${LOG_PATH}
+  #   volumes:
+  #     - ./loginapp/Logger:/app/Logger
+  #   # 監控DB是否建好，建好再連線
+  #   depends_on:
+  #     postgres-db:
+  #       condition: service_healthy
 
 
   admin-app:
@@ -41,14 +43,15 @@ services:
     container_name: fake-login-admin-app
     ports:
       - "${ADMIN_PORT}:8080"
-    environment:
-      - LOG_FILE=${LOG_PATH}
     volumes:
-      - ./data:/data
+      # - ./adminapp/Logger:/app/Logger
+      # - ./adminapp/app/certs:/app/app/certs
+      # - ./adminapp/frontend:/app/frontend
+      - ./adminapp:/app
     # 監控DB是否建好，建好再連線
     depends_on:
       postgres-db:
         condition: service_healthy
 
-volumes:
-  pgdata:
+# volumes:
+#   pgdata:
