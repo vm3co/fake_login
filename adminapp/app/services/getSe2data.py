@@ -57,7 +57,6 @@ class getSe2data:
                 logger.error(f"Unhandled exception: {e}")
             return None
 
-
     async def multiple_pages(self, payload_template: dict, url: str) -> list:
         '''處理多頁面請求'''
         all_data = []
@@ -66,7 +65,7 @@ class getSe2data:
             await asyncio.sleep(0.1)  # 加一點延遲避免被擋
             payload = payload_template.copy()
             payload["page_sn"] = page
-            logger.info(f"Requesting page {page}...")
+            # logger.info(f"Requesting page {page}...")
             # 發送 POST 請求
             data = await self.send_post(url, payload)
             if data is None:
@@ -85,51 +84,42 @@ class getSe2data:
         logger.info(f"Total items fetched: {len(all_data)}")
         return all_data
 
-    async def get_sendtasks(self, days=15) -> pd.DataFrame | None:
+    async def get_sendtasks(self, end_time=None, start_time=None, filter_time_range=0) -> pd.DataFrame | None:
         '''
-        抓取執行中專案清單(執行完畢的專案，預設只取15天內)
-        :param days: 抓取的天數範圍，預設為15天
+        抓取執行中專案清單(帶入參數可以指定專案建立時間)(撇除前測任務)
+        
+        :return: DataFrame 包含 sendtask 資料
         '''
         # 要發送 POST 的目標網址
         logger.info("Fetching sendtasks...")
         url = self.url + '/api/case/get_sendtasks'
         payload_template = {
-            "end_time": None,
-            "filter_time_range": 0,
+            "end_time": end_time,
+            "filter_time_range": filter_time_range,
             "order_field": "CreateTime",
             "order_method": "desc",
             "page_sn": 1,
             "record_page": 20,
             "sendtask_keyword": "",
-            "sendtask_prestart": "all",
-            "start_time": None,
+            "sendtask_prestart": "no",
+            "start_time": start_time,
             "time_field": "CreateTime"
         }
         all_data = await self.multiple_pages(payload_template, url)
         if all_data:
             # 將資料轉換為 DataFrame        
             sendtasks_df = pd.DataFrame(all_data)
-            # 取得當前時間戳
-            now = int(time.time())
-            # 計算抓取任務範圍的時間戳
-            ago = now - (days * 24 * 60 * 60)  # days轉換為秒
-            # 過濾條件(test_end_ut >= days) 或 (pre_test_end_ut >= days) 或 (pre_test_end_ut > 現在) 或 (test_end_ut > 現在)
-            filtered_df = sendtasks_df[
-                (sendtasks_df["test_end_ut"] >= ago) |
-                (sendtasks_df["pre_test_end_ut"] >= ago) |
-                (sendtasks_df["pre_test_end_ut"] > now) |
-                (sendtasks_df["test_end_ut"] > now)
-            ]
-            return filtered_df
-        return None
-    
-    async def get_sendtask_is_pause(self, uuid: str) -> dict | None:
+            return sendtasks_df
+        return None        
+
+
+    async def get_sendtask_metadata(self, uuid: str) -> dict | None:
         '''
-        抓取單一專案是否被暫停
+        抓取單一專案是否被暫停，以及是否有延長任務時間
         :param uuid: 專案的 UUID
         '''
         # 要發送 POST 的目標網址
-        logger.info(f"Checking if sendtask {uuid} is paused...")
+        # logger.info(f"Checking if sendtask {uuid} is paused...")
         url = self.url + '/api/case/get_sendtask'
         payload = {
             "sendlog_type":"test",  # 預設為 test

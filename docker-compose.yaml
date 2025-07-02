@@ -11,9 +11,9 @@ services:
     ports:
       - "15432:5432"
     volumes:
-      # - ./data/db:/var/lib/postgresql/data
-      - pgdata:/var/lib/postgresql/data
-      - ./pg_backup:/backup
+      - ./data/db:/var/lib/postgresql/data
+      # - pgdata:/var/lib/postgresql/data
+      # - ./pg_backup:/backup
     # 監控DB是否建好
     healthcheck:   
       test: ["CMD", "pg_isready", "-U", "myuser", "-d", "mydatabase"]
@@ -44,12 +44,14 @@ services:
     ports:
       - "${ADMIN_PORT}:8080"
     volumes:
-      - ./adminapp/Logger:/app/Logger
-      - ./adminapp/app/certs:/app/app/certs
+      # - ./adminapp/Logger:/app/Logger
+      # - ./adminapp/app/certs:/app/app/certs
+      # - ./adminapp/frontend:/app/frontend
+      - ./adminapp:/app
     # 監控DB是否建好，建好再連線
     depends_on:
       postgres-db:
         condition: service_healthy
 
-volumes:
-  pgdata:
+# volumes:
+#   pgdata:

@@ -1,3 +1,10 @@
+# -*- coding: utf-8 -*-
+'''
+資料庫控制模組，提供資料庫連線、初始化、關閉、檢查連線等功能。
+此模組使用 asyncpg 連接 PostgreSQL 資料庫，並提供基本的資料表操作功能。
+支援的資料表包括 sendtasks、accts、users 等，並提供建立新資料表、清空資料表、檢查資料表是否存在等功能。
+'''
+
 import re
 import asyncpg
 import aiofiles
@@ -10,6 +17,8 @@ logger = Logger().get_logger()
 class ApplianceDB:
     def __init__(self):
         self.db_pool = None
+        # 定義哪些表格有 is_active 欄位
+        self.tables_with_is_active = {"sendtasks", "accts", "users"}
         self.allowed_tables = {"sendtasks", "accts", "users"}
         self.allowed_columns = {
             "sendtasks": {"sendtask_id", "sendtask_uuid", "sendtask_owner_gid", "sendtask_create_ut"},
@@ -134,36 +143,38 @@ class ApplianceDB:
         """
         await self.check_db_connection()
 
-        # 檢查白名單
-        # if table_name not in self.allowed_tables:
-        #     raise ValueError("Invalid table name.")
-        # valid_columns = self.allowed_columns.get(table_name, set())
-        # if column_names:
-        #     if not set(column_names).issubset(valid_columns):
-        #         raise ValueError("Invalid column(s) in select_columns.")
+        # 檢查表格是否有 is_active 欄位
+        has_is_active = table_name in self.tables_with_is_active
 
         async with self.db_pool.acquire() as connection:
             if column_names and value: 
-                # 查詢指定欄位 = 值，並可選擇是否包含停用資料
                 if not isinstance(value, list):
                     value = [value]
-                col_str = ", ".join(column_names)
                 placeholders = ', '.join(f'${i+1}' for i in range(len(value)))
                 sql_cmd = f'SELECT * FROM "{table_name}" WHERE {column_names[0]} IN ({placeholders})'
-                if not include_inactive: 
+                
+                if has_is_active and not include_inactive: 
                     sql_cmd += " AND is_active = TRUE"
+                
                 result = await connection.fetch(sql_cmd, *value)
+                
             elif column_names:
                 col_str = ", ".join(column_names)
                 sql_cmd = f'SELECT {col_str} FROM "{table_name}"'
-                if not include_inactive: 
+                
+                if has_is_active and not include_inactive: 
                     sql_cmd += " WHERE is_active = TRUE"
+                    
                 result = await connection.fetch(sql_cmd)
+                
             else:
                 sql_cmd = f'SELECT * FROM "{table_name}"'
-                if not include_inactive: 
+                
+                if has_is_active and not include_inactive: 
                     sql_cmd += " WHERE is_active = TRUE"
+                    
                 result = await connection.fetch(sql_cmd)
+                
             return [dict(row) for row in result] if result else []
 
     async def insert_db(self, table_name: str, data: dict | list[dict]):
@@ -232,26 +243,36 @@ class ApplianceDB:
             
             return dict(result) if result else None
 
-    async def upsert_db(self, table_name: str, data: dict, conflict_keys: list[str]):
+    async def upsert_db(self, table_name: str, data: dict, conflict_keys: list[str]) -> str:
         """
-        有就更新，沒有就新增（PostgreSQL ON CONFLICT）。
+        有就更新，沒有就新增。資料相同則不做動作。
         :param table_name: 資料表名稱
         :param data: 欲 upsert 的 dict
         :param conflict_keys: 唯一鍵欄位名稱 list
+        :return: "changed"（新增或更新）或 "unchanged"（資料完全一樣）
         """
         await self.check_db_connection()
         columns = list(data.keys())
         col_str = ', '.join(columns)
         placeholders = ', '.join(f'${i+1}' for i in range(len(columns)))
-        update_str = ', '.join(f"{col}=EXCLUDED.{col}" for col in columns if col not in conflict_keys)
+        update_columns = [col for col in columns if col not in conflict_keys]
+        update_str = ', '.join(f"{col} = EXCLUDED.{col}" for col in update_columns)
         conflict_str = ', '.join(conflict_keys)
+        where_str = ' OR '.join(
+            f'"{table_name}".{col} IS DISTINCT FROM EXCLUDED.{col}' for col in update_columns
+        )
+
         sql_cmd = (
             f'INSERT INTO "{table_name}" ({col_str}) VALUES ({placeholders}) '
-            f'ON CONFLICT ({conflict_str}) DO UPDATE SET {update_str} RETURNING *'
+            f'ON CONFLICT ({conflict_str}) DO UPDATE SET {update_str} '
+            f'WHERE {where_str} '
+            f'RETURNING true'
         )
+
         async with self.db_pool.acquire() as connection:
-            result = await connection.fetchrow(sql_cmd, *data.values())
-            return dict(result) if result else None
+            result = await connection.fetchval(sql_cmd, *data.values())
+            return "changed" if result else "unchanged"
+
 
     async def delete_db(self, table_name: str, condition: dict):
         """ 刪除資料 """
