@@ -8,22 +8,21 @@ function getCookie(name) {
     return valueArr;
 }
 
-export function useCheckTodayCreateTasks({ refresh, setIsCheckingTasks }) {
+export function useCheckTodayCreateTasks({ refresh, setIsCheckingSends }) {
     const { controllerRef, createController } = useAbortOnUnmount();
 
     // 檢查新增或移除的任務
     const fetchCheckTodayCreateTasks = () => {
-        // 先中止前一個請求
-        if (controllerRef.current) {
-            controllerRef.current.abort();
-        }
-
         // 彈出確認視窗
         if (!window.confirm("確定要執行檢查今日建立任務嗎？")) {
             return;
         }
-
-        setIsCheckingTasks(true);
+        
+        setIsCheckingSends(true);
+        // 先中止前一個請求
+        if (controllerRef.current) {
+            controllerRef.current.abort();
+        }
         // 從 Cookie 中取得 orgs
         const orgsArr = getCookie("orgs");
         // 建立新的 controller
@@ -49,7 +48,7 @@ export function useCheckTodayCreateTasks({ refresh, setIsCheckingTasks }) {
                 } else {
                     alert("檢查任務失敗：" + json.message);
                 }
-                setIsCheckingTasks(false);
+                setIsCheckingSends(false);
             })
             .catch((err) => {
             if (err.name === "AbortError") {
@@ -58,7 +57,7 @@ export function useCheckTodayCreateTasks({ refresh, setIsCheckingTasks }) {
                 console.error("發生錯誤", err);
                 alert("伺服器錯誤，請稍後再試");
             }
-            setIsCheckingTasks(false);
+            setIsCheckingSends(false);
         });
     };
 

@@ -53,7 +53,7 @@ export default function Footer() {
             <Span m="auto" />
  */}
             <Paragraph m={0}>
-              Design and Developed by ICD230
+              Design and Developed by ACSI 安碁資訊
             </Paragraph>
           </FooterContent>
         </AppFooter>

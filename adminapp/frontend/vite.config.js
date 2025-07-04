@@ -21,13 +21,38 @@ export default defineConfig({
       app: path.resolve(__dirname, "src/app")
     }
   },
-  // server: {
-  //   proxy: {
-  //     "/api": {
-  //       target: "http://localhost:8091",  // 對應到後端 API
-  //       changeOrigin: true,
-  //       secure: false
-  //     }
-  //   }
-  // }
 });
+
+
+
+//------------------------------------------------//
+
+// // 測試模式
+
+
+// import path from "path";
+// import { defineConfig } from "vite";
+// import react from "@vitejs/plugin-react";
+
+// export default defineConfig({
+//   plugins: [react()],
+//   server: {
+//     proxy: {
+//       '/api': {
+//         target: 'http://localhost:8091',  // 您的後端地址
+//         changeOrigin: true,
+//         // 如果後端還沒準備好，可以暫時模擬
+//         configure: (proxy, options) => {
+//           proxy.on('error', (err, req, res) => {
+//             console.log('proxy error', err);
+//           });
+//         }
+//       }
+//     }
+//   },
+//   resolve: {
+//     alias: {
+//       app: path.resolve(__dirname, "src/app")  // 重要：加入這個路徑別名
+//     }
+//   }
+// });

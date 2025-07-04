@@ -47,6 +47,8 @@ def calc_stats(stats):
     # 今日為寄送最後的 plan_time（如果有的話）
     today_latest_plan_time = max(today_plan_time) if today_plan_time else 0
 
+    # 任務第一封的 plan_time
+    all_earliest_plan_time = min(t["plan_time"] for t in stats) if stats else 0
     # 任務最後一封的 plan_time
     all_latest_plan_time = max(t["plan_time"] for t in stats) if stats else 0
     # # 任務最後一封的 send_time
@@ -58,6 +60,7 @@ def calc_stats(stats):
         "todayunsend": len(todayUnsend),
         "today_earliest_plan_time": today_earliest_plan_time,
         "today_latest_plan_time": today_latest_plan_time,
+        "all_earliest_plan_time": all_earliest_plan_time,
         "all_latest_plan_time": all_latest_plan_time,
         "todaysend": len(todaySends),
         "todaysuccess": len(todaySuccess),
@@ -329,7 +332,7 @@ class DBUser:
         :param password_hash: 密碼哈希值
         """
         await self.db.check_db_connection()
-        accts_data = await self.db.get_db("accts", column_names=["acct_email"], value=email)
+        accts_data = await self.db.get_db("accts", column_names=["acct_id"], value=email)
         if not accts_data:
             logger.error(f"Email {email} does not exist in the main system (accts).")
             return {"status": "error", "msg": "帳號不存在在主系統"}

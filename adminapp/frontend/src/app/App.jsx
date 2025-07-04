@@ -10,7 +10,7 @@ import { SendtaskListProvider } from "./contexts/SendtaskListContext";
 // ROUTES
 import routes from "./routes";
 // Global styles
-import "./app.css";
+import "./App.css";
 // FAKE SERVER
 import "../__api__";
 

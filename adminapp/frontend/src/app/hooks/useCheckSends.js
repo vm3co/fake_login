@@ -5,12 +5,12 @@ export function useCheckSends({ refresh, setIsCheckingSends, setUpdatedTodayUuid
 
     // 更新寄送任務的狀態
     const fetchCheckSends = async (uuids = []) => {
-        setIsCheckingSends(true);
-
         // 彈出確認視窗
         if (!window.confirm("確定要執行寄送狀態更新嗎？")) {
             return;
         }
+
+        setIsCheckingSends(true);
         // 建立新的 controller，並中斷前一個請求
         const controller = createController();
         // 只取今日未寄送最早的 plan_time 非0的任務

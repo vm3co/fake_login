@@ -30,7 +30,6 @@ export default function MatxMenu(props) {
           open={!!anchorEl}
           anchorEl={anchorEl}
           onClose={handleClose}
-          getContentAnchorEl={null}
           anchorOrigin={{ vertical: "bottom", horizontal: horizontalPosition }}
           transformOrigin={{ vertical: "top", horizontal: horizontalPosition }}>
           {children.map((child, index) => (

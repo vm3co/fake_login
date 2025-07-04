@@ -1,26 +1,18 @@
-import { memo, useState, useContext } from "react";
+import { memo, useContext } from "react";
 // import { Link } from "react-router-dom";
 import Box from "@mui/material/Box";
-// import Avatar from "@mui/material/Avatar";
+import Typography from "@mui/material/Typography";
 import MenuItem from "@mui/material/MenuItem";
 import IconButton from "@mui/material/IconButton";
 import AssignmentTurnedIn from "@mui/icons-material/AssignmentTurnedIn";
-// import Button from "@mui/material/Button";
 import styled from "@mui/material/styles/styled";
 import useTheme from "@mui/material/styles/useTheme";
 import useMediaQuery from "@mui/material/useMediaQuery";
-// import Home from "@mui/icons-material/Home";
 import Menu from "@mui/icons-material/Menu";
-// import Person from "@mui/icons-material/Person";
-// import Settings from "@mui/icons-material/Settings";
-// import WebAsset from "@mui/icons-material/WebAsset";
-// import MailOutline from "@mui/icons-material/MailOutline";
-// import StarOutline from "@mui/icons-material/StarOutline";
 import PowerSettingsNew from "@mui/icons-material/PowerSettingsNew";
 
 import useAuth from "app/hooks/useAuth";
 import useSettings from "app/hooks/useSettings";
-// import { NotificationProvider } from "app/contexts/NotificationContext";
 import { useCheckTasks } from "app/hooks/useCheckTasks";
 import { useCheckTodayCreateTasks } from "app/hooks/useCheckTodayCreateTasks";
 import { SendtaskListContext } from "app/contexts/SendtaskListContext";
@@ -29,9 +21,6 @@ import { Span } from "app/components/Typography";
 import { MatxMenu } from "app/components";
 import { themeShadows } from "app/components/MatxTheme/themeColors";
 import { topBarHeight } from "app/utils/constant";
-// import ShoppingCart from "app/components/ShoppingCart";
-// import { MatxSearchBox } from "app/components";
-// import { NotificationBar } from "app/components/NotificationBar";
 
 
 // STYLED COMPONENTS
@@ -93,10 +82,10 @@ const Layout1Topbar = () => {
   const { logout, user } = useAuth();
   const isMdScreen = useMediaQuery(theme.breakpoints.down("md"));
 
-  const [isCheckingTasks, setIsCheckingTasks] = useState(false);
-  const { refresh } = useContext(SendtaskListContext);
-  const { fetchCheckTasks } = useCheckTasks({ refresh, setIsCheckingTasks });
-  const { fetchCheckTodayCreateTasks } = useCheckTodayCreateTasks({ refresh, setIsCheckingTasks });
+  const { refresh, isCheckingSends, setIsCheckingSends } = useContext(SendtaskListContext);
+  const { fetchCheckTasks } = useCheckTasks({ refresh, setIsCheckingSends });
+  const { fetchCheckTodayCreateTasks } = useCheckTodayCreateTasks({ refresh, setIsCheckingSends });
+
 
   const updateSidebarMode = (sidebarSettings) => {
     updateSettings({ layout1Settings: { leftSidebar: { ...sidebarSettings } } });
@@ -121,18 +110,11 @@ const Layout1Topbar = () => {
             <Menu />
           </StyledIconButton>
 
-          {/* <Box display="flex" ml="auto" alignItems="center">
-            <Span sx={{ mr: 2 }}>
-              Hi <strong>{user.name}</strong>
-            </Span>
-            <Button
-              variant="outlined"
-              color="secondary"
-              onClick={logout}
-            >
-              Logout
-            </Button>
-          </Box> */}
+          <Box display="flex" ml="auto" alignItems="center">
+            <Typography variant="h4" component="h6" sx={{ mr: 2, fontWeight: 'bold', fontFamily: 'Noto Sans TC, sans-serif' }}>
+              社交工程管理系統
+            </Typography>
+          </Box>
 
 
           {/* <IconBox>
@@ -151,7 +133,7 @@ const Layout1Topbar = () => {
         </Box>
 
         <Box display="flex" alignItems="center">
-          {isCheckingTasks && (
+          {isCheckingSends && (
             <Span sx={{ color: "blue", marginRight: 2, whiteSpace: "nowrap" }}>
               任務列表更新中...
             </Span>
@@ -174,11 +156,32 @@ const Layout1Topbar = () => {
                 {/* <Avatar src={user.avatar} sx={{ cursor: "pointer" }} /> */}
               </UserMenu>
             }>
-            <StyledItem onClick={fetchCheckTodayCreateTasks}>
+            <StyledItem 
+              onClick={isCheckingSends ? undefined : fetchCheckTodayCreateTasks}
+              disabled={isCheckingSends}
+              sx={{
+                opacity: isCheckingSends ? 0.5 : 1,
+                cursor: isCheckingSends ? 'not-allowed' : 'pointer',
+                '&:hover': {
+                  backgroundColor: isCheckingSends ? 'transparent' : 'action.hover'
+                }
+              }}
+            >
               <AssignmentTurnedIn />
               <Span sx={{ marginInlineStart: 1 }}>檢查今日建立任務</Span>
             </StyledItem>
-            <StyledItem onClick={fetchCheckTasks}>
+            
+            <StyledItem
+              onClick={isCheckingSends ? undefined : fetchCheckTasks}
+              disabled={isCheckingSends}
+              sx={{
+                opacity: isCheckingSends ? 0.5 : 1,
+                cursor: isCheckingSends ? 'not-allowed' : 'pointer',
+                '&:hover': {
+                  backgroundColor: isCheckingSends ? 'transparent' : 'action.hover'
+                }
+              }}
+            >
               <AssignmentTurnedIn />
               <Span sx={{ marginInlineStart: 1 }}>更新任務列表</Span>
             </StyledItem>

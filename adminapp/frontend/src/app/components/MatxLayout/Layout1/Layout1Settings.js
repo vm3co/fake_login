@@ -1,7 +1,7 @@
 const Layout1Settings = {
   leftSidebar: {
     show: true,
-    mode: "compact", // full(完全展開模式), close(收起模式), compact(緊湊模式), mobile,
+    mode: "full", // full(完全展開模式), close(收起模式), compact(緊湊模式), mobile,
     theme: "slateDark1", // View all valid theme colors inside MatxTheme/themeColors.js
     bgImgURL: "/assets/images/sidebar/sidebar-bg-dark.jpg"
   },

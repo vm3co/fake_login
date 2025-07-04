@@ -1,6 +1,6 @@
 const navigations = [
   { name: "Dashboard", path: "/dashboard/default", icon: "dashboard" },
-  // { name: "任務列表", path: "/tasklist", icon: "list" },
+  { name: "客戶帳號(開發中)", path: "/customers", icon: "list", disabled: true },
   // { label: "PAGES", type: "label" },
   // {
   //   name: "Session/Auth",
@@ -39,6 +39,12 @@ const navigations = [
   //   icon: "trending_up",
   //   children: [{ name: "Echarts", path: "/charts/echarts", iconText: "E" }]
   // },
+  {
+    name: "使用手冊",
+    icon: "launch",
+    type: "extLink",
+    path: "https://hackmd.io/@MikeXu/HJUO4uGreg"
+  },
   {
     name: "ACSI 社交工程演練平台",
     icon: "launch",

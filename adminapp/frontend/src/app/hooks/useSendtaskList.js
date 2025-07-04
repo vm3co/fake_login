@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import useAbortOnUnmount from "app/hooks/useAbortOnUnmount";
 
 
@@ -15,7 +15,11 @@ export default function useSendtaskList() {
     const [loading, setLoading] = useState(true);
     const [tasksData, setTasksData] = useState([]);
     const [statsData, setStatsData] = useState({}); // 存所有統計資料
+    const [isCheckingSends, setIsCheckingSends] = useState(false); // 新增
     const { createController } = useAbortOnUnmount();  //控制網頁關閉時結束api
+
+    // 用於追蹤所有進行中的請求
+    const activeRequestsRef = useRef(new Set());
 
     const fetchStats = async (uuids) => {
         if (!uuids.length) return;
@@ -77,9 +81,85 @@ export default function useSendtaskList() {
         fetchData(orgs, controller);
     }
 
+    // 註冊請求控制器
+    const registerRequest = (controller) => {
+        activeRequestsRef.current.add(controller);
+        return () => {
+            activeRequestsRef.current.delete(controller);
+        };
+    };
+
+    // 中止所有進行中的請求
+    const abortAllRequests = () => {
+        activeRequestsRef.current.forEach(controller => {
+            try {
+                controller.abort();
+            } catch (error) {
+                console.log(error)
+                // 忽略已經中止的請求
+            }
+        });
+        activeRequestsRef.current.clear();
+        setIsCheckingSends(false);
+    };
+
     useEffect(() => {
         setLoading(true);
         refresh();
+    }, []);
+
+
+    useEffect(() => {
+        // 監聽頁面重新整理和關閉事件
+        const handleBeforeUnload = (event) => {
+            if (isCheckingSends) {
+                event.preventDefault();
+                event.returnValue = '有正在進行的更新任務，確定要離開嗎？';
+                return event.returnValue;
+            }
+        };
+
+        // 監聽頁面實際卸載事件
+        const handleUnload = () => {
+            if (isCheckingSends) {
+                abortAllRequests();
+            }
+        };
+
+        // 監聽頁面獲得焦點（用戶取消離開後回到頁面）
+        const handleFocus = () => {
+            if (isCheckingSends) {
+                console.log('用戶取消離開，任務繼續進行');
+            }
+        };
+
+        // 監聽頁面可見性變化
+        const handleVisibilityChange = () => {
+            if (!document.hidden && isCheckingSends) {
+                console.log('頁面重新可見，任務繼續進行');
+            } else if (document.hidden && isCheckingSends) {
+                console.log('頁面已隱藏，但保持請求繼續進行');
+            }
+        };
+
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        window.addEventListener('unload', handleUnload);
+        window.addEventListener('focus', handleFocus);
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+
+        return () => {
+            window.removeEventListener('beforeunload', handleBeforeUnload);
+            window.removeEventListener('unload', handleUnload);
+            window.removeEventListener('focus', handleFocus);
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
+    }, [isCheckingSends]);
+
+    useEffect(() => {
+        return () => {
+            // 組件卸載時中止所有請求
+            abortAllRequests();
+        };
     }, []);
 
     const todayTasks = tasksData.filter(row => {
@@ -88,10 +168,17 @@ export default function useSendtaskList() {
         return hasStats;
     });
 
-    console.log("useSendtaskList - final todayTasks:", todayTasks);
-    console.log("useSendtaskList - final todayTasks.length:", todayTasks.length);
-
-    return { loading, statsData, tasksData, todayTasks, refresh };
+    return { 
+        loading, 
+        statsData, 
+        tasksData, 
+        todayTasks, 
+        refresh, 
+        isCheckingSends, 
+        setIsCheckingSends,
+        registerRequest,    // 註冊請求
+        abortAllRequests    // 中止所有請求
+    };
     // statsData: { [sendtask_uuid]: stats, ... }
     // tasksData: [{ sendtask_id, ... }, ...]
     // todayTasks: [{ sendtask_id, ... }, ...] 只包含今日有計畫的任務
