@@ -59,7 +59,7 @@ def get_router(db, db_user):
     async def get_sendtasks(request: OrgsRequest):
         try:
             column_names = ["sendtask_id", "sendtask_uuid", "sendtask_owner_gid", "sendtask_create_ut", "is_pause", "stop_time_new"]
-            my_tasksname_list = await db.get_db("sendtasks", column_names=column_names, include_inactive=False)
+            my_tasksname_list = await db.get_db("sendtasks", select_columns=column_names)
             if request.orgs and request.orgs != ["admin"]:
                 my_tasksname_list = [
                     task for task in my_tasksname_list
@@ -76,8 +76,7 @@ def get_router(db, db_user):
         檢查sendtask是否有變更
         1. 讀取sendtask清單
         2. 與資料庫sendtask清單做diff
-        3. 新增到sendtask資料庫
-        4. 刪除sendtask資料庫的is_active=False
+        3. 新增及刪除到sendtask資料庫
         """
         try:
             sendtasks_columns = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "pre_test_end_ut",
@@ -85,7 +84,7 @@ def get_router(db, db_user):
                                   "test_start_ut", "is_pause", "stop_time_new"]
             all_tasksname_list = await db_user.get_se2_sendtasks(column_names=sendtasks_columns)
 
-            my_tasksname_list = await db.get_db("sendtasks", column_names=sendtasks_columns)
+            my_tasksname_list = await db.get_db("sendtasks", select_columns=sendtasks_columns)
 
             if request.orgs and request.orgs != ["admin"]:
                 all_tasksname_list = [
@@ -119,13 +118,16 @@ def get_router(db, db_user):
                         refresh_list.append(task["sendtask_uuid"])
                 sendlog_stats_status = await db_user.refresh_sendlog_stats(refresh_list)
 
-            # 刪除(is_active=FALSE)
+            # 刪除
             for item in removed_list:
-                await db.update_db(
-                    table_name="sendtasks",
-                    data={"is_active": False},
-                    condition={"sendtask_uuid": item["sendtask_uuid"]}
-                    )
+                uuid = item["sendtask_uuid"]
+                # sendtasks刪除資料
+                await db.delete_db(table_name="sendtasks", condition={"sendtask_uuid": uuid})
+                # sendlog_stats 刪除資料
+                await db.delete_db(table_name="sendlog_stats", condition={"sendtask_uuid": uuid})
+                # 刪除table
+                await db.drop_table(table_name=uuid)
+
 
             data = {"added": added_list, "removed": removed_list, "sendlog_stats_status": sendlog_stats_status}
             return {"status": "success", "data": data}
@@ -214,9 +216,8 @@ def get_router(db, db_user):
                 return {"status": "error", "message": "沒有收到 sendtask_uuids", "data": []}
             rows = await db.get_db(
                 table_name="sendlog_stats", 
-                column_names=["sendtask_uuid"],  # WHERE 條件欄位
-                value=sendtask_uuids,           # 要查詢的 UUID 列表
-                include_inactive=True           # 對 sendlog_stats 來說這個參數無效，但不會出錯
+                where_column="sendtask_uuid",  # WHERE 條件欄位
+                values=sendtask_uuids,           # 要查詢的 UUID 列表
             )
             return {"status": "success", "data": rows}
         except Exception as e:

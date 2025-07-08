@@ -97,6 +97,12 @@ class DBUser:
                                 "send_time", "send_res", "access_time", "access_src", "access_dev",
                                 "click_time", "click_src", "click_dev", "file_time", "file_src", "file_dev"]
         
+        # coustomer 資料表結構
+        self.customer_info = {"id": "SERIAL PRIMARY KEY", "customer_name": "TEXT UNIQUE NOT NULL",
+                              "customer_full_name": "TEXT", "password_hash": "TEXT NOT NULL", "sendtasks": "TEXT[]",
+                              "create_time": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+                              "is_active": "BOOLEAN DEFAULT TRUE"}
+        
     async def table_initialize(self):
         """
         初始化資料表
@@ -120,7 +126,7 @@ class DBUser:
                     se2_list = await self.get_se2_sendtasks(self.sendtasks_columns, days=self.day)
                 elif table_name == "sendlog_stats":
                     # 取得sendtask_uuids
-                    sendtask_data = await self.db.get_db("sendtasks", column_names=["sendtask_uuid"])
+                    sendtask_data = await self.db.get_db("sendtasks", select_columns=["sendtask_uuid"])
                     sendtask_uuids = [t["sendtask_uuid"] for t in sendtask_data]
                     # 開始更新sendlog_stats table
                     sendlog_stats_status = await self.refresh_sendlog_stats(sendtask_uuids)
@@ -134,6 +140,11 @@ class DBUser:
                 logger.info(f"Inserted {len(se2_list)} records into {table_name}.")
             else:
                 logger.info(f"{table_name} already has data. Skipping initialization.")
+
+        # 從 users 資料表去新增 customer 資料表
+        if not self.db.table_empty("users"):
+            user_data = await self.db.get_db("users", select_columns=["username"])
+            self.check_customer(d["username"] for d in user_data)
 
     async def get_se2_accts(self, acct_columns=None) -> list[dict]:
         """
@@ -290,7 +301,7 @@ class DBUser:
         await self.db.check_db_connection()
         if uuids is None:
             logger.info("Fetching all sendtask uuids for refresh...")
-            sendtask_data = await self.db.get_db("sendtasks", column_names=["sendtask_uuid"])
+            sendtask_data = await self.db.get_db("sendtasks", select_columns=["sendtask_uuid"])
             uuids = [task["sendtask_uuid"] for task in sendtask_data]
         else:
             logger.info(f"Refreshing sendlog_stats for specified uuids: {uuids}")
@@ -301,7 +312,7 @@ class DBUser:
         sendlog_stats_status = {}
         for uuid in uuids:
             logger.info(f"Refreshing sendlog_stats for {uuid}")
-            data = await self.db.get_db(uuid, include_inactive=True)
+            data = await self.db.get_db(uuid)
             for dd in data:
                 dd.pop("id", None)
             stats = calc_stats(data)
@@ -322,7 +333,7 @@ class DBUser:
         :return: 如果使用者存在，返回 True，否則返回 False
         """
         await self.db.check_db_connection()
-        result = await self.db.get_db("users", column_names=["email"], value=email)
+        result = await self.db.get_db("users", where_column="email", values=email)
         return len(result) > 0
     
     async def insert_user(self, email: str, password_hash: str):
@@ -332,12 +343,13 @@ class DBUser:
         :param password_hash: 密碼哈希值
         """
         await self.db.check_db_connection()
-        accts_data = await self.db.get_db("accts", column_names=["acct_id"], value=email)
+        accts_data = await self.db.get_db("accts", where_column="acct_id", values=email)
         if not accts_data:
             logger.error(f"Email {email} does not exist in the main system (accts).")
             return {"status": "error", "msg": "帳號不存在在主系統"}
         acct = accts_data[0]
         data = {
+            "acct_uuid": acct["acct_uuid"],
             "username": acct["acct_id"],
             "password_hash": password_hash,
             "email": email,
@@ -346,4 +358,56 @@ class DBUser:
         }
         await self.db.insert_db("users", data)
         return {"status": "success", "msg": "註冊成功", "email": email, "username": data["username"]}
+    
+## customer 相關操作
+    async def check_customer(self, acct_mails: list):
+        tables_to_create = []
+        for mail in acct_mails:
+            table_name = mail.replace("@", "_") + "_customers"
+            if not await self.db.table_exists(table_name):
+                tables_to_create.append(table_name)
+        # 批次建立資料表
+        for table_name in tables_to_create:
+            await self.db.create_table(table_name, self.customer_info)
+            logger.info(f"Table {table_name} created.")
+        if not tables_to_create:
+            logger.info("All customer tables already exist.")  
 
+    async def customer_exists(self, username: str, customer_name: str) -> bool:
+        """
+        檢查客戶是否存在
+        :param username: 帳號名稱
+        :param name: 客戶名稱
+        :return: 如果客戶存在，返回 True，否則返回 False
+        """
+        await self.db.check_db_connection()
+        table_name = username.replace("@", "_") + "_customers"
+        result = await self.db.get_db(table_name, where_column="customer_name", values=customer_name)
+        return len(result) > 0
+
+    async def insert_customer(self, username: str, customer_name: str, customer_full_name: str, password_hash: str):
+        """
+        插入新客戶
+        :param customer_name: 客戶名稱
+        :param customer_full_name: 客戶全名
+        :param password_hash: 密碼哈希值
+        """
+        await self.db.check_db_connection()
+        data = {
+            "customer_name": customer_name,
+            "customer_full_name": customer_full_name,
+            "password_hash": password_hash,
+            "sendtasks": []
+        }
+        table_name = username.replace("@", "_") + "_customers"
+        await self.db.insert_db(table_name, data)
+        return {"status": "success", "msg": "新增客戶成功", "customer_name": customer_name}
+
+    async def add_customer_sendtasks(self, username: str, customer_name: str, sendtasks: list[str]):
+        await self.db.check_db_connection()
+        table_name = username.replace("@", "_") + "_customers"
+        status = await self.db.upsert_db(table_name, {
+                    "customer_name": customer_name,
+                    "sendtasks": sendtasks
+                }, conflict_keys=["customer_name"])
+        return status

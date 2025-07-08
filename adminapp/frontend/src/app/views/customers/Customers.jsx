@@ -1,4 +1,6 @@
 import styled from "@mui/material/styles/styled";
+import { SimpleCard } from "app/components";
+import CustomersPanel from "./CustomersPanel";
 
 import FormDialog from "./FormDialog";
 
@@ -18,6 +20,10 @@ export default function Customers() {
   return (
     <CustomersRoot>
       <FormDialog/>
+
+      <SimpleCard title="客戶帳號列表">
+        <CustomersPanel />
+      </SimpleCard>      
     </CustomersRoot>
   );
 }

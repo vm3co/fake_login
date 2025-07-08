@@ -17,8 +17,6 @@ logger = Logger().get_logger()
 class ApplianceDB:
     def __init__(self):
         self.db_pool = None
-        # 定義哪些表格有 is_active 欄位
-        self.tables_with_is_active = {"sendtasks", "accts", "users"}
         self.allowed_tables = {"sendtasks", "accts", "users"}
         self.allowed_columns = {
             "sendtasks": {"sendtask_id", "sendtask_uuid", "sendtask_owner_gid", "sendtask_create_ut"},
@@ -134,51 +132,57 @@ class ApplianceDB:
             sql_cmd = f'DELETE FROM "{table_name}"'
             await connection.execute(sql_cmd)
 
-    async def get_db(self, table_name: str, column_names: list[str] = None, value: str | list[str] = None, include_inactive: bool = False) -> list:
+    async def get_db(self, table_name: str, select_columns: list[str] = None, where_column: str = None, values: str | list[str] = None) -> list[dict]:
         """
-        查詢資料，支援全表查詢、欄位篩選與條件查詢。
-        - 預設只查 is_active = TRUE 的資料。
-        - 若需包含停用資料，或是不含is_active，請傳入 include_inactive=True。
-        - 安全查詢資料，含欄位與表格名稱白名單限制
+        查詢資料，支援欄位選擇與條件過濾（IN 查詢）。
+
+        :param table_name: 欲查詢的資料表名稱。
+        :param select_columns: 欲查詢的欄位名稱列表，若為 None 則查詢全部欄位（SELECT *）。
+        :param where_column: 欲篩選條件的欄位名稱（將搭配 `values` 使用）。
+        :param values: 欲查詢的值，可為單筆或多筆，將使用 `IN (...)` 條件查詢。
+        :return: 查詢結果列表，每筆為 dict 格式。
+        :raises ValueError: 傳入值與參數組合不合法時拋出錯誤。
         """
         await self.check_db_connection()
 
-        # 檢查表格是否有 is_active 欄位
-        has_is_active = table_name in self.tables_with_is_active
+        # 欄位處理
+        if select_columns:
+            col_str = ', '.join(select_columns)
+        else:
+            col_str = '*'
+
+        # 條件處理
+        where_clause = ''
+        bind_values = []
+
+        if where_column and values is not None:
+            if not isinstance(values, list):
+                values = [values]
+            if not values:
+                raise ValueError("查詢條件 values 不可為空列表")
+
+            placeholders = ', '.join(f'${i+1}' for i in range(len(values)))
+            where_clause = f' WHERE "{where_column}" IN ({placeholders})'
+            bind_values = values
+
+        # 組合 SQL
+        sql_cmd = f'SELECT {col_str} FROM "{table_name}"{where_clause}'
 
         async with self.db_pool.acquire() as connection:
-            if column_names and value: 
-                if not isinstance(value, list):
-                    value = [value]
-                placeholders = ', '.join(f'${i+1}' for i in range(len(value)))
-                sql_cmd = f'SELECT * FROM "{table_name}" WHERE {column_names[0]} IN ({placeholders})'
-                
-                if has_is_active and not include_inactive: 
-                    sql_cmd += " AND is_active = TRUE"
-                
-                result = await connection.fetch(sql_cmd, *value)
-                
-            elif column_names:
-                col_str = ", ".join(column_names)
-                sql_cmd = f'SELECT {col_str} FROM "{table_name}"'
-                
-                if has_is_active and not include_inactive: 
-                    sql_cmd += " WHERE is_active = TRUE"
-                    
-                result = await connection.fetch(sql_cmd)
-                
-            else:
-                sql_cmd = f'SELECT * FROM "{table_name}"'
-                
-                if has_is_active and not include_inactive: 
-                    sql_cmd += " WHERE is_active = TRUE"
-                    
-                result = await connection.fetch(sql_cmd)
-                
+            result = await connection.fetch(sql_cmd, *bind_values)
             return [dict(row) for row in result] if result else []
 
     async def insert_db(self, table_name: str, data: dict | list[dict]):
-        """ 單筆或批次插入資料，並自動分批避免 asyncpg 限制 """
+        """
+        插入單筆或多筆資料，並自動分批避免 asyncpg 的參數數量限制。
+
+        :param table_name: 資料表名稱。
+        :param data: 欲插入的資料，可以是 dict（單筆）或 list[dict]（多筆）。
+        :return: 
+            - 單筆插入：回傳插入後的資料（dict 格式）。
+            - 多筆插入：回傳插入後的資料列表（list[dict]）。
+        :raises TypeError: 若 data 非 dict 或 list[dict]。
+        """
         if not data:
             return None
 
@@ -231,7 +235,15 @@ class ApplianceDB:
                 raise TypeError("data 必須是 dict 或 list[dict]")
 
     async def update_db(self, table_name: str, data: dict, condition: dict):
-        """ 更新資料 """
+        """ 
+        更新資料
+
+        :param table_name: 資料表名稱。
+        :param data: 欲更新的欄位與值（dict 格式）。
+        :param condition: 更新條件（dict 格式），例如 {'id': 1}。
+        :return: 更新後的資料（dict 格式）。
+        :raises ValueError: 若無符合條件的資料可更新。
+        """
         await self.check_db_connection()
         async with self.db_pool.acquire() as connection:
             set_clause = ', '.join(f"{key} = ${i+1}" for i, key in enumerate(data.keys()))
@@ -245,11 +257,14 @@ class ApplianceDB:
 
     async def upsert_db(self, table_name: str, data: dict, conflict_keys: list[str]) -> str:
         """
-        有就更新，沒有就新增。資料相同則不做動作。
-        :param table_name: 資料表名稱
-        :param data: 欲 upsert 的 dict
-        :param conflict_keys: 唯一鍵欄位名稱 list
-        :return: "changed"（新增或更新）或 "unchanged"（資料完全一樣）
+        有就更新，沒有就新增。若資料內容相同則不做任何動作。
+
+        :param table_name: 資料表名稱。
+        :param data: 欲 upsert 的資料內容（dict 格式）。
+        :param conflict_keys: 判定唯一性的欄位名稱列表，用於 ON CONFLICT 子句（例如 ['id']）。
+        :return: 
+            - "changed"：資料已新增或更新。
+            - "unchanged"：資料內容完全相同，未進行任何變更。
         """
         await self.check_db_connection()
         columns = list(data.keys())
@@ -275,7 +290,14 @@ class ApplianceDB:
 
 
     async def delete_db(self, table_name: str, condition: dict):
-        """ 刪除資料 """
+        """ 
+        刪除資料 
+
+        :param table_name: 欲刪除資料的資料表名稱。
+        :param condition: 欲刪除資料所需的條件，格式為 dict（如 {'id': 123}）。
+        :return: 被刪除的資料（dict 格式）。若無符合條件的資料，將拋出 ValueError。
+        :raises ValueError: 若找不到符合條件的資料，則操作失敗。
+        """
         await self.check_db_connection()
         async with self.db_pool.acquire() as connection:
             condition_clause = ' AND '.join(f"{key} = ${i+1}" for i, key in enumerate(condition.keys()))
@@ -285,3 +307,16 @@ class ApplianceDB:
                 raise ValueError(f"Operation failed on {table_name}, possibly due to missing matching records.")
             
             return dict(result) if result else None
+    
+    async def drop_table(self, table_name: str):
+        """
+        刪除資料表
+        :param table_name: 欲刪除資料的資料表名稱。
+        :return: None
+        :raises Exception: 執行 DROP TABLE 發生錯誤時會拋出例外。
+        """
+        await self.check_db_connection()
+
+        sql_cmd = f'DROP TABLE IF EXISTS "{table_name}"'
+        async with self.db_pool.acquire() as connection:
+            await connection.execute(sql_cmd)

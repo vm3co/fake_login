@@ -49,6 +49,7 @@ def get_router(db, db_user):
         password_hash = hash_password(data.password)
         # 寫入資料庫並取得accts裡的資料
         result = await db_user.insert_user(email=data.email, password_hash=password_hash)
+        await db_user.check_customer([data.email])
         if not result:
             return {"status": "error", "msg": "註冊失敗，請稍後再試"}
         elif result["status"] == "error":
@@ -74,7 +75,7 @@ def get_router(db, db_user):
             user =  {"email": "admin@acercsi.com", "username": "admin", "orgs": ["admin"]}
         else:
             # 查詢使用者
-            user_list = await db.get_db("users", ["email"], email)
+            user_list = await db.get_db("users", where_column="username", values=email)
             if not user_list:
                 return {"status": "error", "msg": "帳號或密碼錯誤"}
             # 取第一個使用者
@@ -86,7 +87,7 @@ def get_router(db, db_user):
         # 產生 JWT token
         access_token = create_access_token({"email": user["email"], "name": user["username"]})
 
-        # 回傳 user 物件（可自訂欄位）
+        # 回傳 user 物件
         user_obj = {
             "email": user["email"],
             "name": user["username"],
@@ -121,7 +122,7 @@ def get_router(db, db_user):
                 return {"user": user_obj}
             
             # 查詢一般使用者
-            user_list = await db.get_db("users", ["email"], email)
+            user_list = await db.get_db("users", where_column="username", values=email)
             if not user_list:
                 raise HTTPException(status_code=404, detail="找不到使用者")
             

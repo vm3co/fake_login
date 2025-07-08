@@ -25,7 +25,7 @@ export default function FormDialog() {
   const [open, setOpen] = useState(false);
   const [state, setState] = useState({
     customername: "",
-    customeremail: "",
+    customerfullname: "",
     password: "",
     confirmPassword: ""
   });
@@ -44,7 +44,7 @@ export default function FormDialog() {
     setState({ ...state, [event.target.name]: event.target.value });
   };
 
-  const { customername, customeremail, password, confirmPassword } =
+  const { customername, customerfullname, password, confirmPassword } =
     state;
 
 
@@ -82,16 +82,7 @@ export default function FormDialog() {
               name="customername"
               value={customername}
               onChange={handleChange}
-              label="Customer Name"
-            />
-            <TextField
-              sx={{ mb: 1 }}
-              fullWidth
-              type="email"
-              name="customeremail"
-              label="Customer Email"
-              value={customeremail}
-              onChange={handleChange}
+              label="Customer Name(僅可輸入英文及數字)"
             />
             <TextField
               sx={{ mb: 1 }}
@@ -110,6 +101,15 @@ export default function FormDialog() {
               onChange={handleChange}
               label="Confirm Password"
               value={confirmPassword}
+            />
+            <TextField
+              sx={{ mb: 1 }}
+              fullWidth
+              type="text"
+              name="customerfullname"
+              value={customerfullname}
+              onChange={handleChange}
+              label="Customer Full Name"
             />
             <Autocomplete
               multiple
@@ -147,7 +147,6 @@ export default function FormDialog() {
 
 
 //暫時使用，之後要將sendtasks帶入
-// Top 100 films as rated by IMDb users. http://www.imdb.com/chart/top
 const sendtasks = [
   { title: "新析生物-114S前測_0702", year: 1994 },
   { title: "消防署114S2-正式演練", year: 1972 },

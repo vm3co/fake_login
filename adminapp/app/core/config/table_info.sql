@@ -15,6 +15,21 @@ CREATE TABLE IF NOT EXISTS sendtasks (
     is_active BOOLEAN DEFAULT TRUE 
 );
 
+-- sendlog_stats 
+CREATE TABLE IF NOT EXISTS sendlog_stats (
+    sendtask_uuid VARCHAR(36) PRIMARY KEY,
+    totalplanned BIGINT,
+    totalsuccess BIGINT,
+    today_earliest_plan_time BIGINT,
+    today_latest_plan_time BIGINT,
+    all_earliest_plan_time BIGINT,
+    all_latest_plan_time BIGINT,
+    todayunsend BIGINT,
+    todaysend BIGINT,
+    todaysuccess BIGINT,
+    totalsend BIGINT
+);
+
 -- accts
 CREATE TABLE IF NOT EXISTS accts (
     id SERIAL PRIMARY KEY,
@@ -30,6 +45,7 @@ CREATE TABLE IF NOT EXISTS accts (
 -- users
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
+    acct_uuid VARCHAR(36) UNIQUE NOT NULL,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
     email TEXT,
@@ -37,19 +53,4 @@ CREATE TABLE IF NOT EXISTS users (
     orgs TEXT[],
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     is_active BOOLEAN DEFAULT TRUE
-);
-
--- sendlog_stats 
-CREATE TABLE IF NOT EXISTS sendlog_stats (
-    sendtask_uuid VARCHAR(36) PRIMARY KEY,
-    totalplanned BIGINT,
-    totalsuccess BIGINT,
-    today_earliest_plan_time BIGINT,
-    today_latest_plan_time BIGINT,
-    all_earliest_plan_time BIGINT,
-    all_latest_plan_time BIGINT,
-    todayunsend BIGINT,
-    todaysend BIGINT,
-    todaysuccess BIGINT,
-    totalsend BIGINT
 );

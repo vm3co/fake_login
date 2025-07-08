@@ -50,7 +50,7 @@ async def check_sendtasks_job():
                              "test_start_ut", "is_pause", "stop_time_new"]
         all_tasksname_list = await db_user.get_se2_sendtasks(sendtasks_columns)
 
-        my_tasksname_list = await db.get_db("sendtasks", column_names=sendtasks_columns)
+        my_tasksname_list = await db.get_db("sendtasks", select_columns=sendtasks_columns)
 
         def dict_to_hashable(d):
             return tuple(sorted(
@@ -85,15 +85,17 @@ async def check_sendtasks_job():
 
         if removed_list:
             for item in removed_list:
-                await db.update_db(
-                    table_name="sendtasks",
-                    data={"is_active": False},
-                    condition={"sendtask_uuid": item["sendtask_uuid"]}
-                )
-            logger.info(f"停用了 {len(removed_list)} 個任務")
+                uuid = item["sendtask_uuid"]
+                # sendtasks刪除資料
+                await db.delete_db(table_name="sendtasks", condition={"sendtask_uuid": uuid})
+                # sendlog_stats 刪除資料
+                await db.delete_db(table_name="sendlog_stats", condition={"sendtask_uuid": uuid})
+                # 刪除table
+                await db.drop_table(table_name=uuid)
+            logger.info(f"刪除了 {len(removed_list)} 個任務")
 
-        logger.info(f"check_sendtasks_job 完成 - 新增: {len(added_list)}, 停用: {len(removed_list)}")
-        
+        logger.info(f"check_sendtasks_job 完成 - 新增: {len(added_list)}, 刪除: {len(removed_list)}")
+
     except Exception as e:
         logger.error(f"check_sendtasks_job 執行失敗: {str(e)}")
 
