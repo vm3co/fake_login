@@ -43,12 +43,15 @@ const StyledTable = styled(Table)(() => ({
         // 特定欄位寬度設定
         "&:nth-of-type(1)": { width: "60px" }, // 勾選框
         "&:nth-of-type(2)": { width: "160px" }, // 任務名稱
-        "&:nth-of-type(3)": { width: "60px" }, // 信件總數量
-        "&:nth-of-type(4)": { width: "60px" }, // 已寄出總數
-        "&:nth-of-type(5)": { width: "80px" }, // 第一封寄出預計日期
-        "&:nth-of-type(6)": { width: "80px" }, // 最後一封寄出預計日期
-        "&:nth-of-type(7)": { width: "60px" }, // 是否暫停
-        "&:nth-of-type(8)": { width: "80px" }, // 更新
+        "&:nth-of-type(3)": { width: "60px" }, // 任務期間
+        "&:nth-of-type(4)": { width: "60px" }, // 信件總數量
+        "&:nth-of-type(5)": { width: "60px" }, // 已寄出總數
+        "&:nth-of-type(6)": { width: "60px" }, // 成功
+        "&:nth-of-type(7)": { width: "60px" }, // 失敗
+        "&:nth-of-type(8)": { width: "80px" }, // 第一封寄出預計日期
+        "&:nth-of-type(9)": { width: "80px" }, // 最後一封寄出預計日期
+        "&:nth-of-type(10)": { width: "60px" }, // 是否暫停
+        "&:nth-of-type(11)": { width: "80px" }, // 更新
       } 
     }
   },
@@ -100,7 +103,7 @@ function getTodayTimestamps() {
 
 export default function ShowAllTasks() {
   const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(5);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
   const { 
     loading, 
     statsData, 
@@ -118,6 +121,7 @@ export default function ShowAllTasks() {
   const [showExpiredOnly, setShowExpiredOnly] = useState(false);  // 是否只顯示已過期的任務
   const [showNotStartedOnly, setShowNotStartedOnly] = useState(false);  // 是否只顯示已過期的任務
   const [showRunningOnly, setShowRunningOnly] = useState(false);  // 是否只顯示已過期的任務
+  const [showFailedOnly, setShowFailedOnly] = useState(false);
   const [todayStartTs, todayEndTs] = getTodayTimestamps();
 
   // 任務顯示模式
@@ -129,15 +133,20 @@ export default function ShowAllTasks() {
       }
 
       // 過濾
+      const start = row.test_start_ut;
+      const end = (row.stop_time_new && row.stop_time_new !== -1)
+                          ? row.stop_time_new
+                          : row.test_end_ut;
       const stats = statsData[row.sendtask_uuid] || {};
-      const lastPlan = stats.all_latest_plan_time;
-      const firstPlan = stats.all_earliest_plan_time
+      const sendFailed = stats.totalsend - stats.totalsuccess;
       if (showExpiredOnly) {
-        if (!lastPlan || lastPlan > todayStartTs) return false;
+        if (!end || end > todayStartTs) return false;
       } else if (showNotStartedOnly) {
-        if (!firstPlan || firstPlan < todayEndTs) return false;
+        if (!start || start < todayEndTs) return false;
       } else if (showRunningOnly) {
-        if (lastPlan < todayStartTs || firstPlan > todayEndTs) return false;
+        if (end < todayStartTs || start > todayEndTs) return false;
+      } else if (showFailedOnly) {
+        if (sendFailed === 0) return false;
       }
       return true;
     }) || [];
@@ -179,7 +188,7 @@ export default function ShowAllTasks() {
           <Button
             variant="contained"
             color="primary"
-            disabled={selectedUuids.length === 0}
+            disabled={selectedUuids.length === 0 || isCheckingSends}
             onClick={() => fetchCheckSends(selectedUuids)}
             size="small"
           >
@@ -263,6 +272,20 @@ export default function ShowAllTasks() {
               label="已結束"
               sx={{ margin: 0 }}
             />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={showFailedOnly}
+                  onChange={e => {
+                    setShowFailedOnly(e.target.checked);
+                    setPage(0);
+                  }}
+                  size="small"
+                />
+              }
+              label="有失敗寄送"
+              sx={{ margin: 0, color: "red" }}
+            />            
           </Box>
         </Stack>
         <TableContainer 
@@ -305,8 +328,11 @@ export default function ShowAllTasks() {
                   />
                 </TableCell>
                 <TableCell>任務名稱</TableCell>
+                <TableCell>任務期間</TableCell>
                 <TableCell>信件<br />總數量</TableCell>
                 <TableCell>已寄出<br />總數</TableCell>
+                <TableCell>成功<br />總數量</TableCell>
+                <TableCell>失敗<br />總數量</TableCell>
                 <TableCell>第一封寄出<br />預計日期</TableCell>
                 <TableCell>最後一封寄出<br />預計日期</TableCell>
                 <TableCell>是否暫停</TableCell>
@@ -317,6 +343,10 @@ export default function ShowAllTasks() {
               {pagedTasks.map((row, index) => {
                 const stats = statsData[row.sendtask_uuid] || { planned: "-", send: "-", success: "-" };
                 const rowNumber = page * rowsPerPage + index + 1; // 全域編號
+                const start = formatDate(row.test_start_ut, "date");
+                const end = (row.stop_time_new && row.stop_time_new !== -1)
+                                    ? formatDate(row.stop_time_new, "date")
+                                    : formatDate(row.test_end_ut, "date");
                 return (
                   <TableRow
                     key={index}
@@ -346,8 +376,11 @@ export default function ShowAllTasks() {
                       /><strong>{rowNumber}</strong>
                     </TableCell>
                     <TableCell align="center">{row.sendtask_id}</TableCell>
+                    <TableCell align="center">{start}<br />-<br />{end}</TableCell>
                     <TableCell align="center">{stats.totalplanned}</TableCell>
                     <TableCell align="center">{stats.totalsend}</TableCell>
+                    <TableCell align="center">{stats.totalsuccess}</TableCell>
+                    <TableCell align="center">{stats.totalsend - stats.totalsuccess}</TableCell>
                     <TableCell align="center">
                       {stats.all_earliest_plan_time === 0 || stats.all_earliest_plan_time === undefined
                         ? " - "

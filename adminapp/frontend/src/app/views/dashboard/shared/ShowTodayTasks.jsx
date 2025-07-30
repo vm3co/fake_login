@@ -96,7 +96,7 @@ const StyledTable = styled(Table)(() => ({
 
 export default function ShowTodayTasks({ taskState, setTaskState }) {
   const [page, setPage] = useState(0);
-  const [rowsPerPage, setRowsPerPage] = useState(5);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
   const { 
     loading, 
     statsData, 
@@ -186,6 +186,17 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
         <Stack direction="row" spacing={2} mb={2} sx={{ flexWrap: 'wrap', gap: 1 }}>
           <Button
             variant="contained"
+            color="primary"
+            disabled={selectedUuids.length === 0 || isCheckingSends}
+            onClick={() => {
+              fetchCheckSends(selectedUuids);
+            }}
+            size="small"
+          >
+            更新勾選任務
+          </Button>
+          <Button
+            variant="contained"
             color="secondary"
             onClick={() => {
               const uuids = todayTasks.map(row => row.sendtask_uuid);
@@ -199,15 +210,6 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
             size="small"
           >
             更新今日任務寄送現況
-          </Button>
-          <Button
-            variant="contained"
-            color="primary"
-            disabled={selectedUuids.length === 0 || isCheckingSends}
-            onClick={() => fetchCheckSends(selectedUuids)}
-            size="small"
-          >
-            更新勾選任務
           </Button>
           {isCheckingSends && (
             <Typography color="primary" sx={{ ml: 2, fontSize: '0.875rem' }}>
@@ -260,6 +262,23 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
             <MenuItem value="done">已完成</MenuItem>
             <MenuItem value="warning">異常</MenuItem>
           </Select>
+          {selectedUuids.length > 0 &&
+            <Button 
+              onClick={() => {
+                setSelectedUuids([]);
+              }}
+              variant="text"
+              size="small"
+              sx={{ 
+                textTransform: 'none',
+                minWidth: 'unset',
+                padding: '0 4px',
+                verticalAlign: 'baseline'
+              }}
+            >
+              清除所有選取任務
+            </Button>
+          }
         </Stack>
         <TableContainer 
           component={Paper} 

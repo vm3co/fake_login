@@ -23,6 +23,23 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "super-secret-very-long-random-string")
 ALGORITHM = "HS256"
 
+async def get_current_user(request: Request):
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="缺少或無效的授權資訊")
+    
+    token = auth_header.split(" ")[1]
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        username: str = payload.get("username")
+        if username is None:
+            raise HTTPException(status_code=401, detail="Token 無效")
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token 已過期")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Token 無效")
+
 def get_router(db, db_user):
     """
     Initializes the user API router.
@@ -32,110 +49,194 @@ def get_router(db, db_user):
     """
     router = APIRouter()
 
-    class RegisterRequest(BaseModel):
-        email: str
-        password: str
-
-    class LoginRequest(BaseModel):
-        email: str
+    class UserRequest(BaseModel):
+        username: str
         password: str
 
     @router.post("/auth/register")
-    async def register(data: RegisterRequest):
+    async def register(data: UserRequest):
         # 檢查帳號是否已註冊
-        if await db_user.user_exists(data.email):
-            return {"status": "error", "msg": "帳號已註冊"}
+        if await db_user.user_exists(data.username):
+            return {"status": "error", "message": "帳號已註冊"}
         # 密碼加密
         password_hash = hash_password(data.password)
         # 寫入資料庫並取得accts裡的資料
-        result = await db_user.insert_user(email=data.email, password_hash=password_hash)
-        await db_user.check_customer([data.email])
+        result = await db_user.insert_user(username=data.username, password_hash=password_hash)
         if not result:
-            return {"status": "error", "msg": "註冊失敗，請稍後再試"}
+            return {"status": "error", "message": "註冊失敗，請稍後再試"}
         elif result["status"] == "error":
-            return {"status": "error", "msg": result["msg"]}
-        access_token = create_access_token({"email": result["email"], "name": result["username"]})
+            return {"status": "error", "message": result["message"]}
+        access_token = create_access_token({"acct_uuid": result["acct_uuid"], "name": result["username"]})
         user_obj = {
-            "email": result["email"],
+            "acct_uuid": result["acct_uuid"],
             "name": result["username"],
         }
         return {
             "status": "success", 
-            "msg": "註冊成功",
+            "message": "註冊成功",
             "accessToken": access_token,
             "user": user_obj
         }
 
     @router.post("/auth/login")
-    async def login(data: LoginRequest):
-        email = data.email
+    async def login(data: UserRequest):
+        username = data.username
         password = data.password
         # 檢查是否為管理員登入
-        if email == ADMIN_EMAIL and password == ADMIN_PASSWORD:
-            user =  {"email": "admin@acercsi.com", "username": "admin", "orgs": ["admin"]}
-        else:
-            # 查詢使用者
-            user_list = await db.get_db("users", where_column="username", values=email)
-            if not user_list:
-                return {"status": "error", "msg": "帳號或密碼錯誤"}
-            # 取第一個使用者
+        if username == ADMIN_EMAIL and password == ADMIN_PASSWORD:
+            user =  {"acct_uuid": "admin", "username": ADMIN_EMAIL, "orgs": ["admin"]}
+            access_token = create_access_token({
+                "acct_uuid": "admin", 
+                "username": ADMIN_EMAIL,
+                "user_type": "admin"
+            })
+            user_obj = {
+                "acct_uuid": "admin",
+                "name": ADMIN_EMAIL,
+                "orgs": ["admin"],
+                "user_type": "admin",
+                "full_name": "admin"
+            }
+            return {
+                "status": "success", 
+                "message": "管理員登入成功",
+                "accessToken": access_token,
+                "user": user_obj
+            }
+        
+        # users
+        user_list = await db.get_db("users", where_column="username", values=username)
+        if user_list:
             user = user_list[0]
-            # 驗證密碼
-            if not verify_password(data.password, user["password_hash"]):
-                return {"status": "error", "msg": "帳號或密碼錯誤"}
-            
-        # 產生 JWT token
-        access_token = create_access_token({"email": user["email"], "name": user["username"]})
+            if verify_password(password, user["password_hash"]):
+                # 一般使用者登入成功
+                access_token = create_access_token({
+                    "acct_uuid": user["acct_uuid"], 
+                    "username": user["username"],
+                    "user_type": "user"
+                })
+                user_obj = {
+                    "acct_uuid": user["acct_uuid"],
+                    "name": user["username"],
+                    "orgs": user.get("orgs", []),
+                    "user_type": "user",
+                    "full_name": user.get("full_name", "")
+                }
+                return {
+                    "status": "success", 
+                    "message": "使用者登入成功",
+                    "accessToken": access_token,
+                    "user": user_obj
+                }
 
-        # 回傳 user 物件
-        user_obj = {
-            "email": user["email"],
-            "name": user["username"],
-            "orgs": user.get("orgs", []),
-        }
-        return {
-            "status": "success", 
-            "msg": "登入成功",
-            "accessToken": access_token,
-            "user": user_obj
-        }
+        # customer_accts
+        customer_list = await db.get_db("customer_accts", where_column="customer_name", values=username)
+        if customer_list:
+            customer = customer_list[0]
+            if verify_password(password, customer["password_hash"]):
+                # 客戶登入成功
+                access_token = create_access_token({
+                    "acct_uuid": customer["acct_uuid"], 
+                    "username": customer["customer_name"],
+                    "user_type": "customer"
+                })
+                customer_obj = {
+                    "acct_uuid": customer["acct_uuid"],
+                    "name": customer["customer_name"],
+                    "sendtask_uuids": customer.get("sendtask_uuids", []),
+                    "user_type": "customer",
+                    "full_name": customer.get("customer_full_name", "")
+                }
+                return {
+                    "status": "success", 
+                    "message": "客戶登入成功",
+                    "accessToken": access_token,
+                    "user": customer_obj
+                }
     
+        # 都找不到，登入失敗
+        return {"status": "error", "message": "帳號或密碼錯誤"}    
+
     @router.get("/auth/profile")
     async def profile(request: Request):
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
             raise HTTPException(status_code=401, detail="缺少或無效的授權資訊")
+        
         token = auth_header.split(" ")[1]
         try:
             payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-            email = payload.get("email")
-            if not email:
-                raise HTTPException(status_code=401, detail="Token 無效")
-            
-            # 檢查是否為管理員
-            if email == ADMIN_EMAIL:
+            username = payload.get("username")
+            acct_uuid = payload.get("acct_uuid")
+            user_type = payload.get("user_type")            
+
+            # 根據用戶類型返回相應的資料
+            if user_type == "admin":
                 user_obj = {
-                    "email": "admin@acercsi.com",
-                    "name": "admin",
+                    "acct_uuid": "admin", 
+                    "name": ADMIN_EMAIL, 
                     "orgs": ["admin"],
+                    "user_type": "admin"
                 }
                 return {"user": user_obj}
             
-            # 查詢一般使用者
-            user_list = await db.get_db("users", where_column="username", values=email)
-            if not user_list:
-                raise HTTPException(status_code=404, detail="找不到使用者")
+            elif user_type == "user":
+                # 查詢一般使用者
+                user_list = await db.get_db("users", where_column="username", values=username)
+                if not user_list:
+                    raise HTTPException(status_code=404, detail="找不到使用者")
+                
+                user = user_list[0]
+                user_obj = {
+                    "acct_uuid": user["acct_uuid"],
+                    "name": user["username"],
+                    "orgs": user.get("orgs", []),
+                    "user_type": "user",
+                    "full_name": user.get("full_name", "")
+                }
+                return {"user": user_obj}
             
-            user = user_list[0]
-            user_obj = {
-                "email": user["email"],
-                "name": user["username"],
-                "orgs": user.get("orgs", []),
-            }
-            return {"user": user_obj}
+            elif user_type == "customer":
+                # 查詢客戶
+                customer_list = await db.get_db("customer_accts", where_column="customer_name", values=username)
+                if not customer_list:
+                    raise HTTPException(status_code=404, detail="找不到客戶")
+                
+                customer = customer_list[0]
+                customer_obj = {
+                    "acct_uuid": customer["acct_uuid"],
+                    "name": customer["customer_name"],
+                    "sendtask_uuids": customer.get("sendtask_uuids", []),
+                    "user_type": "customer",
+                    "full_name": customer.get("customer_full_name", "")
+                }
+                return {"user": customer_obj}
+            
+            else:
+                raise HTTPException(status_code=401, detail="無效的使用者類型")
+                
         except jwt.ExpiredSignatureError:
             raise HTTPException(status_code=401, detail="Token 已過期")
         except jwt.InvalidTokenError:
             raise HTTPException(status_code=401, detail="Token 無效")
 
+    # # 更新密碼
+    # class ChangePasswordRequest(BaseModel):
+    #     username: str
+    #     oldpassword: str
+    #     newpassword: str
+
+    # @router.get("/auth/change_password")
+    # async def change_password(data: ChangePasswordRequest)L
+    #     # 檢查帳號是否存在
+    #     if not await db_user.user_exists(data.username):
+    #         return {"status": "error", "message": "查無此帳號"}
+
+    #     # 密碼加密
+    #     old_password_hash = hash_password(data.oldpassword)
+    #     new_password_hash = hash_password(data.newpassword)
+
+
+
+        
     return router

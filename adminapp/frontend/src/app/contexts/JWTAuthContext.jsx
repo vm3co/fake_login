@@ -23,7 +23,7 @@ const isValidToken = (accessToken) => {
       return false;
     }
     
-    return decodedToken?.email ? true : false;
+    return decodedToken?.username ? true : false;
   } catch (error) {
     console.error("Token decode error:", error);
     return false;
@@ -38,6 +38,38 @@ const setSession = (accessToken) => {
     localStorage.removeItem("accessToken");
     delete axios.defaults.headers.common.Authorization;
   }
+};
+
+// 設定使用者相關的 cookie
+const setUserCookies = (user) => {
+  if (!user) return;
+
+  // 根據使用者類型設定不同的 cookie
+  if (user.user_type === "user" || user.user_type === "admin") {
+    // 一般使用者或管理員：設定 orgs 和 acct_uuid
+    const orgs = user.orgs || [];
+    document.cookie = `orgs=${encodeURIComponent(JSON.stringify(orgs))}; path=/;`;
+    document.cookie = `acct_uuid=${encodeURIComponent(user.acct_uuid)}; path=/;`;
+    
+    // 清除客戶相關的 cookie（如果存在）
+    document.cookie = "sendtask_uuids=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+
+  } else if (user.user_type === "customer") {
+    // 客戶：設定 sendtask_uuids 和 acct_uuid
+    const sendtask_uuids = user.sendtask_uuids || [];
+    document.cookie = `sendtask_uuids=${encodeURIComponent(JSON.stringify(sendtask_uuids))}; path=/;`;
+    document.cookie = `acct_uuid=${encodeURIComponent(user.acct_uuid)}; path=/;`;
+    
+    // 清除一般使用者相關的 cookie（如果存在）
+    document.cookie = "orgs=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  }
+};
+
+// 清除所有使用者相關的 cookie
+const clearUserCookies = () => {
+  document.cookie = "orgs=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  document.cookie = "acct_uuid=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  document.cookie = "sendtask_uuids=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
 };
 
 const reducer = (state, action) => {
@@ -71,44 +103,70 @@ const AuthContext = createContext({
 export const AuthProvider = ({ children }) => {
   const [state, dispatch] = useReducer(reducer, initialState);
 
-  const login = async (email, password) => {
-    const { data } = await axios.post("/api/auth/login", { email, password });
-    // 如果data.status回傳不是success，則彈跳視窗提示帳號密碼錯誤
-    if (data.status !== "success") {
-      alert(data.msg || "登入失敗，請檢查帳號密碼是否正確");
-      return;
+  const login = async (username, password) => {
+    try {
+      console.log("Login attempt for:", username);
+      const { data } = await axios.post("/api/auth/login", { username, password });
+      console.log("Login API response:", data);
+
+      if (data.status !== "success") {
+        alert(data.message || "登入失敗，請檢查帳號密碼是否正確");
+        return;
+      }
+
+      const { accessToken, user } = data;
+
+      if (!accessToken) {
+        console.error("CRITICAL: accessToken is missing from login response!");
+        alert("登入失敗：無法從伺服器獲取授權。");
+        return;
+      }
+
+      setSession(accessToken);
+      setUserCookies(user);
+      dispatch({ type: "LOGIN", payload: { user } });
+
+    } catch (error) {
+      console.error("登入錯誤:", error);
+      alert("登入過程中發生錯誤，請稍後再試");
     }
-
-    const { accessToken, user } = data;
-
-    setSession(accessToken);
-
-    // orgs 存成 cookie
-    const orgs = user.orgs || [];
-    document.cookie = `orgs=${encodeURIComponent(JSON.stringify(orgs))}; path=/;`;
-    
-    dispatch({ type: "LOGIN", payload: { user } });
   };
 
-  const register = async (email, password) => {
-    const { data } = await axios.post("/api/auth/register", { email, password });
-    if (data.status !== "success") {
-      alert(data.msg || "註冊失敗，請檢查輸入的資料是否正確");
-      return;
+  const register = async (username, password) => {
+    try {
+      const { data } = await axios.post("/api/auth/register", { username, password });
+      if (data.status !== "success") {
+        alert(data.message || "註冊失敗，請檢查輸入的資料是否正確");
+        return;
+      }
+      
+      const { accessToken, user } = data;
+
+      setSession(accessToken);
+
+      // 註冊成功後設定相應的 cookie
+      setUserCookies(user);
+
+      dispatch({ type: "REGISTER", payload: { user } });
+    } catch (error) {
+      console.error("註冊錯誤:", error);
+      alert("註冊過程中發生錯誤，請稍後再試");
     }
-    
-    const { accessToken, user } = data;
-
-    setSession(accessToken);
-
-    dispatch({ type: "REGISTER", payload: { user } });
   };
 
   const logout = () => {
     setSession(null);
-    // 清除 orgs cookie
-    document.cookie = "orgs=; path=/;";
+    // 清除所有使用者相關的 cookie
+    clearUserCookies();
     dispatch({ type: "LOGOUT" });
+  };
+
+  // 手動更新使用者 cookie（用於資料更新時）
+  const updateUserCookies = (updatedUser) => {
+    if (updatedUser) {
+      setUserCookies(updatedUser);
+      dispatch({ type: "LOGIN", payload: { user: updatedUser } });
+    }
   };
 
   useEffect(() => {
@@ -118,33 +176,28 @@ export const AuthProvider = ({ children }) => {
         
         if (accessToken && isValidToken(accessToken)) {
           setSession(accessToken);
-          const response = await axios.get("/api/auth/profile");
 
+          const response = await axios.get("/api/auth/profile");
           const { user } = response.data;
+
           if (!user) {
             console.error("User data not found in response");
             throw new Error("User data not found");
           }
 
-          dispatch({
-            type: "INIT",
-            payload: { isAuthenticated: true, user }
-          });
+          setUserCookies(user);
+          dispatch({ type: "INIT", payload: { isAuthenticated: true, user } });
+
         } else {
-          console.log("Invalid or missing token");
-          dispatch({
-            type: "INIT",
-            payload: { isAuthenticated: false, user: null }
-          });
+          setSession(null);
+          clearUserCookies();
+          dispatch({ type: "INIT", payload: { isAuthenticated: false, user: null } });
         }
       } catch (err) {
         console.error("Auth initialization error:", err);
-        // 清除無效的 token
         setSession(null);
-        dispatch({
-          type: "INIT",
-          payload: { isAuthenticated: false, user: null }
-        });
+        clearUserCookies();
+        dispatch({ type: "INIT", payload: { isAuthenticated: false, user: null } });
       }
     })();
   }, []);
@@ -152,7 +205,16 @@ export const AuthProvider = ({ children }) => {
   if (!state.isInitialized) return <Loading />;
 
   return (
-    <AuthContext.Provider value={{ ...state, method: "JWT", login, logout, register }}>
+    <AuthContext.Provider 
+      value={{ 
+        ...state, 
+        method: "JWT", 
+        login, 
+        logout, 
+        register,
+        updateUserCookies  // 提供更新 cookie 的方法
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

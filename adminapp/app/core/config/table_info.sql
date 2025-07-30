@@ -27,7 +27,8 @@ CREATE TABLE IF NOT EXISTS sendlog_stats (
     todayunsend BIGINT,
     todaysend BIGINT,
     todaysuccess BIGINT,
-    totalsend BIGINT
+    totalsend BIGINT,
+    totaltriggered BIGINT
 );
 
 -- accts
@@ -53,4 +54,24 @@ CREATE TABLE IF NOT EXISTS users (
     orgs TEXT[],
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     is_active BOOLEAN DEFAULT TRUE
+);
+
+-- customer accounts
+CREATE TABLE IF NOT EXISTS customer_accts (
+    id SERIAL PRIMARY KEY,
+    customer_name TEXT UNIQUE NOT NULL,
+    customer_full_name TEXT NOT NULL,
+    password_hash TEXT NOT NULL,
+    sendtask_uuids TEXT [] DEFAULT '{}',
+    acct_uuid VARCHAR(36) NOT NULL,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    is_active BOOLEAN DEFAULT TRUE
+);
+
+-- mtmpl
+CREATE TABLE IF NOT EXISTS mtmpl (
+    id SERIAL PRIMARY KEY,
+    mtmpl_uuid VARCHAR(36) NOT NULL,
+    mtmpl_title TEXT NOT NULL,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

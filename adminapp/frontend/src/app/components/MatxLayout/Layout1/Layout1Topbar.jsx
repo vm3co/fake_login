@@ -21,6 +21,8 @@ import { Span } from "app/components/Typography";
 import { MatxMenu } from "app/components";
 import { themeShadows } from "app/components/MatxTheme/themeColors";
 import { topBarHeight } from "app/utils/constant";
+import useAbortOnUnmount from "app/hooks/useAbortOnUnmount";
+import axios from "axios";
 
 
 // STYLED COMPONENTS
@@ -85,6 +87,7 @@ const Layout1Topbar = () => {
   const { refresh, isCheckingSends, setIsCheckingSends } = useContext(SendtaskListContext);
   const { fetchCheckTasks } = useCheckTasks({ refresh, setIsCheckingSends });
   const { fetchCheckTodayCreateTasks } = useCheckTodayCreateTasks({ refresh, setIsCheckingSends });
+  const { controllerRef, createController } = useAbortOnUnmount();
 
 
   const updateSidebarMode = (sidebarSettings) => {
@@ -101,6 +104,47 @@ const Layout1Topbar = () => {
     }
     updateSidebarMode({ mode });
   };
+
+  const fetchUpdataMtmpl = async () => {
+    // 彈出確認視窗
+    if (!window.confirm("確定要執行郵件樣板更新嗎？")) {
+        return;
+    }
+
+    // 先中止前一個請求
+    if (controllerRef.current) {
+        controllerRef.current.abort();
+    }
+
+    setIsCheckingSends(true);
+    // 建立新的 controller
+    const controller = createController();
+        await axios.post("/api/update_mtmpl", {}, {
+            signal: controller.signal,
+        })
+            .then((res) => res.data)
+            .then(result => {
+              if (result.status === 'success') {
+                  const { added, removed } = result.data;
+                  const addedTitles = added.map(item => `- ${item.mtmpl_title}`).join("\n");
+                  const removedTitles = removed.map(item => `- ${item.mtmpl_title}`).join("\n");
+                  const message = `郵件樣板同步完成！\n\n新增 ${added.length} 筆：\n${addedTitles || "(無)"}\n\n移除 ${removed.length} 筆：\n${removedTitles || "(無)"}`;
+                  alert(message);
+              } else {
+                  alert(`更新失敗: ${result.message}`);
+              } 
+                setIsCheckingSends(false);
+            })
+            .catch((err) => {
+            if (err.name === "AbortError") {
+                // 請求被中止，不顯示錯誤
+            } else {
+                console.error("更新郵件樣板時發生錯誤", err);
+                alert("網路錯誤，更新失敗，請稍後再試");
+            }
+            setIsCheckingSends(false);
+        });
+    };
 
   return (
     <TopbarRoot>
@@ -170,7 +214,22 @@ const Layout1Topbar = () => {
               <AssignmentTurnedIn />
               <Span sx={{ marginInlineStart: 1 }}>檢查今日建立任務</Span>
             </StyledItem>
-            
+
+            <StyledItem 
+              onClick={isCheckingSends ? undefined : fetchUpdataMtmpl}
+              disabled={isCheckingSends}
+              sx={{
+                opacity: isCheckingSends ? 0.5 : 1,
+                cursor: isCheckingSends ? 'not-allowed' : 'pointer',
+                '&:hover': {
+                  backgroundColor: isCheckingSends ? 'transparent' : 'action.hover'
+                }
+              }}
+            >
+              <AssignmentTurnedIn />
+              <Span sx={{ marginInlineStart: 1 }}>更新郵件樣板列表</Span>
+            </StyledItem>
+
             <StyledItem
               onClick={isCheckingSends ? undefined : fetchCheckTasks}
               disabled={isCheckingSends}

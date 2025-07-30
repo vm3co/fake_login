@@ -4,7 +4,6 @@ import Button from "@mui/material/Button";
 import Dialog from "@mui/material/Dialog";
 import TextField from "@mui/material/TextField";
 import DialogTitle from "@mui/material/DialogTitle";
-// import DialogActions from "@mui/material/DialogActions";
 import DialogContent from "@mui/material/DialogContent";
 import DialogContentText from "@mui/material/DialogContentText";
 import Fab from "@mui/material/Fab";
@@ -14,7 +13,10 @@ import Slide from "@mui/material/Slide";
 import Toolbar from "@mui/material/Toolbar";
 import IconButton from "@mui/material/IconButton";
 import CloseIcon from "@mui/icons-material/Close";
-import Autocomplete from "@mui/material/Autocomplete";
+import CircularProgress from "@mui/material/CircularProgress";
+
+import useCustomers from 'app/hooks/useCustomers';
+import CustomersContext from "app/contexts/CustomersContext";
 
 
 const Transition = forwardRef(function Transition(props, ref) {
@@ -29,24 +31,105 @@ export default function FormDialog() {
     password: "",
     confirmPassword: ""
   });
-
+  const [errors, setErrors] = useState({});
+  // 使用 useCustomers hook
+  const { 
+    loading, 
+    createCustomer, 
+    clearMessages,
+  } = useCustomers(CustomersContext);
 
   const handleClickOpen = () => setOpen(true);
   const handleClose = () => setOpen(false);
 
-  const handleSubmit = (event) => {
-    console.log("submitted");
-    console.log(event);
+  const handleSubmit = async (event) => {
+    event.preventDefault(); // 防止表單預設提交行為
+    
+    // 基本驗證
+    const newErrors = {};
+    
+    if (!customername.trim()) {
+      newErrors.customername = '請輸入客戶名稱';
+    }
+    
+    if (!password.trim()) {
+      newErrors.password = '請輸入密碼';
+    }
+    
+    if (password !== confirmPassword) {
+      newErrors.confirmPassword = '密碼確認不一致';
+    }
+    
+    if (!customerfullname.trim()) {
+      newErrors.customerfullname = '請輸入客戶全名';
+    }
+    
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+      return;
+    }
+    
+    try {
+      await createCustomer(state);
+      
+      // 成功後清空表單並關閉對話框
+      setState({
+        customername: "",
+        customerfullname: "",
+        password: "",
+        confirmPassword: ""
+      });
+      setErrors({});
+      setOpen(false);
+      clearMessages(); 
+      
+    } catch (error) {
+      console.error("創建客戶失敗:", error); // 調試：檢查完整錯誤
+      setErrors({ api: error.message || "創建客戶失敗，請稍後再試" });
+    }
+  };
+
+  const handleCancel = () => {
+    // 清空表單並關閉對話框
+    setState({
+      customername: "",
+      customerfullname: "",
+      password: "",
+      confirmPassword: ""
+    });
+    setErrors({});
+    clearMessages();
+    handleClose();
+    setOpen(false);
   };
 
   const handleChange = (event) => {
     event.persist();
-    setState({ ...state, [event.target.name]: event.target.value });
+    const { name, value } = event.target;
+    
+    if (name === 'customername') {
+      // 直接過濾掉非法字符，保留合法字符
+      const filteredValue = value.replace(/[^A-Za-z0-9_]/g, '');
+      
+      // 如果過濾後的值與原值不同，表示有非法字符
+      if (filteredValue !== value) {
+        setErrors({ ...errors, customername: '僅能輸入英文字母、數字和_ ' });
+      } else {
+        // 清除錯誤訊息
+        const newErrors = { ...errors };
+        delete newErrors.customername;
+        setErrors(newErrors);
+      }
+      
+      // 總是使用過濾後的值
+      setState({ ...state, [name]: filteredValue });
+    } else {
+      setState({ ...state, [name]: value });
+    }
   };
 
   const { customername, customerfullname, password, confirmPassword } =
     state;
-
 
   return (
     <div>
@@ -71,18 +154,33 @@ export default function FormDialog() {
           <DialogTitle id="form-dialog-title">新增帳號</DialogTitle>
 
           <DialogContent>
+            {/* {error && (
+              <Alert severity="error" sx={{ mb: 2 }}>
+                {error}
+              </Alert>
+            )}
+            {success && (
+              <Alert severity="success" sx={{ mb: 2 }}>
+                {success}
+              </Alert>
+            )} */}
             <DialogContentText>
               提供給客戶使用的帳號
             </DialogContentText>
-
+            <br />
             <TextField
-              sx={{ mb: 1 }}
+              sx={{ mb: 2 }}
               fullWidth
               type="text"
               name="customername"
               value={customername}
               onChange={handleChange}
-              label="Customer Name(僅可輸入英文及數字)"
+              label="Customer Name"
+              error={!!errors.customername}
+              helperText={errors.customername || "僅能輸入英文字母、數字和_ "}
+              inputProps={{
+                pattern: "[A-Za-z0-9_]*" // HTML5 pattern 作為額外保障
+              }}
             />
             <TextField
               sx={{ mb: 1 }}
@@ -92,6 +190,8 @@ export default function FormDialog() {
               label="Password"
               value={password}
               onChange={handleChange}
+              error={!!errors.password}
+              helperText={errors.password}
             />
             <TextField
               sx={{ mb: 1 }}
@@ -101,6 +201,8 @@ export default function FormDialog() {
               onChange={handleChange}
               label="Confirm Password"
               value={confirmPassword}
+              error={!!errors.confirmPassword}
+              helperText={errors.confirmPassword}
             />
             <TextField
               sx={{ mb: 1 }}
@@ -110,33 +212,25 @@ export default function FormDialog() {
               value={customerfullname}
               onChange={handleChange}
               label="Customer Full Name"
-            />
-            <Autocomplete
-              multiple
-              filterSelectedOptions
-              id="tags-outlined"
-              options={sendtasks}
-              getOptionLabel={(option) => option.title}
-              renderInput={(params) => (
-                <TextField
-                  {...params}
-                  fullWidth
-                  variant="outlined"
-                  placeholder="sendtasks"
-                  label="choose sendtasks"
-                />
-              )}
+              error={!!errors.customerfullname}
+              helperText={errors.customerfullname}
             />
           </DialogContent>
 
           <Box display="flex" justifyContent="center" alignItems="center" gap={1} sx={{ mb: 1 }}>
-            <Button variant="outlined" onClick={handleClose} color="primary">
-              新增
+            <Button 
+              variant="contained" 
+              type="submit"
+              color="primary"
+              disabled={loading}
+              startIcon={loading ? <CircularProgress size={20} /> : null}
+            >
+              {loading ? '創建中...' : '新增'}
             </Button>
           </Box>
         </form>
         <Box display="flex" justifyContent="center" alignItems="center" gap={1} sx={{ mb: 1 }}>
-          <Button variant="outlined" color="secondary" onClick={handleClose}>
+          <Button variant="outlined" color="secondary" onClick={handleCancel}>
             取消
           </Button>
         </Box>
@@ -144,16 +238,3 @@ export default function FormDialog() {
     </div>
   );
 }
-
-
-//暫時使用，之後要將sendtasks帶入
-const sendtasks = [
-  { title: "新析生物-114S前測_0702", year: 1994 },
-  { title: "消防署114S2-正式演練", year: 1972 },
-  { title: "114Q3-JCIC-正式", year: 1974 },
-  { title: "中龍鋼鐵114S2-正式演練", year: 2008 },
-  { title: "114S1-海基會-正式", year: 1957 },
-  { title: "消防署114S1前測_0626", year: 1993 },
-  { title: "大綜兆利科技114S1複測_前測", year: 1994 },
-  { title: "2025S1-台肥-正式", year: 2003 },
-];

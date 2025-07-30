@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from "react";
 import useAbortOnUnmount from "app/hooks/useAbortOnUnmount";
-
+import useAuth from "app/hooks/useAuth";
+import axios from "axios";
 
 // 取得 Cookie 函式
 function getCookie(name) {
@@ -17,20 +18,31 @@ export default function useSendtaskList() {
     const [statsData, setStatsData] = useState({}); // 存所有統計資料
     const [isCheckingSends, setIsCheckingSends] = useState(false); // 新增
     const { createController } = useAbortOnUnmount();  //控制網頁關閉時結束api
+    const { isAuthenticated } = useAuth();
 
     // 用於追蹤所有進行中的請求
     const activeRequestsRef = useRef(new Set());
 
+    useEffect(() => {
+        if (isAuthenticated) {
+            setLoading(true);
+            refresh();
+            console.log("Tasks and stats data refreshed");
+        } else {
+            setTasksData([]);
+            setStatsData({});
+            setLoading(false);
+            console.log("User is not authenticated");
+        }
+    }, [isAuthenticated]);
+
     const fetchStats = async (uuids) => {
         if (!uuids.length) return;
         // 批次取得所有統計
-        const res = await fetch("/api/get_sendlog_stats", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ sendtask_uuids: uuids }),
+        const { data: json } = await axios.post("/api/get_sendlog_stats", {
+            sendtask_uuids: uuids,
         });
 
-        const json = await res.json();
         const statsList = json.data || [];
         // 轉成 { uuid: stats, ... }
         const statsObj = {};
@@ -42,14 +54,11 @@ export default function useSendtaskList() {
 
     const fetchData = async (orgsArr, controller) => {
         try {
-            const res = await fetch("/api/get_sendtasks", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ orgs: orgsArr }),
-                signal: controller.signal,
-            });
+            const { data: json } = await axios.post("/api/get_sendtasks", 
+                { orgs: orgsArr },
+                { signal: controller.signal }
+            );
 
-            const json = await res.json();
             if (json.status === "success") {
                 setTasksData(json.data);
 
@@ -102,11 +111,6 @@ export default function useSendtaskList() {
         activeRequestsRef.current.clear();
         setIsCheckingSends(false);
     };
-
-    useEffect(() => {
-        setLoading(true);
-        refresh();
-    }, []);
 
 
     useEffect(() => {

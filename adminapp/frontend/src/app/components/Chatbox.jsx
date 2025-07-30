@@ -263,7 +263,7 @@ export default function Chatbox({ togglePopup }) {
           </Box>
         ))}
 
-        {/* example of image sent by current user*/}
+        {/* example of image send by current user*/}
         <ChatImgContainer>
           <Box ml="12px">
             <ChatImgBox>

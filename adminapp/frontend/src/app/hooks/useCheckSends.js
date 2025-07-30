@@ -1,4 +1,6 @@
 import useAbortOnUnmount from "app/hooks/useAbortOnUnmount";
+import axios from "axios";
+
 
 export function useCheckSends({ refresh, setIsCheckingSends, setUpdatedTodayUuids }) {
     const { createController } = useAbortOnUnmount();
@@ -28,16 +30,16 @@ export function useCheckSends({ refresh, setIsCheckingSends, setUpdatedTodayUuid
         }
         
         try {
-            const fetchPromises = uuidChunks.map(chunk =>
-                fetch("/api/refresh_sendlog_stats", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ sendtask_uuids: chunk }),
-                    signal: controller.signal,
-                }).then(res => res.json())
-            );        
-            const results = await Promise.all(fetchPromises);
-
+            const results = await Promise.all(
+                uuidChunks.map(async (chunk) => {
+                    const response = await axios.post("/api/refresh_sendlog_stats", 
+                        { sendtask_uuids: chunk },
+                        { signal: controller.signal }
+                    );
+                    return response.data;
+                })
+            );
+            
             // 提取所有 "updated" 的 UUID
             const updatedUuids = results.flatMap(json => {
                 const stats = json.sendlog_stats_status || {};

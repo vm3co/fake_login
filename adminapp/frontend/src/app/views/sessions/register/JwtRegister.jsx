@@ -40,7 +40,7 @@ const JWTRegister = styled(Box)(() => ({
 
 // initial login credentials
 const initialValues = {
-  email: "",
+  username: "",
   password: "",
   confirmPassword: "",
   remember: true
@@ -54,7 +54,7 @@ const validationSchema = Yup.object().shape({
   confirmPassword: Yup.string()
     .oneOf([Yup.ref("password"), null], "兩次密碼輸入不一致")
     .required("Password is required!"),
-  email: Yup.string().email("Invalid Email address").required("Email is required!")
+  username: Yup.string().email("Invalid Email address").required("Username is required!")
 });
 
 export default function JwtRegister() {
@@ -64,7 +64,7 @@ export default function JwtRegister() {
 
   const handleFormSubmit = (values) => {
     try {
-      register(values.email, values.password);
+      register(values.username, values.password);
       navigate("/");
     } catch (e) {
       console.log(e);
@@ -106,14 +106,14 @@ export default function JwtRegister() {
                       fullWidth
                       size="small"
                       type="email"
-                      name="email"
-                      label="Email"
+                      name="username"
+                      label="Username"
                       variant="outlined"
                       onBlur={handleBlur}
-                      value={values.email}
+                      value={values.username}
                       onChange={handleChange}
-                      helperText={touched.email && errors.email}
-                      error={Boolean(errors.email && touched.email)}
+                      helperText={touched.username && errors.username}
+                      error={Boolean(errors.username && touched.username)}
                       sx={{ mb: 3 }}
                     />
                     <TextField

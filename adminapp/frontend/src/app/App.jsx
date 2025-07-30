@@ -6,7 +6,6 @@ import { MatxTheme } from "./components";
 import SettingsProvider from "./contexts/SettingsContext";
 // import { AuthProvider } from "./contexts/FirebaseAuthContext";
 import { AuthProvider } from "./contexts/JWTAuthContext";
-import { SendtaskListProvider } from "./contexts/SendtaskListContext";
 // ROUTES
 import routes from "./routes";
 // Global styles
@@ -19,15 +18,13 @@ export default function App() {
   const content = useRoutes(routes);
 
   return (
-    <SendtaskListProvider>
-      <SettingsProvider>
-        <AuthProvider>
-          <MatxTheme>
-            <CssBaseline />
-            {content}
-          </MatxTheme>
-        </AuthProvider>
-      </SettingsProvider>
-    </SendtaskListProvider>
+    <SettingsProvider>
+      <AuthProvider>
+        <MatxTheme>
+          <CssBaseline />
+          {content}
+        </MatxTheme>
+      </AuthProvider>
+    </SettingsProvider>
   );
 }

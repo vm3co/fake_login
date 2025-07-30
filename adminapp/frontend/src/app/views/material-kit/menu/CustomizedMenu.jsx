@@ -55,7 +55,7 @@ function CustomizedMenu() {
           <ListItemIcon>
             <SendIcon />
           </ListItemIcon>
-          <ListItemText primary="Sent mail" />
+          <ListItemText primary="Send mail" />
         </StyledMenuItem>
 
         <StyledMenuItem>

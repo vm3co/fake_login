@@ -1,4 +1,6 @@
 import useAbortOnUnmount from "app/hooks/useAbortOnUnmount";
+import axios from "axios";
+
 
 function getCookie(name) {
     const value = document.cookie
@@ -12,7 +14,7 @@ export function useCheckTasks({ refresh, setIsCheckingSends }) {
     const { controllerRef, createController } = useAbortOnUnmount();
 
     // 檢查新增或移除的任務
-    const fetchCheckTasks = () => {
+    const fetchCheckTasks = async () => {
         // 彈出確認視窗
         if (!window.confirm("確定要執行任務列表更新嗎？")) {
             return;
@@ -29,13 +31,11 @@ export function useCheckTasks({ refresh, setIsCheckingSends }) {
         // 建立新的 controller
         const controller = createController();
 
-        fetch("/api/check_sendtasks", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ orgs: orgsArr }),
-            signal: controller.signal,
-        })
-            .then((res) => res.json())
+        await axios.post("/api/check_sendtasks", 
+            { orgs: orgsArr },
+            { signal: controller.signal }
+        )
+            .then((res) => res.data)
             .then((json) => {
                 if (json.status === "success") {
                     const { added, removed } = json.data;

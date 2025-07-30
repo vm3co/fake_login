@@ -1,6 +1,7 @@
 const navigations = [
   { name: "Dashboard", path: "/dashboard/default", icon: "dashboard" },
-  { name: "客戶帳號(開發中)", path: "/customers", icon: "list", disabled: true },
+  { name: "客戶帳號", path: "/customers", icon: "list", disabled: true },
+  { name: "更換密碼(測試中)", path: "/change-password", icon: "security", disabled: true },
   // { label: "PAGES", type: "label" },
   // {
   //   name: "Session/Auth",

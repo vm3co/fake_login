@@ -172,6 +172,63 @@ class ApplianceDB:
             result = await connection.fetch(sql_cmd, *bind_values)
             return [dict(row) for row in result] if result else []
 
+    async def get_paginated_db(self, table_name: str, paginate: bool = True, page: int = 1, rows_per_page: int = 20, where_clauses: list[str] = None, params: list = None, order_by: str = None):
+        """
+        查詢資料，支援分頁、篩選和排序。
+
+        :param table_name: 欲查詢的資料表名稱。
+        :param paginate: 是否啟用分頁。若為 False，則回傳所有符合條件的資料。
+        :param page: 當前頁碼 (從 1 開始)。
+        :param rows_per_page: 每頁筆數。
+        :param where_clauses: SQL WHERE 條件子句列表 (例如 ["target_email LIKE %s", "send_time > %s"])。
+        :param params: 對應 WHERE 條件的參數列表。
+        :param order_by: 排序依據 (例如 "plan_time DESC")。
+        :return: 一個包含 'data' (當頁資料) 和 'total_count' (總筆數) 的字典。
+        """
+        await self.check_db_connection()
+
+        if params is None:
+            params = []
+        
+        offset = (page - 1) * rows_per_page
+
+        # 組合 WHERE 條件
+        where_sql = ""
+        if where_clauses:
+            where_sql = "WHERE " + " AND ".join(where_clauses)
+
+        # 組合 ORDER BY 條件
+        order_sql = ""
+        if order_by:
+            # 簡單的白名單驗證，防止 SQL Injection
+            allowed_sort_columns = ["target_email", "plan_time", "send_time", "person_info"]
+            sort_field = order_by.split()[0]
+            if sort_field in allowed_sort_columns:
+                order_sql = f"ORDER BY {order_by}"
+
+        # 組合計算總數的 SQL
+        count_sql = f'SELECT COUNT(*) FROM "{table_name}" {where_sql}'
+
+        # 組合查詢資料的 SQL
+        data_sql = f'SELECT * FROM "{table_name}" {where_sql} {order_sql}'
+
+        final_params = params.copy()
+
+        if paginate:
+            offset = (page - 1) * rows_per_page
+            data_sql += f' LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}'
+            final_params.extend([rows_per_page, offset])
+
+        async with self.db_pool.acquire() as connection:
+            # 執行查詢
+            total_count = await connection.fetchval(count_sql, *params)
+            rows = await connection.fetch(data_sql, *final_params)
+
+            return {
+                "data": [dict(row) for row in rows],
+                "total_count": total_count or 0
+            }    
+
     async def insert_db(self, table_name: str, data: dict | list[dict]):
         """
         插入單筆或多筆資料，並自動分批避免 asyncpg 的參數數量限制。

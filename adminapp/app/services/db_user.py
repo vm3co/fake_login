@@ -6,6 +6,7 @@ import re
 import asyncpg
 import aiofiles
 import time
+import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -31,15 +32,18 @@ def calc_stats(stats):
     """
     start_ts, end_ts = timestamp()
 
+    # 總寄出數量
+    totalSend = [t for t in stats if t.get("send_time", 0) != 0]
     # 總成功數量
     totalSuccess = [t for t in stats if str(t.get("send_res", "")).startswith("True")]
 
-    # 今日寄送：寄送時間>=當天開始時間 & 寄送時間<當天結束時間 & 寄送時間為0
+    # 今日尚未寄送：寄送時間>=當天開始時間 & 寄送時間<當天結束時間 & 寄送時間為0
     todayUnsend = [t for t in stats if start_ts <= t.get("plan_time", 0) < end_ts and t.get("send_time", 0) == 0]
     # 今日寄送：寄送時間>=當天開始時間 & 寄送時間<當天結束時間
     todaySends = [t for t in stats if start_ts <= t.get("send_time", 0) < end_ts]
+    # 今日成功：寄送時間>=當天開始時間 & 寄送時間<當天結束時間 & 寄送結果為成功
     todaySuccess = [t for t in todaySends if str(t.get("send_res", "")).startswith("True")]
-    totalSends = [t for t in stats if t.get("send_time", 0) != 0]
+
 
     today_plan_time = [t["plan_time"] for t in stats if start_ts <= t.get("plan_time", 0) < end_ts]
     # 今日未寄送最早的 plan_time（如果有的話）
@@ -52,7 +56,11 @@ def calc_stats(stats):
     # 任務最後一封的 plan_time
     all_latest_plan_time = max(t["plan_time"] for t in stats) if stats else 0
     # # 任務最後一封的 send_time
-    # all_latest_send_time = max(t["send_time"] for t in stats) if stats and len(stats) == len(totalSends) else 0
+    # all_latest_send_time = max(t["send_time"] for t in stats) if stats and len(stats) == len(totalSend) else 0
+
+    # 統計觸發人數
+    totalTriggered = [t for t in stats if t.get("access_src", []) and len(t.get("access_src", [])) > 0]
+
 
     return {
         "totalplanned": len(stats),
@@ -64,7 +72,8 @@ def calc_stats(stats):
         "all_latest_plan_time": all_latest_plan_time,
         "todaysend": len(todaySends),
         "todaysuccess": len(todaySuccess),
-        "totalsend": len(totalSends),
+        "totalsend": len(totalSend),
+        "totaltriggered": len(totalTriggered),
     }
 
 
@@ -86,8 +95,8 @@ class DBUser:
                                   "test_start_ut", "is_pause", "stop_time_new"]
         # sendlog 資料表結構
         self.sendlog_table_info = {"id": "SERIAL PRIMARY KEY", "uuid": "TEXT UNIQUE", "target_email": "TEXT", 
-                                   "template_uuid": "TEXT", "access_active": "TEXT[]", "access_ip": "TEXT[]",
-                                   "access_time": "BIGINT[]", "person_info": "TEXT", "plan_time": "BIGINT",
+                                   "template_uuid": "TEXT", "qrcode_access_active": "TEXT[]", "qrcode_access_ip": "TEXT[]",
+                                   "qrcode_access_time": "BIGINT[]", "person_info": "TEXT", "plan_time": "BIGINT",
                                    "send_time": "BIGINT", "send_res": "TEXT", "access_time": "BIGINT[]",
                                    "access_src": "TEXT[]", "access_dev": "TEXT[]", "click_time": "BIGINT[]",
                                    "click_src": "TEXT[]", "click_dev": "TEXT[]", "file_time": "BIGINT[]",
@@ -96,12 +105,6 @@ class DBUser:
         self.sendlog_columns = ["uuid", "target_email", "person_info", "template_uuid", "plan_time",
                                 "send_time", "send_res", "access_time", "access_src", "access_dev",
                                 "click_time", "click_src", "click_dev", "file_time", "file_src", "file_dev"]
-        
-        # coustomer 資料表結構
-        self.customer_info = {"id": "SERIAL PRIMARY KEY", "customer_name": "TEXT UNIQUE NOT NULL",
-                              "customer_full_name": "TEXT", "password_hash": "TEXT NOT NULL", "sendtasks": "TEXT[]",
-                              "create_time": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
-                              "is_active": "BOOLEAN DEFAULT TRUE"}
         
     async def table_initialize(self):
         """
@@ -112,7 +115,7 @@ class DBUser:
         # 檢查資料庫連線
         await self.db.check_db_connection()
 
-        table_names = ["accts", "sendtasks", "sendlog_stats"]
+        table_names = ["accts", "sendtasks", "mtmpl", "sendlog_stats"]
         
         # 檢查資料表是否為空，如果是空的，則從 SE2 獲取資料並插入到資料表中。
         for table_name in table_names:
@@ -124,6 +127,9 @@ class DBUser:
                 elif table_name == "sendtasks":
                     # 從 SE2 獲取 sendtasks 資料
                     se2_list = await self.get_se2_sendtasks(self.sendtasks_columns, days=self.day)
+                elif table_name == "mtmpl":
+                    # 從 SE2 獲取 mtmpl 資料
+                    se2_list = await self.get_se2_mtmpl()
                 elif table_name == "sendlog_stats":
                     # 取得sendtask_uuids
                     sendtask_data = await self.db.get_db("sendtasks", select_columns=["sendtask_uuid"])
@@ -140,11 +146,6 @@ class DBUser:
                 logger.info(f"Inserted {len(se2_list)} records into {table_name}.")
             else:
                 logger.info(f"{table_name} already has data. Skipping initialization.")
-
-        # 從 users 資料表去新增 customer 資料表
-        if not self.db.table_empty("users"):
-            user_data = await self.db.get_db("users", select_columns=["username"])
-            self.check_customer(d["username"] for d in user_data)
 
     async def get_se2_accts(self, acct_columns=None) -> list[dict]:
         """
@@ -203,6 +204,17 @@ class DBUser:
                 return []
             sendtasks_list = filtered_df[column_names].to_dict(orient="records")
             return sendtasks_list
+        return []
+    
+    async def get_se2_mtmpl(self) -> list[dict]:
+        """
+        從 SE2 獲取 mtmpl 資料
+        """
+        await self.db.check_db_connection()
+        mtmpl_df = await get_se2_data.get_mtmpl_subject_list()
+        if mtmpl_df is not None and not mtmpl_df.empty:
+            mtmpl_list = mtmpl_df.to_dict(orient="records")
+            return mtmpl_list
         return []
     
     async def get_se2_sendlog(self, sendtask_uuid: str, sendlog_columns=None) -> list[dict]:
@@ -312,9 +324,7 @@ class DBUser:
         sendlog_stats_status = {}
         for uuid in uuids:
             logger.info(f"Refreshing sendlog_stats for {uuid}")
-            data = await self.db.get_db(uuid)
-            for dd in data:
-                dd.pop("id", None)
+            data = await self.get_sendlog(table_name=uuid, need_id=False)
             stats = calc_stats(data)
             sendlog_stats_status[uuid] = await self.db.upsert_db("sendlog_stats", {
                 "sendtask_uuid": uuid,
@@ -325,89 +335,164 @@ class DBUser:
 
         return sendlog_stats_status
 
+    async def get_sendlog(self, table_name: str, need_id=True):
+        await self.db.check_db_connection()
+        data = await self.db.get_db(table_name)
+        if not need_id:
+            for dd in data:
+                dd.pop("id", None)
+        return data
+
 ## user相關操作
-    async def user_exists(self, email: str) -> bool:
+    async def user_exists(self, username: str) -> bool:
         """
         檢查使用者是否存在
-        :param email: 使用者名稱
+        :param username: 使用者名稱
         :return: 如果使用者存在，返回 True，否則返回 False
         """
         await self.db.check_db_connection()
-        result = await self.db.get_db("users", where_column="email", values=email)
+        result = await self.db.get_db("users", where_column="username", values=username)
         return len(result) > 0
-    
-    async def insert_user(self, email: str, password_hash: str):
+
+    async def insert_user(self, username: str, password_hash: str):
         """
         插入新使用者
-        :param email: 使用者電子郵件
+        :param username: 使用者名稱
         :param password_hash: 密碼哈希值
         """
         await self.db.check_db_connection()
-        accts_data = await self.db.get_db("accts", where_column="acct_id", values=email)
+        accts_data = await self.db.get_db("accts", where_column="acct_id", values=username)
         if not accts_data:
-            logger.error(f"Email {email} does not exist in the main system (accts).")
-            return {"status": "error", "msg": "帳號不存在在主系統"}
+            logger.error(f"acct_id {username} does not exist in the main system (accts).")
+            return {"status": "error", "message": "帳號不存在在主系統"}
         acct = accts_data[0]
         data = {
             "acct_uuid": acct["acct_uuid"],
-            "username": acct["acct_id"],
+            "username": username,
             "password_hash": password_hash,
-            "email": email,
+            "email": acct["acct_email"],
             "full_name": acct["acct_full_name"],
             "orgs": acct["orgs"]
         }
         await self.db.insert_db("users", data)
-        return {"status": "success", "msg": "註冊成功", "email": email, "username": data["username"]}
+        return {"status": "success", "message": "註冊成功", "acct_uuid": data["acct_uuid"], "username": data["username"]}
+    
+
     
 ## customer 相關操作
-    async def check_customer(self, acct_mails: list):
-        tables_to_create = []
-        for mail in acct_mails:
-            table_name = mail.replace("@", "_") + "_customers"
-            if not await self.db.table_exists(table_name):
-                tables_to_create.append(table_name)
-        # 批次建立資料表
-        for table_name in tables_to_create:
-            await self.db.create_table(table_name, self.customer_info)
-            logger.info(f"Table {table_name} created.")
-        if not tables_to_create:
-            logger.info("All customer tables already exist.")  
-
-    async def customer_exists(self, username: str, customer_name: str) -> bool:
+    async def customer_exists(self, customer_name: str) -> bool:
         """
         檢查客戶是否存在
-        :param username: 帳號名稱
-        :param name: 客戶名稱
+        :param customer_name: 客戶名稱
         :return: 如果客戶存在，返回 True，否則返回 False
         """
         await self.db.check_db_connection()
-        table_name = username.replace("@", "_") + "_customers"
-        result = await self.db.get_db(table_name, where_column="customer_name", values=customer_name)
+        result = await self.db.get_db("customer_accts", where_column="customer_name", values=customer_name)
         return len(result) > 0
 
-    async def insert_customer(self, username: str, customer_name: str, customer_full_name: str, password_hash: str):
+    async def insert_customer(self, data: dict):
         """
         插入新客戶
-        :param customer_name: 客戶名稱
-        :param customer_full_name: 客戶全名
-        :param password_hash: 密碼哈希值
+        :param data: 客戶資料
+        :return: 
         """
         await self.db.check_db_connection()
-        data = {
-            "customer_name": customer_name,
-            "customer_full_name": customer_full_name,
-            "password_hash": password_hash,
-            "sendtasks": []
-        }
-        table_name = username.replace("@", "_") + "_customers"
-        await self.db.insert_db(table_name, data)
-        return {"status": "success", "msg": "新增客戶成功", "customer_name": customer_name}
+        try:
+            data = {
+                "customer_name": data.get("customer_name"),
+                "customer_full_name": data.get("customer_full_name"),
+                "password_hash": data.get("password_hash"),
+                "acct_uuid": data.get("acct_uuid")
+            }
+            await self.db.insert_db("customer_accts", data)
+            return {"status": "success", "message": "新增客戶成功", "customer_name": data["customer_name"]}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
 
-    async def add_customer_sendtasks(self, username: str, customer_name: str, sendtasks: list[str]):
+
+    async def update_customer_sendtasks(self, customer_name: str, sendtask_uuids: list[str]):
+        """
+        更新任務
+        """
         await self.db.check_db_connection()
-        table_name = username.replace("@", "_") + "_customers"
-        status = await self.db.upsert_db(table_name, {
-                    "customer_name": customer_name,
-                    "sendtasks": sendtasks
-                }, conflict_keys=["customer_name"])
+
+        # 檢查客戶是否存在
+        if not await self.customer_exists(customer_name):
+            logger.error(f"Customer {customer_name} does not exist.")
+            return {"status": "error", "message": "客戶不存在"}
+
+        status = await self.db.update_db(
+            table_name="customer_accts",
+            data={"sendtask_uuids": sendtask_uuids},
+            condition={"customer_name": customer_name}
+        )
         return status
+
+    async def update_password(self, user_type: str, identifier: str, new_password_hash: str, old_password_hash: str = None, acct_uuid: str = None) -> dict:
+        """
+        統一的密碼更新方法，支援一般用戶和客戶
+        :param user_type: 用戶類型 ("user" 或 "customer")
+        :param identifier: 用戶識別符（acct_uuid 或 customer_name）
+        :param new_password_hash: 新密碼哈希值
+        :param old_password_hash: 舊密碼哈希值（可選，用於驗證）
+        :param acct_uuid: 用戶的 UUID（可選，用於權限驗證）
+        :return: 更新結果
+        """
+        await self.db.check_db_connection()
+        
+        try:
+            if user_type == "user":
+                table_name = "users"
+                where_column = "acct_uuid"
+            elif user_type == "customer":
+                table_name = "customer_accts"
+                where_column = "customer_name"
+            else:
+                return {"status": "error", "message": "無效的用戶類型"}
+            
+            # 檢查用戶是否存在
+            user_data = await self.db.get_db(
+                table_name, 
+                where_column=where_column, 
+                values=identifier
+            )
+            
+            if not user_data:
+                return {"status": "error", "message": f"{'用戶' if user_type == 'user' else '客戶'}不存在"}
+            
+            user = user_data[0]
+            
+            # 進行驗證舊密碼
+            if old_password_hash:
+                if user.get("password_hash") != old_password_hash:
+                    return {"status": "error", "message": "舊密碼不正確"}
+                
+                if old_password_hash == new_password_hash:
+                    return {"status": "error", "message": "新密碼不能與舊密碼相同"}
+            
+            # 更新密碼
+            data = {
+                where_column: identifier,
+                "password_hash": new_password_hash
+            }
+            
+            status = await self.db.upsert_db(
+                table_name=table_name, 
+                data=data, 
+                conflict_keys=[where_column]
+            )
+            
+            if status == "changed":
+                logger.info(f"Password updated successfully for {user_type}: {identifier}")
+                return {
+                    "status": "success", 
+                    "message": "密碼更新成功", 
+                    "identifier": identifier,
+                    "user_type": user_type
+                }
+            else:
+                return {"status": "error", "message": "密碼更新失敗"}
+                
+        except Exception as e:
+            logger.error(f"Error updating password for {user_type} {identifier}: {str(e)}")
+            return {"status": "error", "message": f"更新密碼時發生錯誤: {str(e)}"}
