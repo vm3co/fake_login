@@ -125,6 +125,7 @@ def get_router(db, db_user):
             # 新增
             if added_list:
                 refresh_list = []
+                sendlog_stats_status = {}
                 for task in added_list:
                     status = await db.upsert_db(
                         table_name="sendtasks", 
