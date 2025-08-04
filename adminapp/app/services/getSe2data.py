@@ -115,7 +115,7 @@ class getSe2data:
 
     async def get_sendtask_metadata(self, uuid: str) -> dict | None:
         '''
-        抓取單一專案是否被暫停，以及是否有延長任務時間
+        抓取單一專案詳細資訊：是否被暫停、是否有延長任務時間、總人數
         :param uuid: 專案的 UUID
         '''
         # 要發送 POST 的目標網址

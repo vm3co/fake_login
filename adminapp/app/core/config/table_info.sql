@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS sendtasks (
     sendtask_uuid VARCHAR(36) UNIQUE NOT NULL,
     sendtask_id TEXT NOT NULL,
     sendtask_owner_gid TEXT[] NOT NULL,
+    person_count INT,            -- 測試人數
     pre_test_end_ut BIGINT,      -- 前期測試結束時間
     pre_test_start_ut BIGINT,    -- 前期測試開始時間
     pre_send_end_ut BIGINT,      -- 停止寄送日期
@@ -19,16 +20,18 @@ CREATE TABLE IF NOT EXISTS sendtasks (
 CREATE TABLE IF NOT EXISTS sendlog_stats (
     sendtask_uuid VARCHAR(36) PRIMARY KEY,
     totalplanned BIGINT,
+    totalsend BIGINT,
     totalsuccess BIGINT,
-    today_earliest_plan_time BIGINT,
-    today_latest_plan_time BIGINT,
-    all_earliest_plan_time BIGINT,
-    all_latest_plan_time BIGINT,
+    totalfailed BIGINT,
+    totaltriggered BIGINT,
     todayunsend BIGINT,
     todaysend BIGINT,
     todaysuccess BIGINT,
-    totalsend BIGINT,
-    totaltriggered BIGINT
+    todayfailed BIGINT,
+    today_earliest_plan_time BIGINT,
+    today_latest_plan_time BIGINT,
+    all_earliest_plan_time BIGINT,
+    all_latest_plan_time BIGINT
 );
 
 -- accts

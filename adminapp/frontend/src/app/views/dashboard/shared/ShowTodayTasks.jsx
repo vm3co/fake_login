@@ -1,7 +1,6 @@
 import { useEffect, useState, useContext } from "react";
 import {
   Box,
-  // Icon,
   Table,
   styled,
   TableRow,
@@ -43,6 +42,10 @@ const StyledTable = styled(Table)(() => ({
         whiteSpace: "normal", // sx={{ whiteSpace: 'normal' }}
         lineHeight: 1.2, // sx={{ lineHeight: 1.2 }}
         borderRight: "1px solid #e0e0e0", // 垂直框線
+        cursor: "pointer", // 滑鼠移到欄位上顯示可按的形狀
+        "&:hover": {
+          backgroundColor: "#f1f1f1", // 提示使用者可以點擊
+        },
         "&:last-child": {
           borderRight: "none", // 最後一欄不需要右邊框線
         },
@@ -97,6 +100,8 @@ const StyledTable = styled(Table)(() => ({
 export default function ShowTodayTasks({ taskState, setTaskState }) {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [sortBy, setSortBy] = useState("today_earliest_plan_time");  // 預設排序順序為寄信開始時間
+  const [sortOrder, setSortOrder] = useState("asc"); // 排序方向：asc 或 desc
   const { 
     loading, 
     statsData, 
@@ -111,10 +116,27 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
   const [searchText, setSearchText] = useState("");  // 搜尋任務名稱
   const [selectedUuids, setSelectedUuids] = useState([]);  // 勾選任務並只更新這些任務
 
+  // 排序邏輯
+  const sortedTasks = [...(todayTasks || [])].sort((a, b) => {
+    if (!sortBy) return 0; // 如果未指定排序欄位，保持原順序
+    let valueA, valueB;
+    if (sortBy === "is_pause") {
+      valueA = a[sortBy];
+      valueB = b[sortBy];
+    } else if (sortBy === "sendtask_id") {
+      valueA = a[sortBy]?.toLowerCase();
+      valueB = b[sortBy]?.toLowerCase();
+    } else {
+      valueA = statsData[a.sendtask_uuid]?.[sortBy];
+      valueB = statsData[b.sendtask_uuid]?.[sortBy];
+    }
+    if (valueA < valueB) return sortOrder === "asc" ? -1 : 1;
+    if (valueA > valueB) return sortOrder === "asc" ? 1 : -1;
+    return 0;
+  });
   
   // 任務顯示模式
-  const filteredTasks = (todayTasks)
-    ?.filter(row => {
+  const filteredTasks = sortedTasks.filter(row => {
       // 搜尋任務名稱
       if (searchText && !row.sendtask_id?.toLowerCase().includes(searchText.toLowerCase())) {
         return false;
@@ -128,8 +150,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
       const stats = statsData[row.sendtask_uuid] || {};
       const todayunsend = Number(stats.todayunsend) || 0;
       const todaysuccess = Number(stats.todaysuccess) || 0;
-      const todaysend = Number(stats.todaysend) || 0;
-      const todayfailed = todaysend - todaysuccess;
+      const todayfailed = Number(stats.todayfailed) || 0;;
 
       if (taskState === "doing") {
         // 執行中：今日尚未寄出>0 且 今日成功寄出>0 且 今日寄出失敗為0
@@ -162,6 +183,15 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
     }, 400);
     return () => clearInterval(interval);
   }, [isCheckingSends]);
+
+  const handleSort = (column) => {
+    if (sortBy === column) {
+      setSortOrder(sortOrder === "asc" ? "desc" : "asc"); // 切換排序方向
+    } else {
+      setSortBy(column);
+      setSortOrder("asc"); // 默認升序
+    }
+  };
 
   const handleChangePage = (_, newPage) => {
     setPage(newPage);
@@ -319,23 +349,48 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
                     }}
                   />
                 </TableCell>
-                <TableCell>任務名稱</TableCell>
-                <TableCell>信件<br />總數量</TableCell>
-                <TableCell>已寄出<br />總數</TableCell>
-                <TableCell>預計開始</TableCell>
-                <TableCell>預計結束</TableCell>
-                <TableCell>今日<br />尚未寄出</TableCell>
-                <TableCell>今日成功</TableCell>
-                <TableCell>今日失敗</TableCell>
-                <TableCell>第一封寄出<br />預計日期</TableCell>
-                <TableCell>最後一封寄出<br />預計日期</TableCell>
-                <TableCell>是否<br />暫停</TableCell>
-                <TableCell>更新</TableCell>
+                <TableCell align="center" onClick={() => handleSort("sendtask_id")}>
+                  任務名稱 {sortBy === "sendtask_id" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("totalplanned")}>
+                  信件<br />總數量 {sortBy === "totalplanned" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("totalsend")}>
+                  已寄出<br />總數 {sortBy === "totalsend" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("today_earliest_plan_time")}>
+                  預計開始 {sortBy === "today_earliest_plan_time" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("today_latest_plan_time")}>
+                  預計結束 {sortBy === "today_latest_plan_time" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("todayunsend")}>
+                  今日<br />尚未寄出 {sortBy === "todayunsend" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("todaysuccess")}>
+                  今日成功 {sortBy === "todaysuccess" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("todayfailed")}>
+                  今日失敗 {sortBy === "todayfailed" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("all_earliest_plan_time")}>
+                  第一封寄出<br />預計日期 {sortBy === "all_earliest_plan_time" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("all_latest_plan_time")}>
+                  最後一封寄出<br />預計日期 {sortBy === "all_latest_plan_time" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("is_paused")}>
+                  是否<br />暫停 {sortBy === "is_paused" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell>
+                  更新
+                </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {pagedTasks.map((row, index) => {
                 const stats = statsData[row.sendtask_uuid] || { planned: "-", send: "-", success: "-" };
+                // const todayfailed = 
                 const rowNumber = page * rowsPerPage + index + 1; // 全域編號
                 return (
                   <TableRow
@@ -380,7 +435,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
                     </TableCell>
                     <TableCell align="center">{stats.todayunsend}</TableCell>
                     <TableCell align="center">{stats.todaysuccess}</TableCell>
-                    <TableCell align="center">{stats.todaysend - stats.todaysuccess}</TableCell>
+                    <TableCell align="center">{stats.todayfailed}</TableCell>
                     <TableCell align="center">
                       {stats.all_earliest_plan_time === 0 || stats.all_earliest_plan_time === undefined
                         ? " - "

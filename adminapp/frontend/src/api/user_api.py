@@ -220,23 +220,38 @@ def get_router(db, db_user):
         except jwt.InvalidTokenError:
             raise HTTPException(status_code=401, detail="Token 無效")
 
-    # # 更新密碼
-    # class ChangePasswordRequest(BaseModel):
-    #     username: str
-    #     oldpassword: str
-    #     newpassword: str
+    # 更新密碼
+    class ChangePasswordRequest(BaseModel):
+        acct_uuid: str
+        old_password: str
+        new_password: str
 
-    # @router.get("/auth/change_password")
-    # async def change_password(data: ChangePasswordRequest)L
-    #     # 檢查帳號是否存在
-    #     if not await db_user.user_exists(data.username):
-    #         return {"status": "error", "message": "查無此帳號"}
+    @router.post("/auth/change_password")
+    async def change_password(request: ChangePasswordRequest):
+        """
+        更新使用者密碼 API
+        :param request: 包含使用者名稱、舊密碼和新密碼的請求數據
+        :param db_user: DBUser 實例
+        :return: 更新結果
+        """
+        acct_uuid = request.acct_uuid
+        old_password = request.old_password
+        new_password = request.new_password
 
-    #     # 密碼加密
-    #     old_password_hash = hash_password(data.oldpassword)
-    #     new_password_hash = hash_password(data.newpassword)
+        try:
+            # 更新新密碼
+            result = await db_user.update_password(
+                user_type="user",
+                identifier=acct_uuid,
+                new_password=new_password,
+                old_password=old_password
+            )
+            if result["status"] == "success":
+                return {"status": "success", "message": "密碼更新成功"}
+            else:
+                raise HTTPException(status_code=400, detail=result["message"])
 
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"更新密碼時發生錯誤: {str(e)}")
 
-
-        
     return router

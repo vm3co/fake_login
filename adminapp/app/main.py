@@ -45,9 +45,9 @@ async def check_sendtasks_job():
     logger.info("check_sendtasks_job 執行")
     try:
         # 使用和 data_api.py 相同的邏輯
-        sendtasks_columns = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "pre_test_end_ut",
-                             "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", "test_end_ut", 
-                             "test_start_ut", "is_pause", "stop_time_new"]
+        sendtasks_columns = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "person_count",
+                             "pre_test_end_ut", "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", 
+                             "test_end_ut", "test_start_ut", "is_pause", "stop_time_new"]
         all_tasksname_list = await db_user.get_se2_sendtasks(sendtasks_columns)
 
         my_tasksname_list = await db.get_db("sendtasks", select_columns=sendtasks_columns)

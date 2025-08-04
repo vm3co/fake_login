@@ -62,12 +62,6 @@ def get_router(db, db_user):
     router = APIRouter(dependencies=[Depends(get_current_user)])
     logger = Logger().get_logger()
 
-
-    # sendlog_columns = ["uuid", "target_email", "person_info", "template_uuid", "plan_time", "send_time",
-    #                 "send_res", "access_time", "access_src", "access_dev", "click_time", "click_src",
-    #                 "click_dev", "file_time", "file_src", "file_dev"]
-
-
     ## sendtasks 相關的 API
     class OrgsRequest(BaseModel):
         orgs: list[str] = []
@@ -95,9 +89,9 @@ def get_router(db, db_user):
         3. 新增及刪除到sendtask資料庫
         """
         try:
-            sendtasks_columns = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "pre_test_end_ut",
-                                  "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", "test_end_ut", 
-                                  "test_start_ut", "is_pause", "stop_time_new"]
+            sendtasks_columns = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "person_count",
+                                "pre_test_end_ut", "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", 
+                                "test_end_ut", "test_start_ut", "is_pause", "stop_time_new"]
             all_tasksname_list = await db_user.get_se2_sendtasks(column_names=sendtasks_columns)
 
             my_tasksname_list = await db.get_db("sendtasks", select_columns=sendtasks_columns)
@@ -122,10 +116,10 @@ def get_router(db, db_user):
             added_list = [hashable_to_dict(t) for t in added]
             removed_list = [hashable_to_dict(t) for t in removed]
 
+            sendlog_stats_status = {}
             # 新增
             if added_list:
-                refresh_list = []
-                sendlog_stats_status = {}
+                refresh_list = []    
                 for task in added_list:
                     status = await db.upsert_db(
                         table_name="sendtasks", 

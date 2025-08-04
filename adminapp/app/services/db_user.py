@@ -13,6 +13,8 @@ from zoneinfo import ZoneInfo
 from app.services.log_manager import Logger
 from app.services.getSe2data import get_se2_data
 from app.core.db_controller import ApplianceDB
+from app.core.security import verify_password
+from app.core.security import hash_password
 
 
 logger = Logger().get_logger()
@@ -44,7 +46,6 @@ def calc_stats(stats):
     # 今日成功：寄送時間>=當天開始時間 & 寄送時間<當天結束時間 & 寄送結果為成功
     todaySuccess = [t for t in todaySends if str(t.get("send_res", "")).startswith("True")]
 
-
     today_plan_time = [t["plan_time"] for t in stats if start_ts <= t.get("plan_time", 0) < end_ts]
     # 今日未寄送最早的 plan_time（如果有的話）
     today_earliest_plan_time = min(today_plan_time) if today_plan_time else 0
@@ -55,8 +56,6 @@ def calc_stats(stats):
     all_earliest_plan_time = min(t["plan_time"] for t in stats) if stats else 0
     # 任務最後一封的 plan_time
     all_latest_plan_time = max(t["plan_time"] for t in stats) if stats else 0
-    # # 任務最後一封的 send_time
-    # all_latest_send_time = max(t["send_time"] for t in stats) if stats and len(stats) == len(totalSend) else 0
 
     # 統計觸發人數
     totalTriggered = [t for t in stats if t.get("access_src", []) and len(t.get("access_src", [])) > 0]
@@ -64,16 +63,18 @@ def calc_stats(stats):
 
     return {
         "totalplanned": len(stats),
-        "totalSuccess": len(totalSuccess),
+        "totalsend": len(totalSend),
+        "totalsuccess": len(totalSuccess),
+        "totalfailed": len(totalSend) - len(totalSuccess),  # 總失敗數量
+        "totaltriggered": len(totalTriggered),
         "todayunsend": len(todayUnsend),
+        "todaysend": len(todaySends),
+        "todaysuccess": len(todaySuccess),
+        "todayfailed": len(todaySends) - len(todaySuccess),
         "today_earliest_plan_time": today_earliest_plan_time,
         "today_latest_plan_time": today_latest_plan_time,
         "all_earliest_plan_time": all_earliest_plan_time,
         "all_latest_plan_time": all_latest_plan_time,
-        "todaysend": len(todaySends),
-        "todaysuccess": len(todaySuccess),
-        "totalsend": len(totalSend),
-        "totaltriggered": len(totalTriggered),
     }
 
 
@@ -90,9 +91,9 @@ class DBUser:
                               "acct_email", "acct_activate", "orgs"]
 
         # sendtasks 欄位
-        self.sendtasks_columns = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "pre_test_end_ut",
-                                  "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", "test_end_ut", 
-                                  "test_start_ut", "is_pause", "stop_time_new"]
+        self.sendtasks_columns = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "person_count",
+                                  "pre_test_end_ut", "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", 
+                                  "test_end_ut", "test_start_ut", "is_pause", "stop_time_new"]
         # sendlog 資料表結構
         self.sendlog_table_info = {"id": "SERIAL PRIMARY KEY", "uuid": "TEXT UNIQUE", "target_email": "TEXT", 
                                    "template_uuid": "TEXT", "qrcode_access_active": "TEXT[]", "qrcode_access_ip": "TEXT[]",
@@ -184,9 +185,11 @@ class DBUser:
                 if metadata is not None:
                     sendtasks_df.at[index, "is_pause"] = metadata.get("pause", False)
                     sendtasks_df.at[index, "stop_time_new"] = metadata.get("stop_time_new", -1)
+                    sendtasks_df.at[index, "person_count"] = metadata.get("summary", {}).get("person_count", 0)
                 else:
                     sendtasks_df.at[index, "is_pause"] = False
                     sendtasks_df.at[index, "stop_time_new"] = -1
+                    sendtasks_df.at[index, "person_count"] = 0
             logger.info("Metadata fetched successfully.")
 
             # 取得當前時間戳
@@ -247,9 +250,11 @@ class DBUser:
                 if metadata is not None:
                     today_create_tasks_df.at[index, "is_pause"] = metadata.get("pause", False)
                     today_create_tasks_df.at[index, "stop_time_new"] = metadata.get("stop_time_new", -1)
+                    today_create_tasks_df.at[index, "person_count"] = metadata.get("summary", {}).get("person_count", 0)
                 else:
                     today_create_tasks_df.at[index, "is_pause"] = False
                     today_create_tasks_df.at[index, "stop_time_new"] = -1
+                    today_create_tasks_df.at[index, "person_count"] = 0
             logger.info("Metadata fetched successfully.")
             today_create_tasks_list = today_create_tasks_df[self.sendtasks_columns].to_dict(orient="records")
             return today_create_tasks_list
@@ -428,13 +433,13 @@ class DBUser:
         )
         return status
 
-    async def update_password(self, user_type: str, identifier: str, new_password_hash: str, old_password_hash: str = None, acct_uuid: str = None) -> dict:
+    async def update_password(self, user_type: str, identifier: str, new_password: str, old_password: str = None, acct_uuid: str = None) -> dict:
         """
         統一的密碼更新方法，支援一般用戶和客戶
         :param user_type: 用戶類型 ("user" 或 "customer")
         :param identifier: 用戶識別符（acct_uuid 或 customer_name）
-        :param new_password_hash: 新密碼哈希值
-        :param old_password_hash: 舊密碼哈希值（可選，用於驗證）
+        :param new_password: 新密碼
+        :param old_password: 舊密碼（可選，用於驗證）
         :param acct_uuid: 用戶的 UUID（可選，用於權限驗證）
         :return: 更新結果
         """
@@ -463,26 +468,22 @@ class DBUser:
             user = user_data[0]
             
             # 進行驗證舊密碼
-            if old_password_hash:
-                if user.get("password_hash") != old_password_hash:
+            if old_password:
+                if not verify_password(old_password, user.get("password_hash")):
                     return {"status": "error", "message": "舊密碼不正確"}
                 
-                if old_password_hash == new_password_hash:
+                if old_password == new_password:
                     return {"status": "error", "message": "新密碼不能與舊密碼相同"}
             
             # 更新密碼
-            data = {
-                where_column: identifier,
-                "password_hash": new_password_hash
-            }
-            
-            status = await self.db.upsert_db(
+            new_password_hash = hash_password(new_password)
+            status = await self.db.update_db(
                 table_name=table_name, 
-                data=data, 
-                conflict_keys=[where_column]
+                data={"password_hash": new_password_hash}, 
+                condition={where_column: identifier}
             )
             
-            if status == "changed":
+            if status:
                 logger.info(f"Password updated successfully for {user_type}: {identifier}")
                 return {
                     "status": "success", 

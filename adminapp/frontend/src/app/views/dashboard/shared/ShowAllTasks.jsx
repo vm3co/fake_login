@@ -8,18 +8,18 @@ import {
   TableCell,
   TableHead,
   TablePagination,
+  Button,
+  TableContainer,
+  Paper,
+  Stack,
+  Chip,
+  CircularProgress,
+  Typography,
+  TextField,
+  Checkbox,
+  FormControlLabel,
 } from "@mui/material";
 import SimpleCard from "app/components/SimpleCard";
-import Button from "@mui/material/Button";
-import TableContainer from "@mui/material/TableContainer";
-import Paper from "@mui/material/Paper";
-import Stack from "@mui/material/Stack";
-import Chip from "@mui/material/Chip";
-import CircularProgress from "@mui/material/CircularProgress";
-import Typography from "@mui/material/Typography";
-import TextField from "@mui/material/TextField";
-import Checkbox from "@mui/material/Checkbox";
-import FormControlLabel from "@mui/material/FormControlLabel";
 
 import { SendtaskListContext } from "app/contexts/SendtaskListContext";
 import formatDate from "app/utils/formatDate";
@@ -37,6 +37,10 @@ const StyledTable = styled(Table)(() => ({
         whiteSpace: "normal", // sx={{ whiteSpace: 'normal' }}
         lineHeight: 1.2, // sx={{ lineHeight: 1.2 }}
         borderRight: "1px solid #e0e0e0", // 垂直框線
+        cursor: "pointer", // 滑鼠移到欄位上顯示可按的形狀
+        "&:hover": {
+          backgroundColor: "#f1f1f1", // 提示使用者可以點擊
+        },
         "&:last-child": {
           borderRight: "none", // 最後一欄不需要右邊框線
         },
@@ -104,6 +108,8 @@ function getTodayTimestamps() {
 export default function ShowAllTasks() {
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [sortBy, setSortBy] = useState("test_start_ut");  // 預設排序為任務開始日期
+  const [sortOrder, setSortOrder] = useState("asc"); // 排序方向：asc 或 desc
   const { 
     loading, 
     statsData, 
@@ -124,9 +130,27 @@ export default function ShowAllTasks() {
   const [showFailedOnly, setShowFailedOnly] = useState(false);
   const [todayStartTs, todayEndTs] = getTodayTimestamps();
 
+  // 排序邏輯
+  const sortedTasks = [...(tasksData || [])].sort((a, b) => {
+    if (!sortBy) return 0; // 如果未指定排序欄位，保持原順序
+    let valueA, valueB;
+    if (["test_start_ut", "person_count", "is_pause"].includes(sortBy)) {
+      valueA = a[sortBy];
+      valueB = b[sortBy];
+    } else if (sortBy === "sendtask_id") {
+      valueA = a[sortBy]?.toLowerCase();
+      valueB = b[sortBy]?.toLowerCase();
+    } else {
+      valueA = statsData[a.sendtask_uuid]?.[sortBy];
+      valueB = statsData[b.sendtask_uuid]?.[sortBy];
+    }
+    if (valueA < valueB) return sortOrder === "asc" ? -1 : 1;
+    if (valueA > valueB) return sortOrder === "asc" ? 1 : -1;
+    return 0;
+  });
+
   // 任務顯示模式
-  const filteredTasks = (tasksData)
-    ?.filter(row => {
+  const filteredTasks = sortedTasks.filter(row => {
       // 搜尋任務名稱
       if (searchText && !row.sendtask_id?.toLowerCase().includes(searchText.toLowerCase())) {
         return false;
@@ -163,6 +187,15 @@ export default function ShowAllTasks() {
     }, 400);
     return () => clearInterval(interval);
   }, [isCheckingSends]);
+
+  const handleSort = (column) => {
+    if (sortBy === column) {
+      setSortOrder(sortOrder === "asc" ? "desc" : "asc"); // 切換排序方向
+    } else {
+      setSortBy(column);
+      setSortOrder("asc"); // 默認升序
+    }
+  };
 
   const handleChangePage = (_, newPage) => {
     setPage(newPage);
@@ -327,16 +360,36 @@ export default function ShowAllTasks() {
                     }}
                   />
                 </TableCell>
-                <TableCell>任務名稱</TableCell>
-                <TableCell>任務期間</TableCell>
-                <TableCell>信件<br />總數量</TableCell>
-                <TableCell>已寄出<br />總數</TableCell>
-                <TableCell>成功<br />總數量</TableCell>
-                <TableCell>失敗<br />總數量</TableCell>
-                <TableCell>第一封寄出<br />預計日期</TableCell>
-                <TableCell>最後一封寄出<br />預計日期</TableCell>
-                <TableCell>是否暫停</TableCell>
-                <TableCell>更新</TableCell>
+                <TableCell align="center" onClick={() => handleSort("sendtask_id")}>
+                  任務名稱 {sortBy === "sendtask_id" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("test_start_ut")}>
+                  任務期間 {sortBy === "test_start_ut" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("totalsend")}>
+                  信件<br />總數量 {sortBy === "totalsend" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("person_count")}>
+                  總人數 {sortBy === "person_count" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("totalsuccess")}>
+                  成功<br />總數量 {sortBy === "totalsuccess" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("totalfailed")}>
+                  失敗<br />總數量 {sortBy === "totalfailed" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("all_earliest_plan_time")}>
+                  第一封寄出<br />預計日期 {sortBy === "all_earliest_plan_time" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("all_latest_plan_time")}>
+                  最後一封寄出<br />預計日期 {sortBy === "all_latest_plan_time" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("is_paused")}>
+                  是否暫停 {sortBy === "is_paused" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell>
+                  更新
+                </TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -378,9 +431,9 @@ export default function ShowAllTasks() {
                     <TableCell align="center">{row.sendtask_id}</TableCell>
                     <TableCell align="center">{start}<br />-<br />{end}</TableCell>
                     <TableCell align="center">{stats.totalplanned}</TableCell>
-                    <TableCell align="center">{stats.totalsend}</TableCell>
+                    <TableCell align="center">{row.person_count}</TableCell>
                     <TableCell align="center">{stats.totalsuccess}</TableCell>
-                    <TableCell align="center">{stats.totalsend - stats.totalsuccess}</TableCell>
+                    <TableCell align="center">{stats.totalfailed}</TableCell>
                     <TableCell align="center">
                       {stats.all_earliest_plan_time === 0 || stats.all_earliest_plan_time === undefined
                         ? " - "
