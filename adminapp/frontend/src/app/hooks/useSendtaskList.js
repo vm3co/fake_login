@@ -27,12 +27,10 @@ export default function useSendtaskList() {
         if (isAuthenticated) {
             setLoading(true);
             refresh();
-            console.log("Tasks and stats data refreshed");
         } else {
             setTasksData([]);
             setStatsData({});
             setLoading(false);
-            console.log("User is not authenticated");
         }
     }, [isAuthenticated]);
 

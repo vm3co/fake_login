@@ -163,16 +163,20 @@ export default function ShowAllTasks() {
                           : row.test_end_ut;
       const stats = statsData[row.sendtask_uuid] || {};
       const sendFailed = stats.totalsend - stats.totalsuccess;
+      let show = true;
       if (showExpiredOnly) {
-        if (!end || end > todayStartTs) return false;
-      } else if (showNotStartedOnly) {
-        if (!start || start < todayEndTs) return false;
-      } else if (showRunningOnly) {
-        if (end < todayStartTs || start > todayEndTs) return false;
-      } else if (showFailedOnly) {
-        if (sendFailed === 0) return false;
+        if (!end || end > todayStartTs) show = false;
+      } 
+      if (showNotStartedOnly) {
+        if (!start || start < todayEndTs) show = false;
+      } 
+      if (showRunningOnly) {
+        if (end < todayStartTs || start > todayEndTs) show = false;
+      } 
+      if (showFailedOnly) {
+        if (sendFailed === 0) show = false;
       }
-      return true;
+      return show;
     }) || [];
 
   const pagedTasks = Array.isArray(filteredTasks)
@@ -269,6 +273,8 @@ export default function ShowAllTasks() {
                   checked={showRunningOnly}
                   onChange={e => {
                     setShowRunningOnly(e.target.checked);
+                    setShowNotStartedOnly(false);
+                    setShowExpiredOnly(false);
                     setPage(0);
                   }}
                   size="small"
@@ -283,6 +289,8 @@ export default function ShowAllTasks() {
                   checked={showNotStartedOnly}
                   onChange={e => {
                     setShowNotStartedOnly(e.target.checked);
+                    setShowRunningOnly(false);
+                    setShowExpiredOnly(false);
                     setPage(0);
                   }}
                   size="small"
@@ -297,6 +305,8 @@ export default function ShowAllTasks() {
                   checked={showExpiredOnly}
                   onChange={e => {
                     setShowExpiredOnly(e.target.checked);
+                    setShowRunningOnly(false);
+                    setShowNotStartedOnly(false);
                     setPage(0);
                   }}
                   size="small"

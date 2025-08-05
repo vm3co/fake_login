@@ -105,9 +105,7 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (username, password) => {
     try {
-      console.log("Login attempt for:", username);
       const { data } = await axios.post("/api/auth/login", { username, password });
-      console.log("Login API response:", data);
 
       if (data.status !== "success") {
         alert(data.message || "登入失敗，請檢查帳號密碼是否正確");
