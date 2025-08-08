@@ -256,7 +256,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
             onClick={handleExportSelected}
             size="small"
           >
-            {isExporting ? "資料匯出中" : "匯出勾選任務"}
+            {isExporting ? "資料匯出中" : "匯出勾選任務(限正式任務)"}
           </Button>
           <Button
             variant="contained"
