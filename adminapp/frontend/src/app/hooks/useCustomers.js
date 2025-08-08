@@ -75,7 +75,7 @@ export default function useCustomers() {
             if (result.status === "success") {
                 setSuccess(`客戶 ${result.customer_name} 創建成功！`);
                 alert(`客戶 ${result.customer_name} 創建成功！`);
-                await fetchCustomers();
+                window.location.reload();
                 return result;
             } else {
                 throw new Error(result.message || "創建客戶失敗");

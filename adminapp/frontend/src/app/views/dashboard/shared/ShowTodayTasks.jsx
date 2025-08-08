@@ -9,6 +9,7 @@ import {
   TableHead,
   // IconButton,
   TablePagination,
+  LinearProgress,
 } from "@mui/material";
 import SimpleCard from "app/components/SimpleCard";
 // import { H3 } from "app/components/Typography";
@@ -24,7 +25,7 @@ import Select from "@mui/material/Select";
 import MenuItem from "@mui/material/MenuItem";
 import TextField from "@mui/material/TextField";
 import Checkbox from "@mui/material/Checkbox";
-// import Switch from "@mui/material/Switch";
+import DownloadIcon from "@mui/icons-material/Download";
 
 import { SendtaskListContext } from "app/contexts/SendtaskListContext";
 import formatDate from "app/utils/formatDate";
@@ -108,13 +109,16 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
     todayTasks, 
     refresh, 
     isCheckingSends, 
-    setIsCheckingSends 
+    setIsCheckingSends,
+    exportCsv 
   } = useContext(SendtaskListContext);
   const [loadingDots, setLoadingDots] = useState(0);
   const [updatedTodayUuids, setUpdatedTodayUuids] = useState([]);
   const { fetchCheckSends } = useCheckSends({ refresh, setIsCheckingSends, setUpdatedTodayUuids });
   const [searchText, setSearchText] = useState("");  // 搜尋任務名稱
   const [selectedUuids, setSelectedUuids] = useState([]);  // 勾選任務並只更新這些任務
+  const [isExporting, setIsExporting] = useState(false);
+  const [progress, setProgress] = useState(0); // 追蹤下載進度 (0-100)
 
   // 排序邏輯
   const sortedTasks = [...(todayTasks || [])].sort((a, b) => {
@@ -175,14 +179,44 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
     ? filteredTasks.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
     : [];
 
+  // 匯出勾選任務
+  const handleExportSelected = async () => {
+    if (selectedUuids.length === 0) {
+      alert("請先勾選要匯出的任務");
+      return;
+    }
+    // 準備 sendtasks 格式: { sendtask_id1: sendtask_uuid1, ... }
+    setIsExporting(true);
+    setProgress(0);
+    
+    try {
+      const sendtasks = {};
+      selectedUuids.forEach(uuid => {
+        const task = todayTasks.find(t => t.sendtask_uuid === uuid);
+        if (task) sendtasks[task.sendtask_id] = uuid;
+      });
+      await exportCsv(sendtasks, {
+        onDownloadProgress: (progressEvent) => {
+          const total = progressEvent.total || 1; // 總大小
+          const current = progressEvent.loaded; // 已下載大小
+          setProgress(Math.round((current / total) * 100)); // 計算百分比
+        },
+      });
+    } catch (error) {
+      console.error("匯出任務時發生錯誤:", error);
+    } finally {
+      setIsExporting(false);
+      setProgress(0);
+    }
+  };
+
   // 動態「...」效果
   useEffect(() => {
-    if (!isCheckingSends) return;
     const interval = setInterval(() => {
       setLoadingDots(dots => (dots + 1) % 4);
     }, 400);
     return () => clearInterval(interval);
-  }, [isCheckingSends]);
+  });
 
   const handleSort = (column) => {
     if (sortBy === column) {
@@ -216,6 +250,16 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
         <Stack direction="row" spacing={2} mb={2} sx={{ flexWrap: 'wrap', gap: 1 }}>
           <Button
             variant="contained"
+            color="warning"
+            startIcon={<DownloadIcon />}
+            disabled={selectedUuids.length === 0 || isCheckingSends || isExporting}
+            onClick={handleExportSelected}
+            size="small"
+          >
+            {isExporting ? "資料匯出中" : "匯出勾選任務"}
+          </Button>
+          <Button
+            variant="contained"
             color="primary"
             disabled={selectedUuids.length === 0 || isCheckingSends}
             onClick={() => {
@@ -245,6 +289,21 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
             <Typography color="primary" sx={{ ml: 2, fontSize: '0.875rem' }}>
               任務更新中{".".repeat(loadingDots)}
             </Typography>
+          )}
+        </Stack>
+        <Stack
+          direction="row" 
+          spacing={2} 
+          mb={2} 
+          alignItems="center"
+        >
+          {isExporting && (
+            <Box sx={{ width: "100%", mt: 2 }}>
+              <Typography variant="body2" color="textSecondary">
+                {progress === 0 ? `從主系統匯出資料中${".".repeat(loadingDots)}` : `下載資料中${".".repeat(loadingDots)}`}
+              </Typography>
+              <LinearProgress variant="determinate" value={progress} />
+            </Box>
           )}
         </Stack>
         <Stack 

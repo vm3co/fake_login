@@ -209,6 +209,43 @@ class getSe2data:
             
         return None
 
+    async def export_csv(self, uuid: str, isTokenRefreshed=False):
+        '''將 sendtask 的參與人員清單匯出為 CSV 檔案'''
+        logger.info(f"Exporting sendlog for sendtask {uuid} to CSV...")
+        url = self.url + '/api/casexport/export_csv'
+        payload = {
+                    "sendtask_uuid": uuid,
+                    "record_page": 200,
+                    "search_keyword": "",
+                    "behavior_filter": 0,
+                    "etime": None,
+                    "order_method": "asc",
+                    "page_sn": 1,
+                    "search_order_by": "B",
+                    "search_send_result": "ALL",
+                    "sendlog_type": "test",
+                    "stime": None
+                }
+        async with httpx.AsyncClient(timeout=300.0, verify=self.verify) as client:
+            try:
+                response = await client.post(url, headers=self.headers, json=payload)
+                if response.status_code == 200:
+                    return response.content  # 回傳CSV檔案的二進位內容
+                # 若沒資料再嘗試 pretest
+                payload["sendlog_type"] = "pretest"
+                response = await client.post(url, headers=self.headers, json=payload)
+                response.raise_for_status()
+                return response.content
+            except httpx.RequestError as exc:
+                logger.error(f"HTTP error occurred: {exc}")
+            except Exception as e:
+                if not isTokenRefreshed:
+                    logger.info("Token expired, re-getting token and retrying...")
+                    self.headers["cookie"] = get_token.get()
+                    return await self.export_csv(uuid, isTokenRefreshed=True)
+                logger.error(f"Unhandled exception: {e}")
+        return None              
+
 
 # 初始化 getSe2data 實例
 get_se2_data = getSe2data()

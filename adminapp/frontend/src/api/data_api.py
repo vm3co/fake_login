@@ -15,6 +15,7 @@ import io
 import pandas as pd
 from datetime import datetime, timedelta
 from dotenv import load_dotenv
+import zipfile
 
 from app.services.log_manager import Logger
 from app.services.getSe2data import get_se2_data
@@ -523,7 +524,53 @@ def get_router(db, db_user):
         except Exception as e:
             logger.error(f"Error in update_mtmpl: {str(e)}")
             return {"status": "error", "message": str(e)}
-        
+    
+    ## 匯出csv API
+    class ExportCsvRequest(BaseModel):
+        sendtasks: dict | None = None
+    
+    @router.post("/export_csv")
+    async def export_csv(request: ExportCsvRequest):
+        """
+        匯出 sendtask 的參與人員清單為 CSV 檔案
+        Body: {sendtask_id_A: sendtasks_uuid_A, sendtask_id_B: sendtasks_uuid_B, ...}
+        """
+        sendtasks = request.sendtasks
+        if not sendtasks:
+            return {"status": "error", "message": "缺少 sendtasks"}
+
+        zip_buffer = io.BytesIO()
+        failed_tasks = []
+        downloaded_tasks = []
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
+            for sendtask_id, sendtask_uuid in sendtasks.items():
+                try:
+                    csv_content = await get_se2_data.export_csv(sendtask_uuid)
+                    if not csv_content:
+                        failed_tasks.append(sendtask_id)
+                        continue  # 若無資料則跳過
+                    filename = f"{sendtask_id}.xlsx"
+                    zip_file.writestr(filename, csv_content)
+                    downloaded_tasks.append(sendtask_id)
+                except Exception as e:
+                    logger.error(f"Error in export_sendtask_csv: {str(e)}")
+                    failed_tasks.append(sendtask_id)
+                    continue
+            # 新增 下載狀況.txt 檔案
+            summary_content = "下載成功的任務:\n"
+            summary_content += "\n".join(downloaded_tasks) + "\n\n"
+            summary_content += "下載失敗的任務:\n"
+            summary_content += "\n".join(failed_tasks) + "\n"
+            zip_file.writestr("下載狀況.txt", summary_content)
+
+        zip_buffer.seek(0)
+        now_str = datetime.now().astimezone().strftime("%Y%m%d_%H%M%S")
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": f"attachment; filename=sendtasks_export_{now_str}.zip"}
+        )
+
     ## customer 相關的 API
     class GetCustomersRequest(BaseModel):
         acct_uuid: str = ""

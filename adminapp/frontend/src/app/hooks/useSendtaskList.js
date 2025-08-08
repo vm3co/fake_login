@@ -81,6 +81,39 @@ export default function useSendtaskList() {
         }
     };
 
+    const exportCsv = async (sendtasks, { onDownloadProgress } = {}) => {
+        try {
+            // sendtasks 格式: { sendtask_id1: sendtask_uuid1, sendtask_id2: sendtask_uuid2, ... }
+            const response = await axios.post(
+                "/api/export_csv",
+                { sendtasks },
+                {
+                    responseType: "blob", // 重要！讓 axios 以二進位方式處理回應
+                    onDownloadProgress, // 傳遞進度更新回呼函式
+                }   
+            );
+            // 取得檔名
+            const disposition = response.headers["content-disposition"];
+            let filename = "sendtasks_export.zip";
+            if (disposition) {
+                const match = disposition.match(/filename="?([^"]+)"?/);
+                if (match) filename = decodeURIComponent(match[1]);
+            }
+            // 下載檔案
+            const url = window.URL.createObjectURL(new Blob([response.data]));
+            const link = document.createElement("a");
+            link.href = url;
+            link.setAttribute("download", filename);
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (error) {
+            alert("匯出失敗：" + (error?.message || "未知錯誤"));
+            console.error("exportCsv error:", error);
+        }
+    };    
+
     // 提供 refresh 方法
     function refresh() {
         const controller = createController();
@@ -179,7 +212,8 @@ export default function useSendtaskList() {
         isCheckingSends, 
         setIsCheckingSends,
         registerRequest,    // 註冊請求
-        abortAllRequests    // 中止所有請求
+        abortAllRequests,    // 中止所有請求
+        exportCsv
     };
     // statsData: { [sendtask_uuid]: stats, ... }
     // tasksData: [{ sendtask_id, ... }, ...]

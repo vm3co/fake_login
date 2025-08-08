@@ -18,7 +18,9 @@ import {
   TextField,
   Checkbox,
   FormControlLabel,
+  LinearProgress,
 } from "@mui/material";
+import DownloadIcon from "@mui/icons-material/Download";
 import SimpleCard from "app/components/SimpleCard";
 
 import { SendtaskListContext } from "app/contexts/SendtaskListContext";
@@ -116,13 +118,17 @@ export default function ShowAllTasks() {
     tasksData, 
     refresh, 
     isCheckingSends, 
-    setIsCheckingSends 
+    setIsCheckingSends,
+    exportCsv, 
   } = useContext(SendtaskListContext);
   const [loadingDots, setLoadingDots] = useState(0);
   const [updatedTodayUuids, setUpdatedTodayUuids] = useState([]);
   const { fetchCheckSends } = useCheckSends({ refresh, setIsCheckingSends, setUpdatedTodayUuids });
   const [searchText, setSearchText] = useState("");  // 搜尋任務名稱
   const [selectedUuids, setSelectedUuids] = useState([]);  // 勾選任務並只更新這些任務
+  const [isExporting, setIsExporting] = useState(false); // 匯出狀態
+  const [progress, setProgress] = useState(0); // 匯出進度
+
   // 顯示狀況
   const [showExpiredOnly, setShowExpiredOnly] = useState(false);  // 是否只顯示已過期的任務
   const [showNotStartedOnly, setShowNotStartedOnly] = useState(false);  // 是否只顯示已過期的任務
@@ -183,14 +189,44 @@ export default function ShowAllTasks() {
     ? filteredTasks.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
     : [];
 
+  const handleExportSelected = async () => {
+    if (selectedUuids.length === 0) {
+      alert("請先勾選要匯出的任務");
+      return;
+    }
+
+    setIsExporting(true);
+    setProgress(0);
+
+    try {
+      const sendtasks = {};
+      selectedUuids.forEach((uuid) => {
+        const task = tasksData.find((t) => t.sendtask_uuid === uuid);
+        if (task) sendtasks[task.sendtask_id] = uuid;
+      });
+
+      await exportCsv(sendtasks, {
+        onDownloadProgress: (progressEvent) => {
+          const total = progressEvent.total || 1; // 總大小
+          const current = progressEvent.loaded; // 已下載大小
+          setProgress(Math.round((current / total) * 100)); // 計算百分比
+        },
+      });
+    } catch (error) {
+      console.error("匯出任務時發生錯誤:", error);
+    } finally {
+      setIsExporting(false);
+      setProgress(0);
+    }
+  };
+
   // 動態「...」效果
   useEffect(() => {
-    if (!isCheckingSends) return;
     const interval = setInterval(() => {
       setLoadingDots(dots => (dots + 1) % 4);
     }, 400);
     return () => clearInterval(interval);
-  }, [isCheckingSends]);
+  });
 
   const handleSort = (column) => {
     if (sortBy === column) {
@@ -224,6 +260,16 @@ export default function ShowAllTasks() {
         <Stack direction="row" spacing={2} mb={2}>
           <Button
             variant="contained"
+            color="warning"
+            startIcon={<DownloadIcon />}
+            disabled={selectedUuids.length === 0 || isCheckingSends || isExporting}
+            onClick={handleExportSelected}
+            size="small"
+          >
+            {isExporting ? "資料匯出中" : "匯出勾選任務"}
+          </Button>          
+          <Button
+            variant="contained"
             color="primary"
             disabled={selectedUuids.length === 0 || isCheckingSends}
             onClick={() => fetchCheckSends(selectedUuids)}
@@ -236,6 +282,21 @@ export default function ShowAllTasks() {
               任務更新中{".".repeat(loadingDots)}
             </Typography>
           )}
+        </Stack>
+        <Stack
+          direction="row" 
+          spacing={2} 
+          mb={2} 
+          alignItems="center"
+        >
+          {isExporting && (
+            <Box sx={{ width: "100%", mt: 2 }}>
+              <Typography variant="body2" color="textSecondary">
+                {progress === 0 ? `從主系統匯出資料中${".".repeat(loadingDots)}` : `下載資料中${".".repeat(loadingDots)}`}
+              </Typography>
+              <LinearProgress variant="determinate" value={progress} />
+            </Box>
+          )}          
         </Stack>
         <Stack 
           direction="row" 

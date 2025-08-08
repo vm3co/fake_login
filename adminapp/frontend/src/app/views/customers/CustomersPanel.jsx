@@ -39,7 +39,7 @@ const AccordionRoot = styled(Box)(({ theme }) => ({
 }));
 
 export default function CustomersPanel() {
-  const { customers, loading, deleteCustomer } = useContext(CustomersContext);
+  const { customers, loading, deleteCustomer, updateCustomerSendtasks } = useContext(CustomersContext);
   const { tasksData } = useContext(SendtaskListContext);
   const [selectedCustomers, setSelectedCustomers] = useState([]);  // 勾選客戶
   // 為每個客戶管理選中的 sendtasks
