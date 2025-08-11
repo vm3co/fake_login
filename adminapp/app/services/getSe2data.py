@@ -209,12 +209,14 @@ class getSe2data:
             
         return None
 
-    async def export_csv(self, uuid: str, isTokenRefreshed=False):
+    async def export_csv(self, sendtask_content: list[str], isTokenRefreshed=False):
         '''將 sendtask 的參與人員清單匯出為 CSV 檔案'''
-        logger.info(f"Exporting sendlog for sendtask {uuid} to CSV...")
+        sendtask_uuid = sendtask_content[0]
+        sendlog_type = "pretest" if sendtask_content[1] else "test"
+        logger.info(f"Exporting sendlog for sendtask {sendtask_uuid} to CSV...")
         url = self.url + '/api/casexport/export_csv'
         payload = {
-                    "sendtask_uuid": uuid,
+                    "sendtask_uuid": sendtask_uuid,
                     "record_page": 200,
                     "search_keyword": "",
                     "behavior_filter": 0,
@@ -223,16 +225,11 @@ class getSe2data:
                     "page_sn": 1,
                     "search_order_by": "B",
                     "search_send_result": "ALL",
-                    "sendlog_type": "test",
+                    "sendlog_type": sendlog_type,
                     "stime": None
                 }
         async with httpx.AsyncClient(timeout=300.0, verify=self.verify) as client:
             try:
-                response = await client.post(url, headers=self.headers, json=payload)
-                if response.status_code == 200:
-                    return response.content  # 回傳CSV檔案的二進位內容
-                # 若沒資料再嘗試 pretest
-                payload["sendlog_type"] = "pretest"
                 response = await client.post(url, headers=self.headers, json=payload)
                 response.raise_for_status()
                 return response.content
@@ -242,7 +239,7 @@ class getSe2data:
                 if not isTokenRefreshed:
                     logger.info("Token expired, re-getting token and retrying...")
                     self.headers["cookie"] = get_token.get()
-                    return await self.export_csv(uuid, isTokenRefreshed=True)
+                    return await self.export_csv(sendtask_content, isTokenRefreshed=True)
                 logger.error(f"Unhandled exception: {e}")
         return None              
 

@@ -74,7 +74,7 @@ export default function useSendtaskList() {
             if (error.name === "AbortError") {
                 // 請求被中斷，不需要顯示錯誤
             } else {
-                console.error("取得任務列表失敗", error);
+                // console.error("取得任務列表失敗", error);
             }
         } finally {
             setLoading(false);
@@ -83,7 +83,7 @@ export default function useSendtaskList() {
 
     const exportCsv = async (sendtasks, { onDownloadProgress } = {}) => {
         try {
-            // sendtasks 格式: { sendtask_id1: sendtask_uuid1, sendtask_id2: sendtask_uuid2, ... }
+            // sendtasks 格式: { sendtask_id1: [sendtask_uuid1, pre_test_enable1], sendtask_id2: [sendtask_uuid2, pre_test_enable2], ... }
             const response = await axios.post(
                 "/api/export_csv",
                 { sendtasks },

@@ -93,7 +93,7 @@ class DBUser:
         # sendtasks 欄位
         self.sendtasks_columns = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "person_count",
                                   "pre_test_end_ut", "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", 
-                                  "test_end_ut", "test_start_ut", "is_pause", "stop_time_new"]
+                                  "test_end_ut", "test_start_ut", "is_pause", "pre_test_enable", "stop_time_new"]
         # sendlog 資料表結構
         self.sendlog_table_info = {"id": "SERIAL PRIMARY KEY", "uuid": "TEXT UNIQUE", "target_email": "TEXT", 
                                    "template_uuid": "TEXT", "qrcode_access_active": "TEXT[]", "qrcode_access_ip": "TEXT[]",
@@ -186,10 +186,12 @@ class DBUser:
                     sendtasks_df.at[index, "is_pause"] = metadata.get("pause", False)
                     sendtasks_df.at[index, "stop_time_new"] = metadata.get("stop_time_new", -1)
                     sendtasks_df.at[index, "person_count"] = metadata.get("summary", {}).get("person_count", 0)
+                    sendtasks_df.at[index, "pre_test_enable"] = metadata.get("summary", {}).get("pre_test_enable", False)
                 else:
                     sendtasks_df.at[index, "is_pause"] = False
                     sendtasks_df.at[index, "stop_time_new"] = -1
                     sendtasks_df.at[index, "person_count"] = 0
+                    sendtasks_df.at[index, "pre_test_enable"] = False
             logger.info("Metadata fetched successfully.")
 
             # 取得當前時間戳

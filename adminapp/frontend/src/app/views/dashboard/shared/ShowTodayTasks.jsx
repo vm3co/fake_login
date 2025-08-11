@@ -193,8 +193,9 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
       const sendtasks = {};
       selectedUuids.forEach(uuid => {
         const task = todayTasks.find(t => t.sendtask_uuid === uuid);
-        if (task) sendtasks[task.sendtask_id] = uuid;
+        if (task) sendtasks[task.sendtask_id] = [uuid, task.pre_test_enable];
       });
+      
       await exportCsv(sendtasks, {
         onDownloadProgress: (progressEvent) => {
           const total = progressEvent.total || 1; // 總大小
@@ -256,7 +257,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
             onClick={handleExportSelected}
             size="small"
           >
-            {isExporting ? "資料匯出中" : "匯出勾選任務(限正式任務)"}
+            {isExporting ? "資料匯出中" : "匯出勾選任務"}
           </Button>
           <Button
             variant="contained"

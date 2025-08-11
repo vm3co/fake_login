@@ -47,7 +47,7 @@ async def check_sendtasks_job():
         # 使用和 data_api.py 相同的邏輯
         sendtasks_columns = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "person_count",
                              "pre_test_end_ut", "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", 
-                             "test_end_ut", "test_start_ut", "is_pause", "stop_time_new"]
+                             "test_end_ut", "test_start_ut", "is_pause", "pre_test_enable", "stop_time_new"]
         all_tasksname_list = await db_user.get_se2_sendtasks(sendtasks_columns)
 
         my_tasksname_list = await db.get_db("sendtasks", select_columns=sendtasks_columns)
@@ -110,6 +110,14 @@ def start_scheduler():
         minutes=10,
         id='refresh_token'
     )
+    # 每天凌晨 0:50 執行 check_sendtasks
+    scheduler.add_job(
+        check_sendtasks_job,
+        'cron',
+        hour=0,
+        minute=50,
+        id='check_sendtasks'
+    )
     # 每天凌晨 1:00 執行 sendlog_stats 刷新
     scheduler.add_job(
         refresh_sendlog_stats_job, 
@@ -118,19 +126,11 @@ def start_scheduler():
         minute=0,
         id='refresh_sendlog_stats'
     )
-    # 每天凌晨 1:05 執行 check_sendtasks
-    scheduler.add_job(
-        check_sendtasks_job, 
-        'cron', 
-        hour=1, 
-        minute=5,
-        id='check_sendtasks'
-    )
     scheduler.start()
     logger.info("APScheduler 啟動")
     logger.info("refresh_token_job 已排程在每 10 分鐘執行")
+    logger.info("check_sendtasks_job 已排程在每日 00:50 執行")
     logger.info("refresh_sendlog_stats_job 已排程在每日 01:00 執行")
-    logger.info("check_sendtasks_job 已排程在每日 01:05 執行")
 
 # 引入資料庫
 @asynccontextmanager

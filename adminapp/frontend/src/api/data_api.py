@@ -92,7 +92,7 @@ def get_router(db, db_user):
         try:
             sendtasks_columns = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "person_count",
                                 "pre_test_end_ut", "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", 
-                                "test_end_ut", "test_start_ut", "is_pause", "stop_time_new"]
+                                "test_end_ut", "test_start_ut", "is_pause", "pre_test_enable", "stop_time_new"]
             all_tasksname_list = await db_user.get_se2_sendtasks(column_names=sendtasks_columns)
 
             my_tasksname_list = await db.get_db("sendtasks", select_columns=sendtasks_columns)
@@ -533,7 +533,7 @@ def get_router(db, db_user):
     async def export_csv(request: ExportCsvRequest):
         """
         匯出 sendtask 的參與人員清單為 CSV 檔案
-        Body: {sendtask_id_A: sendtasks_uuid_A, sendtask_id_B: sendtasks_uuid_B, ...}
+        Body: {sendtask_id_A: [sendtasks_uuid_A, pre_test_enable_A], sendtask_id_B: [sendtasks_uuid_B, pre_test_enable_B], ...}
         """
         sendtasks = request.sendtasks
         if not sendtasks:
@@ -543,9 +543,9 @@ def get_router(db, db_user):
         failed_tasks = []
         downloaded_tasks = []
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-            for sendtask_id, sendtask_uuid in sendtasks.items():
+            for sendtask_id, sendtask_content in sendtasks.items():
                 try:
-                    csv_content = await get_se2_data.export_csv(sendtask_uuid)
+                    csv_content = await get_se2_data.export_csv(sendtask_content)
                     if not csv_content:
                         failed_tasks.append(sendtask_id)
                         continue  # 若無資料則跳過

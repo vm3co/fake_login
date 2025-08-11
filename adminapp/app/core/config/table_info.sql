@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS sendtasks (
     test_start_ut BIGINT,        -- 任務開始時間
     stop_time_new BIGINT,        -- 延長停止寄送時間
     is_pause BOOLEAN, -- 是否暫停
+    pre_test_enable BOOLEAN, -- 是否有前測
     is_active BOOLEAN DEFAULT TRUE 
 );
 

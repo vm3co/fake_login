@@ -78,15 +78,16 @@ export default function useCustomers() {
                 window.location.reload();
                 return result;
             } else {
-                throw new Error(result.message || "創建客戶失敗");
+                alert(`創建失敗： ${result.customer_name}`);
             }
         } catch (error) {
             if (error.name === "AbortError") {
+                alert("創建客戶請求被中止");
                 console.log("創建客戶請求被中止");
             } else {
                 console.error("創建客戶失敗:", error);
                 setError(error.message || "網路錯誤，請稍後再試");
-                throw error;
+                alert(`創建失敗： ${error}`);
             }
         } finally {
             setLoading(false);
@@ -126,7 +127,7 @@ export default function useCustomers() {
             if (error.name === "AbortError") {
                 console.log("獲取客戶帳號列表請求被中止");
             } else {
-                console.error("獲取客戶帳號列表失敗:", error);
+                // console.error("獲取客戶帳號列表失敗:", error);
                 setError(error.message || "網路錯誤，請稍後再試");
             }
         } finally {
@@ -278,11 +279,11 @@ export default function useCustomers() {
         if (isAuthenticated) {
             setLoading(true);
             fetchCustomers();
-            console.log("Customers data refreshed");
+            // console.log("Customers data refreshed");
         } else {
             setCustomers([]);
             setLoading(false);
-            console.log("User is not authenticated");
+            // console.log("User is not authenticated");
         }
     }, [isAuthenticated]);
 

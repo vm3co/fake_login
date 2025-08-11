@@ -202,7 +202,7 @@ export default function ShowAllTasks() {
       const sendtasks = {};
       selectedUuids.forEach((uuid) => {
         const task = tasksData.find((t) => t.sendtask_uuid === uuid);
-        if (task) sendtasks[task.sendtask_id] = uuid;
+        if (task) sendtasks[task.sendtask_id] = [uuid, task.pre_test_enable];
       });
 
       await exportCsv(sendtasks, {
@@ -266,7 +266,7 @@ export default function ShowAllTasks() {
             onClick={handleExportSelected}
             size="small"
           >
-            {isExporting ? "資料匯出中" : "匯出勾選任務(限正式任務)"}
+            {isExporting ? "資料匯出中" : "匯出勾選任務"}
           </Button>          
           <Button
             variant="contained"
@@ -391,6 +391,23 @@ export default function ShowAllTasks() {
               sx={{ margin: 0, color: "red" }}
             />            
           </Box>
+          {selectedUuids.length > 0 &&
+            <Button 
+              onClick={() => {
+                setSelectedUuids([]);
+              }}
+              variant="text"
+              size="small"
+              sx={{ 
+                textTransform: 'none',
+                minWidth: 'unset',
+                padding: '0 4px',
+                verticalAlign: 'baseline'
+              }}
+            >
+              清除所有選取任務
+            </Button>
+          }
         </Stack>
         <TableContainer 
           component={Paper} 
