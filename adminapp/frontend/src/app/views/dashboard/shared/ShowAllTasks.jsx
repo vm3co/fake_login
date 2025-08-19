@@ -163,10 +163,14 @@ export default function ShowAllTasks() {
       }
 
       // 過濾
-      const start = row.test_start_ut;
-      const end = (row.stop_time_new && row.stop_time_new !== -1)
-                          ? row.stop_time_new
-                          : row.test_end_ut;
+      const start = (row.pre_test_start_ut && row.pre_test_start_ut !== 0) 
+                      ? row.pre_test_start_ut 
+                      : row.test_start_ut;
+      const end = (row.stop_time_new && row.stop_time_new !== -1) 
+                    ? row.stop_time_new
+                    : (row.pre_test_end_ut && row.pre_test_end_ut !== 0)
+                      ? row.pre_test_end_ut
+                      : row.test_end_ut;
       const stats = statsData[row.sendtask_uuid] || {};
       const sendFailed = stats.totalsend - stats.totalsuccess;
       let show = true;
@@ -484,10 +488,14 @@ export default function ShowAllTasks() {
               {pagedTasks.map((row, index) => {
                 const stats = statsData[row.sendtask_uuid] || { planned: "-", send: "-", success: "-" };
                 const rowNumber = page * rowsPerPage + index + 1; // 全域編號
-                const start = formatDate(row.test_start_ut, "date");
-                const end = (row.stop_time_new && row.stop_time_new !== -1)
-                                    ? formatDate(row.stop_time_new, "date")
-                                    : formatDate(row.test_end_ut, "date");
+                const start = (row.pre_test_start_ut && row.pre_test_start_ut !== 0) 
+                      ? formatDate(row.pre_test_start_ut , "date")
+                      : formatDate(row.test_start_ut, "date");
+                const end = (row.stop_time_new && row.stop_time_new !== -1) 
+                              ? formatDate(row.stop_time_new, "date")
+                              : (row.pre_test_end_ut && row.pre_test_end_ut !== 0)
+                                ? formatDate(row.pre_test_end_ut, "date")
+                                : formatDate(row.test_end_ut, "date");
                 return (
                   <TableRow
                     key={index}
