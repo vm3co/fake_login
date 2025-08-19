@@ -163,12 +163,12 @@ export default function ShowAllTasks() {
       }
 
       // 過濾
-      const start = (row.pre_test_start_ut && row.pre_test_start_ut !== 0) 
+      const start = (row.pre_test_enable) 
                       ? row.pre_test_start_ut 
                       : row.test_start_ut;
       const end = (row.stop_time_new && row.stop_time_new !== -1) 
                     ? row.stop_time_new
-                    : (row.pre_test_end_ut && row.pre_test_end_ut !== 0)
+                    : (row.pre_test_enable)
                       ? row.pre_test_end_ut
                       : row.test_end_ut;
       const stats = statsData[row.sendtask_uuid] || {};
@@ -488,12 +488,12 @@ export default function ShowAllTasks() {
               {pagedTasks.map((row, index) => {
                 const stats = statsData[row.sendtask_uuid] || { planned: "-", send: "-", success: "-" };
                 const rowNumber = page * rowsPerPage + index + 1; // 全域編號
-                const start = (row.pre_test_start_ut && row.pre_test_start_ut !== 0) 
+                const start = (row.pre_test_enable) 
                       ? formatDate(row.pre_test_start_ut , "date")
                       : formatDate(row.test_start_ut, "date");
                 const end = (row.stop_time_new && row.stop_time_new !== -1) 
                               ? formatDate(row.stop_time_new, "date")
-                              : (row.pre_test_end_ut && row.pre_test_end_ut !== 0)
+                              : (row.pre_test_enable)
                                 ? formatDate(row.pre_test_end_ut, "date")
                                 : formatDate(row.test_end_ut, "date");
                 return (
