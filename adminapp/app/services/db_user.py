@@ -7,6 +7,7 @@ import asyncpg
 import aiofiles
 import time
 import json
+from typing import List, Dict, Any
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -417,9 +418,11 @@ class DBUser:
             return {"status": "error", "message": str(e)}
 
 
-    async def update_customer_sendtasks(self, customer_name: str, sendtask_uuids: list[str]):
+    async def update_customer_sendtasks(self, customer_name: str, sendtask_data: List[Dict[str, Any]]):
         """
-        更新任務
+        更新客戶的任務列表，將其存為 JSONB 格式。
+        :param customer_name: 客戶名稱
+        :param sendtask_data: 任務物件的列表 (List of Dictionaries)
         """
         await self.db.check_db_connection()
 
@@ -427,10 +430,12 @@ class DBUser:
         if not await self.customer_exists(customer_name):
             logger.error(f"Customer {customer_name} does not exist.")
             return {"status": "error", "message": "客戶不存在"}
+        
+        sendtasks_json_string = json.dumps(sendtask_data, ensure_ascii=False)
 
         status = await self.db.update_db(
             table_name="customer_accts",
-            data={"sendtask_uuids": sendtask_uuids},
+            data={"sendtasks": sendtasks_json_string},
             condition={"customer_name": customer_name}
         )
         return status

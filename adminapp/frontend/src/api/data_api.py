@@ -9,6 +9,7 @@ Created on Thu May  8 14:32:44 2025
 from fastapi import APIRouter, Request, Body, Depends
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
+from typing import List, Dict, Any
 import os
 import csv
 import io
@@ -252,11 +253,12 @@ def get_router(db, db_user):
     class GetSendlogDetailRequest(BaseModel):
         sendtask_uuid: str
         page: int = 1
+        acctControl: list[bool]
         rowsPerPage: int = 20
         searchText: str | None = None
         dateFrom: str | None = None
         dateTo: str | None = None
-        resultType: str = "ALL"
+        resultType: str = "all"
         showAccessed: bool = False
         showClicked: bool = False
         showFiled: bool = False
@@ -303,17 +305,48 @@ def get_router(db, db_user):
             except ValueError:
                 pass # 忽略無效的日期格式
 
+        
         # 寄送狀態
-        if request.resultType == 'notyet':
-            where_clauses.append("(send_time IS NULL OR send_time = 0)")
+        isSend, isFailed, isNotyet, isNotTriggered, isTriggered = request.acctControl
+        sent_base = "send_time IS NOT NULL AND send_time > 0"
+        sent_success = "send_res IS NOT NULL AND send_res ILIKE '%True%'"
+        sent_failure = "send_res IS NOT NULL AND send_res ILIKE '%False%'"
+        not_sent = "send_time IS NULL OR send_time = 0"
+
+        not_triggered_cond = "array_length(access_time, 1) IS NULL AND array_length(access_src, 1) IS NULL AND array_length(access_dev, 1) IS NULL"
+        triggered_cond = "array_length(access_time, 1) > 0 OR array_length(access_src, 1) > 0 OR array_length(access_dev, 1) > 0"
+
+        if request.resultType == 'all':
+            
+            if isSend and isFailed and isNotyet and isNotTriggered and isTriggered:
+                pass
+            elif not isSend and not isFailed and not isNotyet and not isNotTriggered and not isTriggered:
+                where_clauses.append("(1=0)")
+            else:
+                all_clauses = []
+                if isFailed:
+                    all_clauses.append(f"({sent_base} AND {sent_failure})")
+                if isNotyet:
+                    all_clauses.append(f"({not_sent})")
+                if isSend:
+                    if isNotTriggered and not isTriggered:
+                        all_clauses.append(f"({sent_base} AND {sent_success} AND {not_triggered_cond})")
+                    elif not isNotTriggered and isTriggered:
+                        all_clauses.append(f"({triggered_cond})")
+                    else:
+                        all_clauses.append(f"({sent_base} AND {sent_success})")
+                where_clauses.append(" OR ".join(all_clauses))
+
         elif request.resultType == 'send':
-            where_clauses.append("(send_time IS NOT NULL AND send_time > 0 AND send_res IS NOT NULL AND send_res ILIKE '%True%')")
+            where_clauses.append(f"({sent_base} AND {sent_success})")
+        elif request.resultType == 'notyet':
+            where_clauses.append(f"({not_sent})")
         elif request.resultType == 'failed':
-            where_clauses.append("(send_time IS NOT NULL AND send_time > 0 AND send_res IS NOT NULL AND send_res ILIKE '%False%')")
-        elif request.resultType == 'not_triggered':
-            where_clauses.append("(send_time IS NOT NULL AND send_time > 0 AND send_res IS NOT NULL AND send_res ILIKE '%True%' AND array_length(access_time, 1) IS NULL)")
+            where_clauses.append(f"({sent_base} AND {sent_failure})")
+        elif request.resultType == 'notTriggered':
+            where_clauses.append(f"({sent_base} AND {sent_success} AND {not_triggered_cond})")
         elif request.resultType == 'triggered':
-            where_clauses.append("array_length(access_time, 1) > 0")
+            where_clauses.append(f"({triggered_cond})")
 
         # 行為過濾
         if request.showAccessed:
@@ -322,7 +355,7 @@ def get_router(db, db_user):
             where_clauses.append("array_length(click_time, 1) > 0")
         if request.showFiled:
             where_clauses.append("array_length(file_time, 1) > 0")
-        
+
         # 排序
         sort_map = {
             "target_email": "target_email",
@@ -383,7 +416,7 @@ def get_router(db, db_user):
         searchText: str | None = None
         dateFrom: str | None = None
         dateTo: str | None = None
-        resultType: str = "ALL"
+        resultType: str = "all"
         showAccessed: bool = False
         showClicked: bool = False
         showFiled: bool = False
@@ -391,8 +424,8 @@ def get_router(db, db_user):
         sortBy: str = "plan_time"
         paginate: bool = False
 
-    @router.post("/download_sendlog_csv")
-    async def download_sendlog_csv(request: DownloadSendlogRequest):
+    @router.post("/download_sendlog_xlsx")
+    async def download_sendlog_xlsx(request: DownloadSendlogRequest):
         """
         根據條件下載 sendlog 資料為 CSV 檔案。
         如果提供了 selected_uuids，則只下載這些 uuid 的資料。
@@ -455,7 +488,7 @@ def get_router(db, db_user):
             )
 
         except Exception as e:
-            logger.error(f"Error in download_sendlog_csv for {request.sendtask_uuid}: {str(e)}")
+            logger.error(f"Error in download_sendlog_xlsx for {request.sendtask_uuid}: {str(e)}")
             return {"status": "error", "message": str(e)}
 
     ## mtmpl 相關的 API
@@ -529,10 +562,10 @@ def get_router(db, db_user):
     class ExportCsvRequest(BaseModel):
         sendtasks: dict | None = None
     
-    @router.post("/export_csv")
-    async def export_csv(request: ExportCsvRequest):
+    @router.post("/export_xlsx")
+    async def export_xlsx(request: ExportCsvRequest):
         """
-        匯出 sendtask 的參與人員清單為 CSV 檔案
+        匯出 sendtask 的參與人員清單
         Body: {sendtask_id_A: [sendtasks_uuid_A, pre_test_enable_A], sendtask_id_B: [sendtasks_uuid_B, pre_test_enable_B], ...}
         """
         sendtasks = request.sendtasks
@@ -545,15 +578,15 @@ def get_router(db, db_user):
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
             for sendtask_id, sendtask_content in sendtasks.items():
                 try:
-                    csv_content = await get_se2_data.export_csv(sendtask_content)
-                    if not csv_content:
+                    xlsx_content = await get_se2_data.export_xlsx(sendtask_content)
+                    if not xlsx_content:
                         failed_tasks.append(sendtask_id)
                         continue  # 若無資料則跳過
                     filename = f"{sendtask_id}.xlsx"
-                    zip_file.writestr(filename, csv_content)
+                    zip_file.writestr(filename, xlsx_content)
                     downloaded_tasks.append(sendtask_id)
                 except Exception as e:
-                    logger.error(f"Error in export_sendtask_csv: {str(e)}")
+                    logger.error(f"Error in export_xlsx: {str(e)}")
                     failed_tasks.append(sendtask_id)
                     continue
             # 新增 下載狀況.txt 檔案
@@ -632,9 +665,17 @@ def get_router(db, db_user):
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+    class SendtaskItem(BaseModel):
+        uuid: str
+        send: bool
+        notyet: bool
+        failed: bool
+        notTriggered: bool
+        triggered: bool
+
     class UpdateCustomerSendtasksRequest(BaseModel):
         customer_name: str = ""
-        sendtask_uuids: list[str] = []
+        sendtasks_for_db: List[SendtaskItem] = []
 
     @router.post("/update_customer_sendtasks")
     async def update_customer_sendtasks(request: UpdateCustomerSendtasksRequest):
@@ -642,19 +683,20 @@ def get_router(db, db_user):
         更新客戶帳號裡的任務
 
         1. POST /update_customer_sendtasks
-        2. Body: {"customer_name": ..., "sendtask_uuids": [...]}
+        2. Body: {"customer_name": ..., "sendtasks_for_db": [...]}
 
         :param request: 包含客戶名稱和任務列表的請求數據
         :return: dict, 請求的結果狀態
         """
         customer_name = request.customer_name
-        sendtask_uuids = request.sendtask_uuids
+        sendtasks_data = request.sendtasks_for_db
 
-        if not customer_name or not sendtask_uuids:
+        if not customer_name or not sendtasks_data:
             return {"status": "error", "message": "沒有收到資料"}
 
         try:
-            status = await db_user.update_customer_sendtasks(customer_name, sendtask_uuids)
+            sendtasks_list_of_dicts = [task.model_dump() for task in sendtasks_data]
+            status = await db_user.update_customer_sendtasks(customer_name, sendtasks_list_of_dicts)
             return {"status": "success", "message": status}
         except Exception as e:
             return {"status": "error", "message": str(e)}

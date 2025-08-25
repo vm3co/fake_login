@@ -1,6 +1,13 @@
 import { useState, useMemo, useContext } from 'react';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
-import { Box, Button, Divider, CircularProgress, Typography } from '@mui/material';
+import {
+  Box, 
+  Button, 
+  Divider, 
+  CircularProgress, 
+  Typography, 
+  FormControlLabel, 
+} from '@mui/material';
 import Accordion from '@mui/material/Accordion';
 import AccordionActions from '@mui/material/AccordionActions';
 import AccordionDetails from '@mui/material/AccordionDetails';
@@ -38,6 +45,21 @@ const AccordionRoot = styled(Box)(({ theme }) => ({
   }
 }));
 
+const parseTasks = (tasksData) => {
+  if (!tasksData) return [];
+  if (Array.isArray(tasksData)) return tasksData; // 如果已經是陣列，直接回傳
+  if (typeof tasksData === 'string') {
+    try {
+      const parsed = JSON.parse(tasksData);
+      return Array.isArray(parsed) ? parsed : []; // 確保解析後是陣列
+    } catch (e) {
+      console.error("解析客戶任務 JSON 失敗:", e);
+      return []; // 解析失敗則給空陣列
+    }
+  }
+  return []; // 對於其他類型，回傳空陣列
+};
+
 export default function CustomersPanel() {
   const { customers, loading, deleteCustomer, updateCustomerSendtasks } = useContext(CustomersContext);
   const { tasksData } = useContext(SendtaskListContext);
@@ -57,44 +79,81 @@ export default function CustomersPanel() {
     });
   }, [customers]);
 
-  // 將 sendtask_uuids 陣列轉換為任務物件陣列
-  const convertUuidsToTaskObjects = (sendtask_uuids) => {
-    if (!sendtask_uuids || !Array.isArray(sendtask_uuids)) return [];
-    
-    return sendtask_uuids.map(uuid => {
-      // 從 tasksData 中找到對應的任務
-      const fullTaskData = tasksData.find(task => task.sendtask_uuid === uuid);
-      return fullTaskData || { sendtask_uuid: uuid, sendtask_id: `未知任務 (${uuid})` };
+
+  const handleSendtasksChange = (customerKey, newValue) => {
+    // newValue 是從 tasksData 來的完整任務物件陣列
+    setCustomerSendtasks(prev => {
+      const originalTasksRaw = customers.find(c => c.customer_name === customerKey)?.sendtasks;
+      const currentTasksRaw = prev[customerKey] || originalTasksRaw;
+      const currentTasks = parseTasks(currentTasksRaw);
+
+      const newTasksState = newValue.map(fullTask => {
+        const existingTask = currentTasks.find(t => t.uuid === fullTask.sendtask_uuid);
+        // 如果任務已存在，保留其狀態；如果是新任務，則使用預設值
+        return existingTask || {
+          uuid: fullTask.sendtask_uuid,
+          send: true,
+          failed: true,
+          notyet: true,
+          notTriggered: true,
+          triggered: true,
+        };
+      });
+
+      return { ...prev, [customerKey]: newTasksState };
     });
   };
 
-  // 將任務物件陣列轉換為 UUID 陣列
-  const convertTaskObjectsToUuids = (taskObjects) => {
-    if (!taskObjects || !Array.isArray(taskObjects)) return [];
-    
-    return taskObjects.map(task => task.sendtask_uuid);
-  };
+  const handleTaskStateChange = (customerKey, taskUuid, field, isChecked) => {
+    setCustomerSendtasks(prev => {
+      const originalTasksRaw = customers.find(c => c.customer_name === customerKey)?.sendtasks;
+      const currentTasksRaw = prev[customerKey] || originalTasksRaw;
+      const currentTasks = parseTasks(currentTasksRaw);
 
-  // 處理 Autocomplete 選擇變化
-  const handleSendtasksChange = (customerId, newValue) => {
-    setCustomerSendtasks(prev => ({
-      ...prev,
-      [customerId]: newValue || []
-    }));
+      const updatedTasks = currentTasks.map(task => {
+        if (task.uuid !== taskUuid) return task;
+        // 勾選「已寄出」時，同時勾選「未觸發」與「已觸發」
+        if (field === 'send' && isChecked) {
+          return { ...task, send: true, notTriggered: true, triggered: true };
+        }
+        // 取消「已寄出」時，同時取消「未觸發」與「已觸發」
+        if (field === 'send' && !isChecked) {
+          return { ...task, send: false, notTriggered: false, triggered: false };
+        }
+        // 取消「未觸發」或「已觸發」時，若兩者都為 false，則「已寄出」也要取消
+        if ((field === 'notTriggered' || field === 'triggered') && !isChecked) {
+          const otherField = field === 'notTriggered' ? 'triggered' : 'notTriggered';
+          const otherChecked = !!task[otherField];
+          if (!otherChecked) {
+            return { ...task, [field]: false, [otherField]: false, send: false };
+          }
+          return { ...task, [field]: false };
+        }
+        // 勾選「未觸發」或「已觸發」時，若「已寄出」未勾選則自動勾選
+        if ((field === 'notTriggered' || field === 'triggered') && isChecked) {
+          return { ...task, [field]: true, send: true };
+        }
+        // 其他欄位正常處理
+        return { ...task, [field]: isChecked };
+      });
+      
+      return { ...prev, [customerKey]: updatedTasks };
+    });
   };
 
   const handleSaveCustomerSendtasks = async (customer) => {
     const customerKey = customer.customer_name;
-    const selectedSendtasks = customerSendtasks[customerKey] || customer.sendtask_uuids;
-    
+    const sendtasksForDb = customerSendtasks[customerKey];
+
+    if (!sendtasksForDb) {
+      console.log("沒有變更，無需保存。");
+      return;
+    }
+
     try {
       setSavingCustomer(customerKey);
 
-      // 轉換為 UUID 陣列格式
-      const sendtaskUuids = convertTaskObjectsToUuids(selectedSendtasks);
-
-      // 執行保存操作
-      const result = await updateCustomerSendtasks(customerKey, sendtaskUuids);
+      const result = await updateCustomerSendtasks(customerKey, sendtasksForDb);
 
       // 保存成功後，重新載入客戶資料
       if (result && result.status === 'success') {
@@ -175,8 +234,14 @@ export default function CustomersPanel() {
         {sortedCustomers.map((customer, index) => {
           const customerKey = customer.customer_name;
           const isCurrentlySaving = savingCustomer === customerKey;
-          const sendtaskUuids = Array.isArray(customer.sendtask_uuids) ? customer.sendtask_uuids : [];
-          
+
+          const rawTasks = customerSendtasks[customerKey] || customer.sendtasks;
+          const displayedTasks = parseTasks(rawTasks);
+
+          const autocompleteValue = displayedTasks.map(task => {
+            return tasksData.find(t => t.sendtask_uuid === task.uuid) || { sendtask_uuid: task.uuid, sendtask_id: `未知任務 (${task.uuid})` };
+          });
+
           return (
             <Box key={customer.customer_name || index}>
               <Box sx={{ display: 'flex', alignItems: 'center' }}>
@@ -212,7 +277,7 @@ export default function CustomersPanel() {
 
                   <Box className="column">
                     <Typography className="secondaryHeading">
-                      任務數: {sendtaskUuids.length}
+                      任務數: {displayedTasks.length}
                     </Typography>
                   </Box>
                 </AccordionSummary>
@@ -226,10 +291,7 @@ export default function CustomersPanel() {
                       id={`tags-outlined-${customerKey || index}`}
                       options={tasksData}
                       getOptionLabel={(option) => option.sendtask_id}
-                      value={
-                        customerSendtasks[customerKey] || 
-                        convertUuidsToTaskObjects(sendtaskUuids)
-                      }
+                      value={autocompleteValue}
                       onChange={(event, newValue) => handleSendtasksChange(customerKey, newValue)}
                       renderInput={(params) => (
                         <TextField
@@ -241,31 +303,47 @@ export default function CustomersPanel() {
                           disabled={isCurrentlySaving}
                         />
                       )}
-                      renderOption={(props, option) => {
-                        const { key, ...otherProps } = props;
-                        return (
-                          <Box component="li" key={key} {...otherProps}>
-                            <Box>
-                              <Typography variant="body2">
-                                {option.sendtask_id}
-                              </Typography>
-                            </Box>
-                          </Box>
-                        );
-                      }}
+                      renderOption={(props, option) => (
+                        <Box component="li" {...props} key={option.sendtask_uuid}>
+                          <Typography variant="body2">{option.sendtask_id}</Typography>
+                        </Box>
+                      )}
                     />
-                    {sendtaskUuids.length > 0 && (
+                    {displayedTasks.length > 0 && (
                       <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
                         <Typography variant="subtitle2" sx={{ mb: 1 }}>
-                          當前任務 ({sendtaskUuids.length} 個):
+                          當前任務 ({displayedTasks.length} 個):
                         </Typography>
-                        {sendtaskUuids.map((uuid, idx) => {
-                          const task = tasksData.find(t => t.sendtask_uuid === uuid);
+                        {displayedTasks.map((task, idx) => {
+                          const taskInfo = tasksData.find(t => t.sendtask_uuid === task.uuid);
                           return (
-                            <Box key={uuid || idx} sx={{ mb: 1 }}>
-                              <Typography variant="body2">
-                                <strong>{task ? task.sendtask_id : `未知任務 (${uuid})`}</strong>
+                            <Box key={task.uuid || idx} sx={{ mb: 1, display: 'flex', alignItems: 'center', flexWrap: 'wrap' }}>
+                              <Typography variant="body2" sx={{ minWidth: '150px', mr: 2 }}>
+                                <strong>{taskInfo ? taskInfo.sendtask_id : `未知任務 (${task.uuid})`}</strong>
                               </Typography>
+
+                              <FormControlLabel
+                                control={<Checkbox checked={!!task.send} onChange={(e) => handleTaskStateChange(customerKey, task.uuid, 'send', e.target.checked)} size="small" />}
+                                label="已寄出"
+                              />
+                              <FormControlLabel
+                                control={<Checkbox checked={!!task.failed} onChange={(e) => handleTaskStateChange(customerKey, task.uuid, 'failed', e.target.checked)} size="small" />}
+                                label="寄出失敗"
+                              />
+                              <FormControlLabel
+                                control={<Checkbox checked={!!task.notyet} onChange={(e) => handleTaskStateChange(customerKey, task.uuid, 'notyet', e.target.checked)} size="small" />}
+                                label="未寄出"
+                              />
+                              (已寄出中的：
+                              <FormControlLabel
+                                control={<Checkbox checked={!!task.notTriggered} onChange={(e) => handleTaskStateChange(customerKey, task.uuid, 'notTriggered', e.target.checked)} size="small" />}
+                                label="未觸發"
+                              />
+                              <FormControlLabel
+                                control={<Checkbox checked={!!task.triggered} onChange={(e) => handleTaskStateChange(customerKey, task.uuid, 'triggered', e.target.checked)} size="small" />}
+                                label="已觸發"
+                              />
+                              )
                             </Box>
                           );
                         })}
@@ -287,7 +365,7 @@ export default function CustomersPanel() {
                   <Button 
                     size="small" 
                     color="primary"
-                    disabled={isCurrentlySaving}
+                    disabled={isCurrentlySaving || !customerSendtasks[customerKey]} // 沒變更時禁用
                     onClick={() => handleSaveCustomerSendtasks(customer)}
                     startIcon={isCurrentlySaving ? <CircularProgress size={16} /> : null}
                   >

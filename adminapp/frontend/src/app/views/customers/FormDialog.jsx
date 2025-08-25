@@ -70,18 +70,24 @@ export default function FormDialog() {
     }
     
     try {
-      await createCustomer(state);
+      const result = await createCustomer(state);
+      if (result.status === "success") {
+          alert(`客戶 ${result.customer_name} 創建成功！`);
+          // 成功後清空表單並關閉對話框
+          setState({
+            customername: "",
+            customerfullname: "",
+            password: "",
+            confirmPassword: ""
+          });
+          setErrors({});
+          setOpen(false);
+          clearMessages();
+          window.location.reload();
       
-      // 成功後清空表單並關閉對話框
-      setState({
-        customername: "",
-        customerfullname: "",
-        password: "",
-        confirmPassword: ""
-      });
-      setErrors({});
-      setOpen(false);
-      clearMessages();
+      } else {
+          alert(`創建失敗： ${result.message}`);
+      }      
       
     } catch (error) {
       console.error("創建客戶失敗:", error); // 調試：檢查完整錯誤
@@ -175,7 +181,7 @@ export default function FormDialog() {
               name="customername"
               value={customername}
               onChange={handleChange}
-              label="Customer Name"
+              label="客戶帳號"
               error={!!errors.customername}
               helperText={errors.customername || "僅能輸入英文字母、數字和_ "}
               inputProps={{

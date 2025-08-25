@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS customer_accts (
     customer_name TEXT UNIQUE NOT NULL,
     customer_full_name TEXT NOT NULL,
     password_hash TEXT NOT NULL,
-    sendtask_uuids TEXT [] DEFAULT '{}',
+    sendtasks JSONB DEFAULT '[]'::jsonb,
     acct_uuid VARCHAR(36) NOT NULL,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     is_active BOOLEAN DEFAULT TRUE

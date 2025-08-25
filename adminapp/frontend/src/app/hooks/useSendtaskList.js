@@ -85,7 +85,7 @@ export default function useSendtaskList() {
         try {
             // sendtasks 格式: { sendtask_id1: [sendtask_uuid1, pre_test_enable1], sendtask_id2: [sendtask_uuid2, pre_test_enable2], ... }
             const response = await axios.post(
-                "/api/export_csv",
+                "/api/export_xlsx",
                 { sendtasks },
                 {
                     responseType: "blob", // 重要！讓 axios 以二進位方式處理回應

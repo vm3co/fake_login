@@ -11,6 +11,21 @@ function getCookie(name) {
     return valueArr;
 }
 
+const parseTasks = (sendtasks) => {
+    if (!sendtasks) return [];
+    if (Array.isArray(sendtasks)) return sendtasks; // 如果已經是陣列，直接回傳
+    if (typeof sendtasks === 'string') {
+        try {
+            const parsed = JSON.parse(sendtasks);
+            return Array.isArray(parsed) ? parsed : []; // 確保解析後是陣列
+        } catch (e) {
+            console.error("解析客戶任務 JSON 失敗:", e);
+            return []; // 解析失敗則給空陣列
+        }       
+    }
+    return []; // 對於其他類型，回傳空陣列
+};
+
 export default function useCustomer() {
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -48,9 +63,10 @@ export default function useCustomer() {
         setSuccess(null);
     };
 
-    // 根據 sendtask_uuids 批次獲取多個任務的統整資料
+    // 根據 sendtasks 批次獲取多個任務的統整資料
     const fetchCustomerSendtasksData = async () => {
-        const sendtaskUuids = getCookie("sendtask_uuids") || "";
+        const sendtasks = parseTasks(getCookie("sendtasks"));
+        const sendtaskUuids = sendtasks.map(task => task.uuid);
         if (!Array.isArray(sendtaskUuids) || sendtaskUuids.length === 0) {
             return [];
         }
@@ -124,10 +140,6 @@ export default function useCustomer() {
                         
                         // 任務狀態判斷
                         status: getTaskStatus(statsData),
-                        
-                        // 原始資料（如需要）
-                        // raw_sendtask: sendtaskData,
-                        // raw_stats: statsData
                     };
                 });
 

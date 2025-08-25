@@ -36,7 +36,7 @@ import { styled } from '@mui/material/styles';
 import {
   Assignment,
   Close,
-  Download,
+  // Download,
   Search,
   ExpandMore as ExpandMoreIcon,
 } from '@mui/icons-material';
@@ -152,16 +152,16 @@ export default function TaskDetail({ task, open, onClose }) {
   const [totalLogs, setTotalLogs] = useState(0);
   const [nowRowsPerPage, setNowRowsPerPage] = useState(20);
   const [isAsc, setIsAsc] = useState(false); // false for 'desc', true for 'asc'
-  const [downloading, setDownloading] = useState(false);
+  // const [downloading, setDownloading] = useState(false);
   const [selectAllAcrossPages, setSelectAllAcrossPages] = useState(false); // 是否選取所有頁面所有資料
-
+  const [acctControl, setAcctControl] = useState([false, false, false, false, false]);
 
   // 篩選條件
   const [filters, setFilters] = useState({
     searchText:'',
     dateFrom: '',
     dateTo: '',
-    resultType: 'ALL',
+    resultType: 'all',
     showAccessed: false,
     showClicked: false,
     showFiled: false,
@@ -169,10 +169,19 @@ export default function TaskDetail({ task, open, onClose }) {
     rowsPerPage: 20,
     sort: 'asc'
   });
+  const [pendingFilters, setPendingFilters] = useState(filters);
 
   // 載入任務詳細資料
   const fetchTaskLogs = async () => {
     if (!task?.sendtask_uuid) return;
+    console.log(task.send, task.failed, task.notyet, task.notTriggered, task.triggered)
+    const acctControlArr = [
+      !!task.send,
+      !!task.failed,
+      !!task.notyet,
+      !!task.notTriggered,
+      !!task.triggered
+    ];
 
     try {
       setLoading(true);
@@ -181,6 +190,7 @@ export default function TaskDetail({ task, open, onClose }) {
       const response = await axios.post("/api/get_sendlog_detail", { 
         sendtask_uuid: task.sendtask_uuid,
         page: page + 1, // 後端頁碼從 1 開始
+        acctControl: acctControlArr,
         ...filters 
       });
 
@@ -204,37 +214,44 @@ export default function TaskDetail({ task, open, onClose }) {
   // 首次載入或任務變更時，載入固定資訊
   useEffect(() => {
     const fetchInitialData = async () => {
-        if (!task?.sendtask_uuid) return;
-        
-        // 重置狀態
-        setLogs([]);
-        setTotalLogs(0);
-        setPage(0);
-        setTaskData(null);
+      if (!task?.sendtask_uuid) return;
+      setAcctControl([
+        !!task.send,
+        !!task.failed,
+        !!task.notyet,
+        !!task.notTriggered,
+        !!task.triggered
+      ]);
+      
+      // 重置狀態
+      setLogs([]);
+      setTotalLogs(0);
+      setPage(0);
+      setTaskData(null);
 
-        try {
-            const [taskResponse, mtmplResponse] = await Promise.all([
-                axios.post("/api/get_sendlog_stats", { 
-                    sendtask_uuids: [task.sendtask_uuid] 
-                }),
-                axios.get("/api/get_mtmpl")
-            ]);
+      try {
+          const [taskResponse, mtmplResponse] = await Promise.all([
+              axios.post("/api/get_sendlog_stats", { 
+                  sendtask_uuids: [task.sendtask_uuid] 
+              }),
+              axios.get("/api/get_mtmpl")
+          ]);
 
-            const taskResult = taskResponse.data;
-            if (taskResult.status === "success" && taskResult.data.length > 0) {
-                setTaskData(taskResult.data[0]);
-            }
+          const taskResult = taskResponse.data;
+          if (taskResult.status === "success" && taskResult.data.length > 0) {
+              setTaskData(taskResult.data[0]);
+          }
 
-            const mtmplResult = mtmplResponse.data;
-            if (mtmplResult.status === "success") {
-                setMailTemplates(mtmplResult.data || []);
-            }
-        } catch (error) {
-            console.error("獲取初始資料失敗:", error);
-        }
+          const mtmplResult = mtmplResponse.data;
+          if (mtmplResult.status === "success") {
+              setMailTemplates(mtmplResult.data || []);
+          }
+      } catch (error) {
+          console.error("獲取初始資料失敗:", error);
+      }
     };
     if (open && task) {
-        fetchInitialData();
+      fetchInitialData();
     };
   }, [open, task]);
 
@@ -253,7 +270,7 @@ export default function TaskDetail({ task, open, onClose }) {
         searchText:'',
         dateFrom: '',
         dateTo: '',
-        resultType: 'ALL',
+        resultType: 'all',
         showAccessed: false,
         showClicked: false,
         showFiled: false,
@@ -261,6 +278,7 @@ export default function TaskDetail({ task, open, onClose }) {
         rowsPerPage: 20,
         sort: 'asc'
       });
+      setPendingFilters(filters);
       setSelectedUuids([]);
       setSelectAllAcrossPages(false);
       setNowRowsPerPage(20);
@@ -269,41 +287,41 @@ export default function TaskDetail({ task, open, onClose }) {
 
   }, [open, task, page]);
 
-  const handleDownloadCsv = async () => {
-    if (!task?.sendtask_uuid) return;
+  // const handleDownloadXlsx = async () => {
+  //   if (!task?.sendtask_uuid) return;
 
-    setDownloading(true);
-    try {
-      const response = await axios.post("/api/download_sendlog_csv", {
-        sendtask_uuid: task.sendtask_uuid,
-        selected_uuids: selectAllAcrossPages ? [] : selectedUuids,
-        ...filters,
-      }, {
-        responseType: 'blob', // 告訴 axios 預期接收的是二進位檔案資料
-      });
+  //   setDownloading(true);
+  //   try {
+  //     const response = await axios.post("/api/download_sendlog_xlsx", {
+  //       sendtask_uuid: task.sendtask_uuid,
+  //       selected_uuids: selectAllAcrossPages ? [] : selectedUuids,
+  //       ...filters,
+  //     }, {
+  //       responseType: 'blob', // 告訴 axios 預期接收的是二進位檔案資料
+  //     });
 
-      if (response.status !== 200) {
-        throw new Error(`下載失敗: ${response.statusText}`);
-      }
+  //     if (response.status !== 200) {
+  //       throw new Error(`下載失敗: ${response.statusText}`);
+  //     }
 
-      const blob = response.data;
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.style.display = "none";
-      a.href = url;
-      a.download = `sendlog_${task.sendtask_uuid}.csv`;
-      document.body.appendChild(a);
-      a.click();
-      window.URL.revokeObjectURL(url);
-      document.body.removeChild(a);
+  //     const blob = response.data;
+  //     const url = window.URL.createObjectURL(blob);
+  //     const a = document.createElement("a");
+  //     a.style.display = "none";
+  //     a.href = url;
+  //     a.download = `sendlog_${task.sendtask_uuid}.csv`;
+  //     document.body.appendChild(a);
+  //     a.click();
+  //     window.URL.revokeObjectURL(url);
+  //     document.body.removeChild(a);
 
-    } catch (err) {
-      console.error("下載 CSV 失敗:", err);
-      alert(`下載失敗: ${err.response?.data?.detail || err.message}`);
-    } finally {
-      setDownloading(false);
-    }
-  };
+  //   } catch (err) {
+  //     console.error("下載 CSV 失敗:", err);
+  //     alert(`下載失敗: ${err.response?.data?.detail || err.message}`);
+  //   } finally {
+  //     setDownloading(false);
+  //   }
+  // };
 
   const handleChangePage = (event, newPage) => {
     setPage(newPage);
@@ -347,7 +365,7 @@ export default function TaskDetail({ task, open, onClose }) {
                     </Typography>
                     <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
                         <Chip 
-                        label={`觸發率: ${taskData.totalsend > 0 ? ((taskData.totaltriggered / taskData.totalsend) * 100).toFixed(1) : 0}%`}
+                        label={`觸發率: ${taskData.totalsuccess > 0 ? ((taskData.totaltriggered / taskData.totalsuccess) * 100).toFixed(1) : 0}%`}
                         color="warning"
                         size="small"
                         />
@@ -357,7 +375,7 @@ export default function TaskDetail({ task, open, onClose }) {
                         size="small"
                         />
                         <Chip 
-                        label={`已寄出: ${taskData.totalsend || 0}`}
+                        label={`已成功寄出: ${taskData.totalsuccess || 0}`}
                         color="success"
                         size="small"
                         />
@@ -368,19 +386,19 @@ export default function TaskDetail({ task, open, onClose }) {
                         />
                     </Box>
                     </Box>
-                    <Box sx={{ display: 'flex', gap: 1 }}>
+                    {/* <Box sx={{ display: 'flex', gap: 1 }}>
                       <Button 
                         variant="contained" 
                         size="small" 
                         startIcon={downloading ? <CircularProgress size={20} color="inherit" /> : <Download />}
-                        onClick={handleDownloadCsv}
+                        onClick={handleDownloadXlsx}
                         disabled={downloading}
                       >
                         {downloading ? '下載中...' :
                           (selectedUuids.length > 0 || selectAllAcrossPages) ? '下載選取資料' : '下載全部資料'
                         }
                       </Button>
-                    </Box>
+                    </Box> */}
                 </HeaderContent>
                 </HeaderCard>
             )}
@@ -404,8 +422,8 @@ export default function TaskDetail({ task, open, onClose }) {
                               size="small"
                               type="date"
                               label="起始日期"
-                              value={filters.dateFrom}
-                              onChange={(e) => setFilters({ ...filters, dateFrom: e.target.value })}
+                              value={pendingFilters.dateFrom}
+                              onChange={(e) => setPendingFilters({ ...pendingFilters, dateFrom: e.target.value })}
                               InputLabelProps={{ shrink: true }}
                               sx={{ width: 150 }}
                           />
@@ -413,71 +431,74 @@ export default function TaskDetail({ task, open, onClose }) {
                               size="small"
                               type="date"
                               label="結束日期"
-                              value={filters.dateTo}
-                              onChange={(e) => setFilters({ ...filters, dateTo: e.target.value })}
+                              value={pendingFilters.dateTo}
+                              onChange={(e) => setPendingFilters({ ...pendingFilters, dateTo: e.target.value })}
                               InputLabelProps={{ shrink: true }}
                               sx={{ width: 150 }}
                           />
                           <FormControl  size="small" sx={{ minWidth: 120 }}>
                               <Select
-                              value={filters.resultType}
-                              onChange={(e) => setFilters({ ...filters, resultType: e.target.value })}
+                              value={pendingFilters.resultType}
+                              onChange={(e) => setPendingFilters({ ...pendingFilters, resultType: e.target.value })}
                               >
-                              <MenuItem value="ALL">ALL</MenuItem>
-                              <MenuItem value="notyet">待寄出</MenuItem>
-                              <MenuItem value="send">已寄出</MenuItem>
-                              <MenuItem value="failed">寄出失敗</MenuItem>
-                              <MenuItem value="not_triggered">未觸發</MenuItem>
-                              <MenuItem value="triggered">已觸發</MenuItem>
+                              <MenuItem value="all">ALL</MenuItem>
+                              {acctControl[0] && <MenuItem value="send">已寄出</MenuItem>}
+                              {acctControl[1] && <MenuItem value="failed">寄出失敗</MenuItem>}
+                              {acctControl[2] && <MenuItem value="notyet">待寄出</MenuItem>}
+                              {acctControl[3] && <MenuItem value="notTriggered">未觸發</MenuItem>}
+                              {acctControl[4] && <MenuItem value="triggered">已觸發</MenuItem>}
                               </Select>
                           </FormControl>
                           <TextField
                               size="small"
                               placeholder="搜尋姓名或郵件位址"
-                              value={filters.searchText}
-                              onChange={(e) => setFilters({ ...filters, searchText: e.target.value })}
+                              value={pendingFilters.searchText}
+                              onChange={(e) => setPendingFilters({ ...pendingFilters, searchText: e.target.value })}
                               InputProps={{
                                 startAdornment: <Search sx={{ mr: 1, color: '#94a3b8' }} />
                               }}
                           />                                            
                         </Box>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-                          <Typography variant="subtitle2">行為過濾：</Typography>
-                          <FormControlLabel
-                              control={
-                                  <Checkbox
-                                      checked={filters.showAccessed}
-                                      onChange={(e) => setFilters({ ...filters, showAccessed: e.target.checked })}
-                                      size="small"
-                                  />
-                              }
-                              label="讀取"
-                          />
-                          <FormControlLabel
-                              control={
-                                  <Checkbox
-                                      checked={filters.showClicked}
-                                      onChange={(e) => setFilters({ ...filters, showClicked: e.target.checked })}
-                                      size="small"
-                                  />
-                              }
-                              label="點擊"
-                          />
-                          <FormControlLabel
-                              control={
-                                  <Checkbox
-                                      checked={filters.showFiled}
-                                      onChange={(e) => setFilters({ ...filters, showFiled: e.target.checked })}
-                                      size="small"
-                                  />
-                              }
-                              label="開啟"
-                          />
+                          {acctControl[4] &&
+                          <>
+                            <Typography variant="subtitle2">行為過濾：</Typography>
+                            <FormControlLabel
+                                control={
+                                    <Checkbox
+                                        checked={pendingFilters.showAccessed}
+                                        onChange={(e) => setPendingFilters({ ...pendingFilters, showAccessed: e.target.checked })}
+                                        size="small"
+                                    />
+                                }
+                                label="讀取"
+                            />
+                            <FormControlLabel
+                                control={
+                                    <Checkbox
+                                        checked={pendingFilters.showClicked}
+                                        onChange={(e) => setPendingFilters({ ...pendingFilters, showClicked: e.target.checked })}
+                                        size="small"
+                                    />
+                                }
+                                label="點擊"
+                            />
+                            <FormControlLabel
+                                control={
+                                    <Checkbox
+                                        checked={pendingFilters.showFiled}
+                                        onChange={(e) => setPendingFilters({ ...pendingFilters, showFiled: e.target.checked })}
+                                        size="small"
+                                    />
+                                }
+                                label="開啟"
+                            />
+                          </>}
                           <Typography variant="subtitle2">排序方式: </Typography>
                           <FormControl size="small" sx={{ minWidth: 160 }}>
                               <Select
-                              value={filters.sortBy}
-                              onChange={(e) => setFilters({ ...filters, sortBy: e.target.value })}
+                              value={pendingFilters.sortBy}
+                              onChange={(e) => setPendingFilters({ ...pendingFilters, sortBy: e.target.value })}
                               >
                               <MenuItem value="target_email">郵件地址</MenuItem>
                               <MenuItem value="plan_time">預計寄送時間</MenuItem>
@@ -491,7 +512,7 @@ export default function TaskDetail({ task, open, onClose }) {
                                 checked={isAsc}
                                 onChange={(e) => {
                                   setIsAsc(e.target.checked);
-                                  setFilters({ ...filters, sort: isAsc ? "asc" : "desc" });
+                                  setPendingFilters({ ...pendingFilters, sort: isAsc ? "asc" : "desc" });
                                 }}
                                 color="primary"
                               />
@@ -501,9 +522,9 @@ export default function TaskDetail({ task, open, onClose }) {
                           <Typography variant="subtitle2">每頁 </Typography>
                           <FormControl size="small" sx={{ minWidth: 80 }}>
                               <Select
-                                value={filters.rowsPerPage}
+                                value={pendingFilters.rowsPerPage}
                                 onChange={(e) => {
-                                  setFilters({ ...filters, rowsPerPage: e.target.value });
+                                  setPendingFilters({ ...pendingFilters, rowsPerPage: e.target.value });
                                 }}
                               >
                               <MenuItem value={20}>20</MenuItem>
@@ -521,11 +542,11 @@ export default function TaskDetail({ task, open, onClose }) {
                           size="small" 
                           color="secondary"
                           onClick={() => {
-                            setFilters({
+                            setPendingFilters({
                               searchText:'',
                               dateFrom: '',
                               dateTo: '',
-                              resultType: 'ALL',
+                              resultType: 'all',
                               showAccessed: false,
                               showClicked: false,
                               showFiled: false,
@@ -540,11 +561,12 @@ export default function TaskDetail({ task, open, onClose }) {
                           variant="contained" 
                           size="small" 
                           onClick={() => {
-                            setNowRowsPerPage(filters.rowsPerPage);
+                            setFilters(pendingFilters);
+                            setNowRowsPerPage(pendingFilters.rowsPerPage);
                             setPage(0);
                             setSelectedUuids([]);
                             setSelectAllAcrossPages(false);
-                            fetchTaskLogs();
+                            // fetchTaskLogs();
                           }}>
                             查詢
                         </Button>
@@ -624,8 +646,9 @@ export default function TaskDetail({ task, open, onClose }) {
                         <TableHead>
                             <TableRow>
                             <TableCell>
-                              選取下載 <br />
-                              <Checkbox
+                              {/* 選取下載 <br /> */}
+                              NO. <br />
+                              {/* <Checkbox
                                   checked={totalLogs > 0 && selectedUuids.length === logs.length}
                                   indeterminate={selectedUuids.length > 0 && selectedUuids.length < logs.length}
                                   onChange={e => {
@@ -638,7 +661,7 @@ export default function TaskDetail({ task, open, onClose }) {
                                         setSelectAllAcrossPages(false);
                                     }                                    
                                   }}
-                              />
+                              /> */}
                             </TableCell>
                             <TableCell>類型</TableCell>
                             <TableCell>受測人</TableCell>
@@ -652,7 +675,7 @@ export default function TaskDetail({ task, open, onClose }) {
                         </TableHead>
                         <TableBody>
                             {logs.map((log, index) => {
-                            const globalIndex = page * filters.rowsPerPage + index + 1;
+                            const globalIndex = page * nowRowsPerPage + index + 1;
                             const templateTitle = mailTemplates.find(
                               (tmpl) => tmpl.mtmpl_uuid === log.template_uuid
                             )?.mtmpl_title;
@@ -661,7 +684,7 @@ export default function TaskDetail({ task, open, onClose }) {
                                 <TableRow key={log.id || index}>
                                     <TableCell>
                                         <Box>
-                                            <Checkbox
+                                            {/* <Checkbox
                                             checked={selectedUuids.includes(log.uuid)}
                                             onChange={e => {
                                                 if (e.target.checked) {
@@ -670,7 +693,8 @@ export default function TaskDetail({ task, open, onClose }) {
                                                 setSelectedUuids(selectedUuids.filter(uuid => uuid !== log.uuid));
                                                 }
                                             }}
-                                            />{globalIndex}
+                                            /> */}
+                                            {globalIndex}
                                         </Box>
                                     </TableCell>
                                     <TableCell>

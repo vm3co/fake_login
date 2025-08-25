@@ -70,24 +70,15 @@ export default function useCustomers() {
                 signal: controller.signal,
             });
 
-            const result = await response.data;
+            return await response.data;
 
-            if (result.status === "success") {
-                setSuccess(`客戶 ${result.customer_name} 創建成功！`);
-                alert(`客戶 ${result.customer_name} 創建成功！`);
-                window.location.reload();
-                return result;
-            } else {
-                alert(`創建失敗： ${result.customer_name}`);
-            }
         } catch (error) {
             if (error.name === "AbortError") {
                 alert("創建客戶請求被中止");
                 console.log("創建客戶請求被中止");
             } else {
-                console.error("創建客戶失敗:", error);
                 setError(error.message || "網路錯誤，請稍後再試");
-                alert(`創建失敗： ${error}`);
+                alert(`創建失敗： ${error.message}`);
             }
         } finally {
             setLoading(false);
@@ -137,7 +128,7 @@ export default function useCustomers() {
     };
 
     // 更新客戶任務
-    const updateCustomerSendtasks = async (customerName, sendtask_uuids) => {
+    const updateCustomerSendtasks = async (customerName, sendtasksForDb) => {
         const controller = createController();
         const cleanup = registerRequest(controller);
 
@@ -148,7 +139,7 @@ export default function useCustomers() {
 
             const response = await axios.post("/api/update_customer_sendtasks", {
                 customer_name: customerName,
-                sendtask_uuids: sendtask_uuids
+                sendtasks_for_db: sendtasksForDb
             }, {
                 signal: controller.signal,
             });
@@ -156,6 +147,7 @@ export default function useCustomers() {
             const result = response.data;
 
             if (result.status === "success") {
+                console.log(result);
                 setSuccess(`成功為客戶 ${customerName} 添加任務`);
                 alert(`成功為客戶 ${customerName} 添加任務`);
                 await fetchCustomers();

@@ -115,6 +115,21 @@ function getCookie(name) {
   }
 }
 
+const parseTasks = (sendtasks) => {
+  if (!sendtasks) return [];
+  if (Array.isArray(sendtasks)) return sendtasks; // 如果已經是陣列，直接回傳
+  if (typeof sendtasks === 'string') {
+    try {
+      const parsed = JSON.parse(sendtasks);
+      return Array.isArray(parsed) ? parsed : []; // 確保解析後是陣列
+    } catch (e) {
+      console.error("解析客戶任務 JSON 失敗:", e);
+      return []; // 解析失敗則給空陣列
+    }       
+  }
+  return []; // 對於其他類型，回傳空陣列
+};
+
 // 格式化日期函數
 const formatDate = (timestamp, type = "datetime") => {
   if (!timestamp || timestamp === 0) return "-";
@@ -129,7 +144,7 @@ const formatDate = (timestamp, type = "datetime") => {
 
 export default function Customer() {
   const [customerData, setCustomerData] = useState({
-    sendtask_uuids: null,
+    sendtasks: null,
     acct_uuid: null
   });
   const [searchText, setSearchText] = useState('');
@@ -146,10 +161,10 @@ export default function Customer() {
 
   // 載入客戶 Cookie 資料
   const loadCustomerData = () => {
-    const sendtask_uuids = getCookie('sendtask_uuids');
+    const sendtasks = parseTasks(getCookie('sendtasks'));
     const acct_uuid = getCookie('acct_uuid');
     setCustomerData({
-      sendtask_uuids,
+      sendtasks,
       acct_uuid
     });
   };
@@ -161,10 +176,10 @@ export default function Customer() {
   }, []);
 
   useEffect(() => {
-    if (customerData.sendtask_uuids && customerData.sendtask_uuids.length > 0) {
+    if (customerData.sendtasks && customerData.sendtasks.length > 0) {
       fetchCustomerSendtasksData();
     }
-  }, [customerData.sendtask_uuids]);
+  }, [customerData.sendtasks]);
 
   // 準備任務資料
   const prepareTaskData = () => {
@@ -177,7 +192,7 @@ export default function Customer() {
         endDate: task.stop_time_new === -1 ? formatDate(task.test_end_ut, "date") : formatDate(task.stop_time_new, "date"),
         is_pause: task.is_pause,
         totalplanned: task.totalplanned || 0,
-        totalsend: task.totalsend || 0,
+        totalsuccess: task.totalsuccess || 0,
         totaltriggered: task.totaltriggered || 0,
     }));
   };
@@ -217,15 +232,16 @@ export default function Customer() {
   // 手動重新載入資料
   const handleRefreshData = () => {
     loadCustomerData();
-    if (customerData.sendtask_uuids) {
+    if (customerData.sendtasks) {
       fetchCustomerSendtasksData();
     }
   };
 
   const handleCardClick = (task) => {
+    const taskStatus = customerData.sendtasks.find(t => t.uuid === task.sendtask_uuid);
     setDetailDialog({
       open: true,
-      task: task
+      task: { ...task, ...taskStatus }
     });
   };
 
@@ -340,7 +356,7 @@ export default function Customer() {
           </Alert>
         )}
 
-        {!customerData.sendtask_uuids ? (
+        {!customerData.sendtasks ? (
           <Alert 
             severity="info" 
             sx={{ borderRadius: '12px' }}
@@ -357,69 +373,96 @@ export default function Customer() {
             沒有符合篩選條件的任務
           </Alert>
         ) : (
-          filteredTasks.map((task) => (
-            <TaskCard 
-              key={task.id} 
-              elevation={0}
-            >
-              <TaskHeader>
-                <Avatar 
-                  sx={{ 
-                    bgcolor: getStatusColor(task.status),
-                    mr: 2 
-                  }}
-                >
-                  <Assignment />
-                </Avatar>
-                
-                <Box sx={{ flex: 1 }}>
-                  <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                    {task.name}
-                  </Typography>
-                  <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                    <Schedule sx={{ mr: 1, color: '#64748b', fontSize: 20 }} />
-                    <Typography variant="body2" color="text.secondary">
-                      {task.startDate} - {task.endDate}
+          filteredTasks.map((task) => {
+            const taskStatus = customerData.sendtasks.find(t => t.uuid === task.sendtask_uuid); 
+            return (
+              <TaskCard 
+                key={task.id} 
+                elevation={0}
+              >
+                <TaskHeader>
+                  <Avatar 
+                    sx={{ 
+                      bgcolor: getStatusColor(task.status),
+                      mr: 2 
+                    }}
+                  >
+                    <Assignment />
+                  </Avatar>
+                  
+                  <Box sx={{ flex: 1 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                      {task.name}
                     </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                      <Schedule sx={{ mr: 1, color: '#64748b', fontSize: 20 }} />
+                      <Typography variant="body2" color="text.secondary">
+                        {task.startDate} - {task.endDate}
+                      </Typography>
+                    </Box>
+
+                    <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                      {taskStatus.triggered &&
+                      <Chip 
+                      label={`觸發率: ${task.totalsuccess > 0 ? ((task.totaltriggered / task.totalsuccess) * 100).toFixed(1) : 0}%`}
+                      color="warning"
+                      size="small"
+                      />
+                      }
+                      <Chip 
+                      label={`總信件數: ${task.totalplanned || 0}`}
+                      color="info"
+                      size="small"
+                      />
+                      {taskStatus.send && 
+                      <Chip 
+                      label={`已成功寄出: ${task.totalsuccess || 0}`}
+                      color="secondary"
+                      size="small"
+                      />
+                      }
+                      {taskStatus.triggered &&
+                      <Chip 
+                      label={`已觸發: ${task.totaltriggered || 0}`}
+                      color="error"
+                      size="small"
+                      />
+                      }
+                    </Box>
+                    {taskStatus && (
+                      <Box sx={{ mt: 1 }}>
+                        <Typography variant="subtitle2">顯示：</Typography>
+                        <ul style={{ margin: 0, paddingLeft: 16 }}>
+                          {taskStatus.send && 
+                          <li>
+                            已成功寄送:
+                            <ul>
+                            {taskStatus.notTriggered && <li>未觸發</li>}
+                            {taskStatus.triggered && <li>已觸發</li>}
+                            </ul>
+                          </li>}
+                          {taskStatus.failed && <li>寄送失敗</li>}
+                          {taskStatus.notyet && <li>待寄送</li>}
+                          {!taskStatus.send && !taskStatus.failed && !taskStatus.notyet && !taskStatus.notTriggered && !taskStatus.triggered && <li>無</li>}
+                        </ul>
+                      </Box>
+                    )}
                   </Box>
 
                   <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                    <Chip 
-                    label={`觸發率: ${task.totalsend > 0 ? ((task.totaltriggered / task.totalsend) * 100).toFixed(1) : 0}%`}
-                    color="warning"
-                    size="small"
-                    />
-                    <Chip 
-                    label={`總信件數: ${task.totalplanned || 0}`}
-                    color="info"
-                    size="small"
-                    />
-                    <Chip 
-                    label={`已寄出: ${task.totalsend || 0}`}
-                    color="secondary"
-                    size="small"
-                    />
-                    <Chip 
-                    label={`已觸發: ${task.totaltriggered || 0}`}
-                    color="error"
-                    size="small"
+                    <StatusChip
+                      label={getStatusText(task.status)}
+                      status={task.status}
+                      size="small"
                     />
                   </Box>
-                </Box>
-
-                <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                  <StatusChip
-                    label={getStatusText(task.status)}
-                    status={task.status}
-                    size="small"
-                  />
-                </Box>
-                <Box sx={{ flex: 0.1 }}>
-                  <Button onClick={() => handleCardClick(task)}>查看詳情</Button>
-                </Box>
-              </TaskHeader>
-            </TaskCard>
-          ))
+                  <Box sx={{ flex: 0.1 }}>
+                    <Button onClick={() => handleCardClick(task)}>查看詳情</Button>
+                  </Box>
+                </TaskHeader>
+              </TaskCard>
+            );
+          })
         )}
       </RightContent>
 

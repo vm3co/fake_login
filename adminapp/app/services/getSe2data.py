@@ -209,8 +209,8 @@ class getSe2data:
             
         return None
 
-    async def export_csv(self, sendtask_content: list[str], isTokenRefreshed=False):
-        '''將 sendtask 的參與人員清單匯出為 CSV 檔案'''
+    async def export_xlsx(self, sendtask_content: list[str], isTokenRefreshed=False):
+        '''將 sendtask 的參與人員清單匯出為 XLSX 檔案'''
         sendtask_uuid = sendtask_content[0]
         sendlog_type = "pretest" if sendtask_content[1] else "test"
         logger.info(f"Exporting sendlog for sendtask {sendtask_uuid} to CSV...")
@@ -239,7 +239,7 @@ class getSe2data:
                 if not isTokenRefreshed:
                     logger.info("Token expired, re-getting token and retrying...")
                     self.headers["cookie"] = get_token.get()
-                    return await self.export_csv(sendtask_content, isTokenRefreshed=True)
+                    return await self.export_xlsx(sendtask_content, isTokenRefreshed=True)
                 logger.error(f"Unhandled exception: {e}")
         return None              
 
