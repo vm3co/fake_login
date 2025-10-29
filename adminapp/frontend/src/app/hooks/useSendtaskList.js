@@ -1,4 +1,5 @@
 import { useEffect, useState, useRef } from "react";
+import { useSnackbar } from 'notistack';
 import useAbortOnUnmount from "app/hooks/useAbortOnUnmount";
 import useAuth from "app/hooks/useAuth";
 import axios from "axios";
@@ -13,6 +14,8 @@ function getCookie(name) {
 }
 
 export default function useSendtaskList() {
+    const { enqueueSnackbar } = useSnackbar();
+
     const [loading, setLoading] = useState(true);
     const [tasksData, setTasksData] = useState([]);
     const [statsData, setStatsData] = useState({}); // 存所有統計資料
@@ -109,8 +112,7 @@ export default function useSendtaskList() {
             link.remove();
             window.URL.revokeObjectURL(url);
         } catch (error) {
-            alert("匯出失敗：" + (error?.message || "未知錯誤"));
-            console.error("exportCsv error:", error);
+            enqueueSnackbar(`匯出失敗：${(error?.message || "未知錯誤")}`, { variant: 'warning' });
         }
     };    
 

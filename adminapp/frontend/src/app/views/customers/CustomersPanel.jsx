@@ -1,4 +1,5 @@
 import { useState, useMemo, useContext } from 'react';
+import { useSnackbar } from 'notistack';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import {
   Box, 
@@ -61,6 +62,8 @@ const parseTasks = (tasksData) => {
 };
 
 export default function CustomersPanel() {
+  const { enqueueSnackbar } = useSnackbar();
+  
   const { customers, loading, deleteCustomer, updateCustomerSendtasks } = useContext(CustomersContext);
   const { tasksData } = useContext(SendtaskListContext);
   const [selectedCustomers, setSelectedCustomers] = useState([]);  // 勾選客戶
@@ -166,8 +169,7 @@ export default function CustomersPanel() {
       }
       
     } catch (error) {
-      console.error(`客戶 ${customerKey} 的任務保存失敗:`, error);
-      alert(`保存失敗: ${error.message}`);
+      enqueueSnackbar(`保存失敗: ${error.message}`, { variant: 'warning' });
     } finally {
       setSavingCustomer(null);
     }
@@ -183,8 +185,6 @@ export default function CustomersPanel() {
       delete newState[customerKey];
       return newState;
     });
-    
-    console.log(`客戶 ${customerKey} 的任務選擇已取消`);
   };
 
   if (loading) {

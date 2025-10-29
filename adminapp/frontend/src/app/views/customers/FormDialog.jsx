@@ -1,4 +1,5 @@
 import { useState, forwardRef } from "react";
+import { useSnackbar } from 'notistack';
 import AppBar from "@mui/material/AppBar";
 import Button from "@mui/material/Button";
 import Dialog from "@mui/material/Dialog";
@@ -24,6 +25,8 @@ const Transition = forwardRef(function Transition(props, ref) {
 });
 
 export default function FormDialog() {
+  const { enqueueSnackbar } = useSnackbar();
+
   const [open, setOpen] = useState(false);
   const [state, setState] = useState({
     customername: "",
@@ -72,21 +75,20 @@ export default function FormDialog() {
     try {
       const result = await createCustomer(state);
       if (result.status === "success") {
-          alert(`客戶 ${result.customer_name} 創建成功！`);
-          // 成功後清空表單並關閉對話框
-          setState({
-            customername: "",
-            customerfullname: "",
-            password: "",
-            confirmPassword: ""
-          });
-          setErrors({});
-          setOpen(false);
-          clearMessages();
-          window.location.reload();
-      
+        enqueueSnackbar(`客戶 ${result.customer_name} 創建成功！`, { variant: 'success' });
+        // 成功後清空表單並關閉對話框
+        setState({
+          customername: "",
+          customerfullname: "",
+          password: "",
+          confirmPassword: ""
+        });
+        setErrors({});
+        setOpen(false);
+        clearMessages();
+        window.location.reload();
       } else {
-          alert(`創建失敗： ${result.message}`);
+        enqueueSnackbar(`創建失敗： ${result.message}`, { variant: 'error' });
       }      
       
     } catch (error) {

@@ -1,4 +1,5 @@
 import useAbortOnUnmount from "app/hooks/useAbortOnUnmount";
+import { useSnackbar } from 'notistack';
 import axios from "axios";
 
 
@@ -12,6 +13,7 @@ function getCookie(name) {
 
 export function useCheckTodayCreateTasks({ refresh, setIsCheckingSends }) {
     const { controllerRef, createController } = useAbortOnUnmount();
+    const { enqueueSnackbar } = useSnackbar();
 
     // 檢查新增或移除的任務
     const fetchCheckTodayCreateTasks = async () => {
@@ -42,11 +44,11 @@ export function useCheckTodayCreateTasks({ refresh, setIsCheckingSends }) {
                     const updatedUuids = Object.entries(sendlog_stats_status)
                             .filter(([, status]) => status === "changed")
                             .map(([uuid]) => uuid);
-                    alert(`更新 ${updatedUuids.length} 筆：\n${updatedUuids.join("\n") || "(無)"}`);
+                    enqueueSnackbar(`更新 ${updatedUuids.length} 筆`, { variant: 'success' });
                     // 再次取得最新任務資料
                     refresh();
                 } else {
-                    alert("檢查任務失敗：" + json.message);
+                    enqueueSnackbar(`檢查任務失敗：${json.message}`, { variant: 'error' });
                 }
                 setIsCheckingSends(false);
             })
@@ -55,7 +57,7 @@ export function useCheckTodayCreateTasks({ refresh, setIsCheckingSends }) {
                 // 請求被中止，不顯示錯誤
             } else {
                 console.error("發生錯誤", err);
-                alert("伺服器錯誤，請稍後再試");
+                enqueueSnackbar("伺服器錯誤，請稍後再試", { variant: 'error' });
             }
             setIsCheckingSends(false);
         });

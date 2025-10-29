@@ -1,14 +1,9 @@
 import { createContext, useEffect, useReducer } from "react";
+import { useSnackbar } from 'notistack';
 import { jwtDecode } from "jwt-decode";
 import axios from "axios";
 // GLOBAL CUSTOM COMPONENTS
 import Loading from "app/components/MatxLoading";
-
-const initialState = {
-  user: null,
-  isInitialized: false,
-  isAuthenticated: false
-};
 
 const isValidToken = (accessToken) => {
   if (!accessToken) return false;
@@ -95,6 +90,13 @@ const reducer = (state, action) => {
   }
 };
 
+const initialState = {
+  user: null,
+  isInitialized: false,
+  isAuthenticated: false
+};
+
+
 const AuthContext = createContext({
   ...initialState,
   method: "JWT"
@@ -102,21 +104,21 @@ const AuthContext = createContext({
 
 export const AuthProvider = ({ children }) => {
   const [state, dispatch] = useReducer(reducer, initialState);
+  const { enqueueSnackbar } = useSnackbar();
 
   const login = async (username, password) => {
     try {
       const { data } = await axios.post("/api/auth/login", { username, password });
 
       if (data.status !== "success") {
-        alert(data.message || "登入失敗，請檢查帳號密碼是否正確");
+        enqueueSnackbar(data.message || "登入失敗，請檢查帳號密碼是否正確", { variant: 'error' });
         return;
       }
 
       const { accessToken, user } = data;
 
       if (!accessToken) {
-        console.error("CRITICAL: accessToken is missing from login response!");
-        alert("登入失敗：無法從伺服器獲取授權。");
+        enqueueSnackbar("登入失敗：無法從伺服器獲取授權。", { variant: 'error' });
         return;
       }
 
@@ -126,7 +128,7 @@ export const AuthProvider = ({ children }) => {
 
     } catch (error) {
       console.error("登入錯誤:", error);
-      alert("登入過程中發生錯誤，請稍後再試");
+      enqueueSnackbar("登入過程中發生錯誤，請稍後再試", { variant: 'error' });
     }
   };
 
@@ -134,7 +136,7 @@ export const AuthProvider = ({ children }) => {
     try {
       const { data } = await axios.post("/api/auth/register", { username, password });
       if (data.status !== "success") {
-        alert(data.message || "註冊失敗，請檢查輸入的資料是否正確");
+        enqueueSnackbar(data.message || "註冊失敗，請檢查輸入的資料是否正確", { variant: 'error' });
         return;
       }
       
@@ -148,7 +150,7 @@ export const AuthProvider = ({ children }) => {
       dispatch({ type: "REGISTER", payload: { user } });
     } catch (error) {
       console.error("註冊錯誤:", error);
-      alert("註冊過程中發生錯誤，請稍後再試");
+      enqueueSnackbar("註冊過程中發生錯誤，請稍後再試", { variant: 'error' });
     }
   };
 

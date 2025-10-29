@@ -1,4 +1,5 @@
 import { memo, useContext } from "react";
+import { useSnackbar } from 'notistack';
 // import { Link } from "react-router-dom";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
@@ -79,6 +80,7 @@ const StyledItem = styled(MenuItem)(({ theme }) => ({
 // }));
 
 const Layout1Topbar = () => {
+  const { enqueueSnackbar } = useSnackbar();
   const theme = useTheme();
   const { settings, updateSettings } = useSettings();
   const { logout, user } = useAuth();
@@ -126,12 +128,13 @@ const Layout1Topbar = () => {
             .then(result => {
               if (result.status === 'success') {
                   const { added, removed } = result.data;
-                  const addedTitles = added.map(item => `- ${item.mtmpl_title}`).join("\n");
-                  const removedTitles = removed.map(item => `- ${item.mtmpl_title}`).join("\n");
-                  const message = `郵件樣板同步完成！\n\n新增 ${added.length} 筆：\n${addedTitles || "(無)"}\n\n移除 ${removed.length} 筆：\n${removedTitles || "(無)"}`;
-                  alert(message);
+                  // const addedTitles = added.map(item => `- ${item.mtmpl_title}`).join("\n");
+                  // const removedTitles = removed.map(item => `- ${item.mtmpl_title}`).join("\n");
+                  // const message = `郵件樣板同步完成！\n\n新增 ${added.length} 筆：\n${addedTitles || "(無)"}\n\n移除 ${removed.length} 筆：\n${removedTitles || "(無)"}`;
+                  const message = `郵件樣板同步完成！\n\n新增 ${added.length} 筆\n\n移除 ${removed.length} 筆`;
+                  enqueueSnackbar(message, { variant: 'success' });
               } else {
-                  alert(`更新失敗: ${result.message}`);
+                  enqueueSnackbar(`更新失敗: ${result.message}`, { variant: 'warning' });
               } 
                 setIsCheckingSends(false);
             })
@@ -140,7 +143,8 @@ const Layout1Topbar = () => {
                 // 請求被中止，不顯示錯誤
             } else {
                 console.error("更新郵件樣板時發生錯誤", err);
-                alert("網路錯誤，更新失敗，請稍後再試");
+                enqueueSnackbar("網路錯誤，更新失敗，請稍後再試", { variant: 'error' });
+
             }
             setIsCheckingSends(false);
         });

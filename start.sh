@@ -34,7 +34,7 @@ if ! docker info &> /dev/null; then
 fi
 
 echo "4. 檢查 cert 目錄下的 cookie.txt 和 .crt 檔案"
-CERT_DIR="adminapp/app/certs"
+CERT_DIR="adminapp/backend/certs"
 if [ ! -f "$CERT_DIR/cookie.txt" ]; then
     echo "[錯誤] 找不到 $CERT_DIR/cookie.txt"
     exit 1

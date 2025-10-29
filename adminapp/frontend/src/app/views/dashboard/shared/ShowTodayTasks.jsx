@@ -1,4 +1,5 @@
 import { useEffect, useState, useContext } from "react";
+import { useSnackbar } from 'notistack';
 import {
   Box,
   Table,
@@ -30,7 +31,7 @@ import DownloadIcon from "@mui/icons-material/Download";
 import { SendtaskListContext } from "app/contexts/SendtaskListContext";
 import formatDate from "app/utils/formatDate";
 import { useCheckSends } from "app/hooks/useCheckSends";
-
+import TaskDetail from './TaskDetail_new';
 
 
 // STYLED COMPONENT
@@ -99,6 +100,8 @@ const StyledTable = styled(Table)(() => ({
 
 
 export default function ShowTodayTasks({ taskState, setTaskState }) {
+  const { enqueueSnackbar } = useSnackbar();
+
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [sortBy, setSortBy] = useState("today_earliest_plan_time");  // 預設排序順序為寄信開始時間
@@ -119,6 +122,11 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
   const [selectedUuids, setSelectedUuids] = useState([]);  // 勾選任務並只更新這些任務
   const [isExporting, setIsExporting] = useState(false);
   const [progress, setProgress] = useState(0); // 追蹤下載進度 (0-100)
+
+  const [detailDialog, setDetailDialog] = useState({
+    open: false,
+    task: null
+  });
 
   // 排序邏輯
   const sortedTasks = [...(todayTasks || [])].sort((a, b) => {
@@ -141,14 +149,15 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
   
   // 任務顯示模式
   const filteredTasks = sortedTasks.filter(row => {
-      // 搜尋任務名稱
-      if (searchText && !row.sendtask_id?.toLowerCase().includes(searchText.toLowerCase())) {
-        return false;
-      }
-
-      // 如果選擇"今日全部任務"，直接返回 true（不再進行狀態過濾）
-      if (taskState === "all") {
-        return true;
+      // 搜尋任務名稱或 UUID
+      if (searchText) {
+        const searchLower = searchText.toLowerCase();
+        const matchesId = row.sendtask_id?.toLowerCase().includes(searchLower);
+        const matchesUuid = row.sendtask_uuid?.toLowerCase().includes(searchLower);
+        
+        if (!(matchesId || matchesUuid)) {
+          return false; // 如果兩者都不符合，則過濾掉
+        }
       }
 
       const stats = statsData[row.sendtask_uuid] || {};
@@ -182,7 +191,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
   // 匯出勾選任務
   const handleExportSelected = async () => {
     if (selectedUuids.length === 0) {
-      alert("請先勾選要匯出的任務");
+      enqueueSnackbar('請先勾選要匯出的任務', { variant: 'warning' });
       return;
     }
     // 準備 sendtasks 格式: { sendtask_id1: sendtask_uuid1, ... }
@@ -204,7 +213,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
         },
       });
     } catch (error) {
-      console.error("匯出任務時發生錯誤:", error);
+      enqueueSnackbar(`匯出任務時發生錯誤：${error}`, { variant: 'error' });
     } finally {
       setIsExporting(false);
       setProgress(0);
@@ -235,6 +244,28 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
   const handleChangeRowsPerPage = (event) => {
     setRowsPerPage(+event.target.value);
     setPage(0);
+  };
+
+  const handleTaskClick = (taskRow, taskStats) => {
+    
+    // 建立 "task" 物件
+    const adminControls = {
+      send: true,
+      failed: true,
+      notyet: true,
+      notTriggered: true,
+      triggered: true
+    };
+
+    setDetailDialog({
+      open: true,
+      task: {
+        sendtask_uuid: taskRow.sendtask_uuid,
+        name: taskRow.sendtask_id, // TaskDetail 使用 'name' 欄位
+        ...taskStats, // 傳入統計資料，讓 TaskDetail 的標頭能顯示
+        ...adminControls // 傳入所有權限旗標
+      }
+    });
   };
 
   if (loading)
@@ -276,7 +307,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
             onClick={() => {
               const uuids = todayTasks.map(row => row.sendtask_uuid);
               if (uuids.length === 0) {
-                alert("無今日任務可更新");
+                enqueueSnackbar('無今日任務可更新', { variant: 'warning' });
                 return;
               }
               fetchCheckSends(uuids);
@@ -323,7 +354,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
         >
           <TextField
             size="small"
-            label="搜尋任務名稱"
+            label="搜尋任務名稱或UUID"
             value={searchText}
             onChange={e => {
               setSearchText(e.target.value);
@@ -480,7 +511,20 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
                         }}
                       /><strong>{rowNumber}</strong>
                     </TableCell>
-                    <TableCell align="center">{row.sendtask_id}</TableCell>
+                    <TableCell align="center"
+                      onClick={() => handleTaskClick(row, stats)}
+                      sx={{
+                        cursor: 'pointer',
+                        color: 'primary.main',
+                        fontWeight: 'bold',
+                        '&:hover': {
+                          textDecoration: 'underline',
+                          backgroundColor: 'rgba(0, 0, 0, 0.04)'
+                        }
+                      }}
+                    >
+                      {row.sendtask_id}
+                    </TableCell>
                     <TableCell align="center">{stats.totalplanned}</TableCell>
                     <TableCell align="center">{stats.totalsend}</TableCell>
                     <TableCell align="center">
@@ -544,6 +588,11 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
         onPageChange={handleChangePage}
         rowsPerPageOptions={[5, 10, 25, 50, 100]}
         onRowsPerPageChange={handleChangeRowsPerPage}
+      />
+      <TaskDetail
+        task={detailDialog.task}
+        open={detailDialog.open}
+        onClose={() => setDetailDialog({ open: false, task: null })}
       />
     </Box>
   );

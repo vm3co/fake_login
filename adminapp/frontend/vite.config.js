@@ -7,8 +7,11 @@ export default defineConfig({
   server: {
     proxy: {
       '/api': {
-        target: 'http://localhost:8091',
+        target: 'http://localhost:80',
         changeOrigin: true,
+
+        // rewrite: (path) => path.replace(/^\/api/, '/admin/api'),
+
         configure: (proxy) => {
           proxy.on('error', (err) => {
             console.log('proxy error', err);

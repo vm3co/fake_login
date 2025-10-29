@@ -40,7 +40,7 @@ if errorlevel 1 (
 ) 
 
 echo 4. 檢查 cert 目錄下的 cookie.txt 和 .crt 檔案
-set CERT_DIR=adminapp\app\certs
+set CERT_DIR=adminapp\backend\certs
 if not exist "%CERT_DIR%\cookie.txt" (
     echo [錯誤] 找不到 %CERT_DIR%\cookie.txt
     pause

@@ -1,5 +1,6 @@
 // import { useState } from "react";
 // import { useNavigate } from "react-router-dom";
+import { useSnackbar } from 'notistack';
 import Card from "@mui/material/Card";
 import Button from "@mui/material/Button";
 import TextField from "@mui/material/TextField";
@@ -7,6 +8,8 @@ import { styled } from "@mui/material/styles";
 import { Formik } from "formik";
 import * as Yup from "yup";
 import axios from "axios";
+
+import dreamer from "/assets/images/illustrations/dreamer.svg";
 
 
 // STYLED COMPONENTS
@@ -63,11 +66,12 @@ function getCookie(name) {
 
 
 export default function ChangePassword() {
+  const { enqueueSnackbar } = useSnackbar();
 
   const handleFormSubmit = async (values) => {
     const acct_uuid = getCookie("acct_uuid") || "";
     if (acct_uuid === "admin") {
-      alert("管理者密碼無法更改");
+      enqueueSnackbar("管理者密碼無法更改", { variant: 'warning' });
       return;
     }
     try {
@@ -78,16 +82,15 @@ export default function ChangePassword() {
       });
 
       if (data.status === "success") {
-        alert(`密碼更新成功`);
+        enqueueSnackbar('密碼更新成功', { variant: 'success' });
         return data;
       } else {
-        throw new Error(data.detail || "密碼更新失敗");
+        enqueueSnackbar(data.detail || "密碼更新失敗", { variant: 'warning' });
       }
     } catch (error) {
       // 捕捉後端返回的錯誤內容
       const errorMessage = error.response?.data?.detail || error.message || "密碼更新失敗，請稍後再試";
-      console.error("密碼更新失敗:", errorMessage);
-      alert(errorMessage);
+      enqueueSnackbar(`密碼更新失敗:${errorMessage}`, { variant: 'error' });
     }
   };
 
@@ -101,7 +104,7 @@ export default function ChangePassword() {
     <StyledRoot>
       <Card className="card">
         <div className="img-wrapper">
-          <img width="300" src="/assets/images/illustrations/dreamer.svg" alt="Illustration" />
+          <img width="300" src={dreamer} alt="Illustration" />
         </div>
 
         <ContentBox>

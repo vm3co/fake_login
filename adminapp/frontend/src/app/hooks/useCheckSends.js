@@ -1,8 +1,10 @@
 import useAbortOnUnmount from "app/hooks/useAbortOnUnmount";
+import { useSnackbar } from 'notistack';
 import axios from "axios";
 
 
 export function useCheckSends({ refresh, setIsCheckingSends, setUpdatedTodayUuids }) {
+    const { enqueueSnackbar } = useSnackbar();
     const { createController } = useAbortOnUnmount();
 
     // 更新寄送任務的狀態
@@ -18,7 +20,7 @@ export function useCheckSends({ refresh, setIsCheckingSends, setUpdatedTodayUuid
         // 只取今日未寄送最早的 plan_time 非0的任務
         if (!uuids || uuids.length === 0) {
             // 如果沒有任務就直接結束
-            alert("無任務可更新");
+            enqueueSnackbar("無任務可更新", { variant: 'info' });
             setIsCheckingSends(false);
             return;
         }
@@ -49,9 +51,9 @@ export function useCheckSends({ refresh, setIsCheckingSends, setUpdatedTodayUuid
             });
             setUpdatedTodayUuids(updatedUuids);
             if (updatedUuids.length === 0) {
-                alert("任務已是最新狀態");
+                enqueueSnackbar("任務已是最新狀態", { variant: 'info' });
             } else {
-                alert(`${updatedUuids.length} 筆任務已更新`);
+                enqueueSnackbar(`${updatedUuids.length} 筆任務已更新`, { variant: 'success' });
                 refresh(); // 重新載入任務列表
             }
         } catch (err) {
@@ -59,7 +61,7 @@ export function useCheckSends({ refresh, setIsCheckingSends, setUpdatedTodayUuid
                 // 請求被中止，不顯示錯誤
             } else {
                 console.error("發生錯誤", err);
-                alert("伺服器錯誤，請稍後再試");
+                enqueueSnackbar("伺服器錯誤，請稍後再試", { variant: 'error' });
             }
         } finally {
             setIsCheckingSends(false);

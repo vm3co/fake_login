@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { useSnackbar } from 'notistack';
 import useAbortOnUnmount from "app/hooks/useAbortOnUnmount";
 import useAuth from "app/hooks/useAuth";
 import axios from "axios";
@@ -17,6 +18,8 @@ function getCookie(name) {
 }
 
 export default function useCustomers() {
+    const { enqueueSnackbar } = useSnackbar();
+
     const [loading, setLoading] = useState(false);
     const [customers, setCustomers] = useState([]);
     const [error, setError] = useState(null);
@@ -74,11 +77,10 @@ export default function useCustomers() {
 
         } catch (error) {
             if (error.name === "AbortError") {
-                alert("創建客戶請求被中止");
-                console.log("創建客戶請求被中止");
+                enqueueSnackbar('創建客戶請求被中止', { variant: 'warning' });
             } else {
                 setError(error.message || "網路錯誤，請稍後再試");
-                alert(`創建失敗： ${error.message}`);
+                enqueueSnackbar(`創建失敗： ${error.message}`, { variant: 'warning' });
             }
         } finally {
             setLoading(false);
@@ -149,7 +151,8 @@ export default function useCustomers() {
             if (result.status === "success") {
                 console.log(result);
                 setSuccess(`成功為客戶 ${customerName} 添加任務`);
-                alert(`成功為客戶 ${customerName} 添加任務`);
+                enqueueSnackbar(`成功為客戶 ${customerName} 添加任務`, { variant: 'success' });
+
                 await fetchCustomers();
                 return result;
             } else {
@@ -195,11 +198,12 @@ export default function useCustomers() {
 
             if (result.status === "success") {
                 setSuccess(`客戶 ${customerNames} 刪除成功`);
-                alert(`客戶 ${customerNames} 刪除成功`);
+                enqueueSnackbar(`客戶 ${customerNames} 刪除成功`, { variant: 'success' });
                 await fetchCustomers();
                 return result;
             } else {
-                throw new Error(result.message || "刪除客戶失敗");
+                // throw new Error(result.message || "刪除客戶失敗");
+                enqueueSnackbar(result.message || "刪除客戶失敗", { variant: 'error' });
             }
         } catch (error) {
             if (error.name === "AbortError") {
@@ -236,11 +240,10 @@ export default function useCustomers() {
             const result = response.data;
 
             if (result.status === "success") {
-                setSuccess(`客戶 ${customerName} 密碼更新成功`);
-                alert(`客戶 ${customerName} 密碼更新成功`);
+                enqueueSnackbar(`客戶 ${customerName} 密碼更新成功`, { variant: 'success' });
                 return result;
             } else {
-                throw new Error(result.message || "密碼更新失敗");
+                enqueueSnackbar(result.message || "密碼更新失敗", { variant: 'warning' });
             }
         } catch (error) {
             if (error.name === "AbortError") {

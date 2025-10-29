@@ -285,7 +285,7 @@ export default function TaskDetail({ task, open, onClose }) {
       setIsAsc(false);
     }
 
-  }, [open, task, page]);
+  }, [open, task, page, filters]);
 
   // const handleDownloadXlsx = async () => {
   //   if (!task?.sendtask_uuid) return;

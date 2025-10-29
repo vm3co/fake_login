@@ -5,6 +5,9 @@ import { Span } from "./Typography";
 // import { MatxLogo } from "app/components";
 import useSettings from "app/hooks/useSettings";
 
+import LogoAcsi from "/assets/images/logo-acsi.png";
+
+
 // STYLED COMPONENTS
 const BrandRoot = styled("div")(() => ({
   display: "flex",
@@ -34,7 +37,7 @@ export default function Brand({ children }) {
   return (
     <BrandRoot>
       <Box display="flex" alignItems="center">
-        <CustomLogo src="/assets/images/logo-acsi.png" alt="Company Logo" />
+        <CustomLogo src={LogoAcsi} alt="Company Logo" />
         {/* <StyledSpan mode={mode} className="sidenavHoverShow">
           社交工程
         </StyledSpan> */}

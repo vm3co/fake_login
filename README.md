@@ -4,20 +4,20 @@
 
 # 初始網址
 
-- login: http://localhost:8090/
+- trigger: http://localhost:8090/
 - admin: http://localhost:8091/
 
 # 用途
 
-- login:
-  - 進到/login時紀錄一次ip
+- trigger:
+  - 進到/trigger時紀錄一次ip
   - 輸入資料後點擊登入後，紀錄一次ip及資料(目前只有email)
 
 - admin:
   - 顯示紀錄資料列表(資料格式為csv檔)
 
 
-# 製作login網頁
+# 製作trigger網頁
 - clone好一個網頁後設定：
   1. 設置form id="recordingLogin"
   2. 確認input的id="recordingLoginIdentifierId"

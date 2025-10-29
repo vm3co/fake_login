@@ -11,9 +11,9 @@ services:
     ports:
       - "15432:5432"
     volumes:
-      - ./data/db:/var/lib/postgresql/data
-      # - pgdata:/var/lib/postgresql/data
-      # - ./pg_backup:/backup
+      # - ./data/db:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
+      - ./pg_backup:/backup
     # 監控DB是否建好
     healthcheck:   
       test: ["CMD", "pg_isready", "-U", "myuser", "-d", "mydatabase"]
@@ -21,37 +21,57 @@ services:
       timeout: 5s
       retries: 5
 
-  # login-app:
-  #   build:
-  #     context: ./loginapp
-  #   container_name: fake-login-login-app
-  #   ports:
-  #     - "${LOGIN_PORT}:8080"
-  #   environment:
-  #     - LOG_FILE=${LOG_PATH}
-  #   volumes:
-  #     - ./loginapp/Logger:/app/Logger
-  #   # 監控DB是否建好，建好再連線
-  #   depends_on:
-  #     postgres-db:
-  #       condition: service_healthy
-
+  trigger-app:
+    build:
+      context: ./triggerapp
+    container_name: fake-login-trigger-app
+    # ports:
+    #   - "${TRIGGER_PORT}:8080"
+    environment:
+      - LOG_FILE=${LOG_PATH}
+    volumes:
+      - ./triggerapp:/app
+    # 監控DB是否建好，建好再連線
+    depends_on:
+      postgres-db:
+        condition: service_healthy
+    env_file:
+      - .env
 
   admin-app:
     build:
       context: ./adminapp
+      dockerfile: Dockerfile
     container_name: fake-login-admin-app
-    ports:
-      - "${ADMIN_PORT}:8080"
+    # ports:
+    #   - "${ADMIN_PORT}:8080"
     volumes:
       # - ./adminapp/Logger:/app/Logger
       # - ./adminapp/app/certs:/app/app/certs
       # - ./adminapp/frontend:/app/frontend
       - ./adminapp:/app
+      - ./triggerapp/app/templates:/app/uploads_for_trigger_app_templates
     # 監控DB是否建好，建好再連線
     depends_on:
       postgres-db:
         condition: service_healthy
+    env_file:
+      - .env
 
-# volumes:
-#   pgdata:
+
+  # Nginx 代理服務
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx
+    container_name: fake-login-nginx
+    ports:
+      - "80:80"
+      - "443:443" # 為未來啟用 HTTPS 預留
+    depends_on:
+      - admin-app
+      - trigger-app
+
+
+volumes:
+  pgdata:

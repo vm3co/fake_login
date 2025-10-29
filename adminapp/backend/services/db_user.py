@@ -1,0 +1,507 @@
+'''
+Database operations for user-related data, including sendlog management.
+'''
+
+import re
+import asyncpg
+import aiofiles
+import time
+import json
+from typing import List, Dict, Any
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
+
+from backend.services.log_manager import Logger
+from backend.services.getSe2data import get_se2_data
+from backend.core.db_controller import ApplianceDB
+from backend.core.security import verify_password
+from backend.core.security import hash_password
+
+
+logger = Logger().get_logger()
+
+def timestamp():
+    tz = ZoneInfo("Asia/Taipei")   # 修改時區
+    today = datetime.now(tz).date()
+    start_ts = int(datetime.combine(today, datetime.min.time(), tz).timestamp())
+    end_ts = int((datetime.combine(today, datetime.min.time(), tz) + timedelta(days=1)).timestamp())
+    return start_ts, end_ts
+
+def calc_stats(stats):
+    """ 
+    計算統計數據
+    :param stats: sendlog 資料列表
+    :return: 統計數據字典
+    """
+    start_ts, end_ts = timestamp()
+
+    # 總寄出數量
+    totalSend = [t for t in stats if t.get("send_time", 0) != 0]
+    # 總成功數量
+    totalSuccess = [t for t in stats if str(t.get("send_res", "")).startswith("True")]
+
+    # 今日尚未寄送：寄送時間>=當天開始時間 & 寄送時間<當天結束時間 & 寄送時間為0
+    todayUnsend = [t for t in stats if start_ts <= t.get("plan_time", 0) < end_ts and t.get("send_time", 0) == 0]
+    # 今日寄送：寄送時間>=當天開始時間 & 寄送時間<當天結束時間
+    todaySends = [t for t in stats if start_ts <= t.get("send_time", 0) < end_ts]
+    # 今日成功：寄送時間>=當天開始時間 & 寄送時間<當天結束時間 & 寄送結果為成功
+    todaySuccess = [t for t in todaySends if str(t.get("send_res", "")).startswith("True")]
+
+    today_plan_time = [t["plan_time"] for t in stats if start_ts <= t.get("plan_time", 0) < end_ts]
+    # 今日未寄送最早的 plan_time（如果有的話）
+    today_earliest_plan_time = min(today_plan_time) if today_plan_time else 0
+    # 今日為寄送最後的 plan_time（如果有的話）
+    today_latest_plan_time = max(today_plan_time) if today_plan_time else 0
+
+    # 任務第一封的 plan_time
+    all_earliest_plan_time = min(t["plan_time"] for t in stats) if stats else 0
+    # 任務最後一封的 plan_time
+    all_latest_plan_time = max(t["plan_time"] for t in stats) if stats else 0
+
+    # 統計觸發人數
+    totalTriggered = [t for t in stats if t.get("access_src", []) and len(t.get("access_src", [])) > 0]
+
+
+    return {
+        "totalplanned": len(stats),
+        "totalsend": len(totalSend),
+        "totalsuccess": len(totalSuccess),
+        "totalfailed": len(totalSend) - len(totalSuccess),  # 總失敗數量
+        "totaltriggered": len(totalTriggered),
+        "todayunsend": len(todayUnsend),
+        "todaysend": len(todaySends),
+        "todaysuccess": len(todaySuccess),
+        "todayfailed": len(todaySends) - len(todaySuccess),
+        "today_earliest_plan_time": today_earliest_plan_time,
+        "today_latest_plan_time": today_latest_plan_time,
+        "all_earliest_plan_time": all_earliest_plan_time,
+        "all_latest_plan_time": all_latest_plan_time,
+    }
+
+
+class DBUser:
+    def __init__(self, db: ApplianceDB = ApplianceDB()):
+        """ 
+        初始化 DBUser 類別
+        :param db: ApplianceDB 實例，預設為 ApplianceDB()
+        """
+        self.db = db
+        self.day = 15  # 預設查詢天數為 15 天
+        # accts 欄位
+        self.accts_columns = ["acct_uuid", "acct_id", "acct_full_name", "acct_full_name_2nd",
+                              "acct_email", "acct_activate", "orgs"]
+
+        # sendtasks 欄位
+        self.sendtasks_columns = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "person_count",
+                                  "pre_test_end_ut", "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", 
+                                  "test_end_ut", "test_start_ut", "is_pause", "pre_test_enable", "stop_time_new"]
+        # sendlog 資料表結構
+        self.sendlog_table_info = {"id": "SERIAL PRIMARY KEY", "uuid": "TEXT UNIQUE", "target_email": "TEXT", "template_uuid": "TEXT", 
+                                   "second_access_time": "BIGINT[]", "second_access_src": "TEXT[]", "second_access_dev": "TEXT[]", 
+                                   "second_input_time": "BIGINT[]", "second_input_src": "TEXT[]", 
+                                   "second_input_dev": "TEXT[]", "second_input_info": "TEXT[]",
+                                   "person_info": "TEXT", "plan_time": "BIGINT", "send_time": "BIGINT", "send_res": "TEXT", 
+                                   "access_time": "BIGINT[]", "access_src": "TEXT[]", "access_dev": "TEXT[]", 
+                                   "click_time": "BIGINT[]", "click_src": "TEXT[]", "click_dev": "TEXT[]", 
+                                   "file_time": "BIGINT[]", "file_src": "TEXT[]", "file_dev": "TEXT[]"}
+        # sendlog 欄位
+        self.sendlog_columns = ["uuid", "target_email", "person_info", "template_uuid", "plan_time",
+                                "send_time", "send_res", "access_time", "access_src", "access_dev",
+                                "click_time", "click_src", "click_dev", "file_time", "file_src", "file_dev"]
+        
+    async def table_initialize(self):
+        """
+        初始化資料表
+        檢查資料表是否為空，如果是空的，則從 SE2 獲取資料並插入到資料表中。
+        如果資料表已經有資料，則跳過初始化。
+        """
+        # 檢查資料庫連線
+        await self.db.check_db_connection()
+
+        table_names = ["accts", "sendtasks", "mtmpl", "sendlog_stats"]
+        
+        # 檢查資料表是否為空，如果是空的，則從 SE2 獲取資料並插入到資料表中。
+        for table_name in table_names:
+            if await self.db.table_empty(table_name):
+                logger.info(f"{table_name} is empty. Initializing with data from SE2...")
+                if table_name == "accts":
+                    # 從 SE2 獲取 accts 資料
+                    se2_list = await self.get_se2_accts(self.accts_columns)
+                elif table_name == "sendtasks":
+                    # 從 SE2 獲取 sendtasks 資料
+                    se2_list = await self.get_se2_sendtasks(self.sendtasks_columns, days=self.day)
+                elif table_name == "mtmpl":
+                    # 從 SE2 獲取 mtmpl 資料
+                    se2_list = await self.get_se2_mtmpl()
+                elif table_name == "sendlog_stats":
+                    # 取得sendtask_uuids
+                    sendtask_data = await self.db.get_db("sendtasks", select_columns=["sendtask_uuid"])
+                    sendtask_uuids = [t["sendtask_uuid"] for t in sendtask_data]
+                    # 開始更新sendlog_stats table
+                    sendlog_stats_status = await self.refresh_sendlog_stats(sendtask_uuids)
+                    logger.info(f"Updated sendlog_stats with status: {sendlog_stats_status}")
+                    continue
+
+                if not se2_list:
+                    logger.warning(f"No data found for {table_name} in SE2.")
+                    continue
+                await self.db.insert_db(table_name, se2_list)
+                logger.info(f"Inserted {len(se2_list)} records into {table_name}.")
+            else:
+                logger.info(f"{table_name} already has data. Skipping initialization.")
+
+    async def get_se2_accts(self, acct_columns=None) -> list[dict]:
+        """
+        從 SE2 獲取 accts 資料
+        :param acct_columns: accts 的欄位名稱
+        :return: accts 資料列表
+        """
+        await self.db.check_db_connection()
+
+        acct_df = await get_se2_data.get_accts()
+        if acct_df is not None and not acct_df.empty:
+            acct_list = acct_df[acct_columns].to_dict(orient="records")
+            for acct in acct_list:
+                # 將 acct_activate 欄位轉換為 is_active
+                acct["is_active"] = acct.get("acct_activate", False)
+                acct.pop("acct_activate", None)
+            return acct_list
+        return []
+
+    async def get_se2_sendtasks(self, column_names=None, days=15) -> list[dict]:
+        """
+        從 SE2 獲取 sendtasks 資料
+        :param sendtasks_columns: sendtasks 的欄位名稱
+        :param days: 查詢的天數
+        :return: sendtasks 資料列表
+        """
+        await self.db.check_db_connection()
+
+        sendtasks_df = await get_se2_data.get_sendtasks()
+        if sendtasks_df is not None and not sendtasks_df.empty:
+            # 獲取 metadata 資料
+            logger.info("Fetching metadata...")
+            for index, row in sendtasks_df.iterrows():
+                uuid = row["sendtask_uuid"]
+                metadata = await get_se2_data.get_sendtask_metadata(uuid)
+                if metadata is not None:
+                    sendtasks_df.at[index, "is_pause"] = metadata.get("pause", False)
+                    sendtasks_df.at[index, "stop_time_new"] = metadata.get("stop_time_new", -1)
+                    sendtasks_df.at[index, "person_count"] = metadata.get("summary", {}).get("person_count", 0)
+                    sendtasks_df.at[index, "pre_test_enable"] = metadata.get("summary", {}).get("pre_test_enable", False)
+                else:
+                    sendtasks_df.at[index, "is_pause"] = False
+                    sendtasks_df.at[index, "stop_time_new"] = -1
+                    sendtasks_df.at[index, "person_count"] = 0
+                    sendtasks_df.at[index, "pre_test_enable"] = False
+            logger.info("Metadata fetched successfully.")
+
+            # 取得當前時間戳
+            now = int(time.time())
+            # 計算抓取任務範圍的時間戳
+            ago = now - (days * 24 * 60 * 60)  # days轉換為秒
+            # 過濾條件(test_end_ut >= days)(結束時間為15天內)
+            filtered_df = sendtasks_df.query(
+                "((test_end_ut >= @ago) or (stop_time_new >= @ago))"
+            )
+            logger.info(f"Total sendtasks fetched: {len(filtered_df)}")
+
+            # 如果沒有符合條件的資料，則返回空列表
+            if filtered_df.empty:
+                return []
+            sendtasks_list = filtered_df[column_names].to_dict(orient="records")
+            return sendtasks_list
+        return []
+    
+    async def get_se2_mtmpl(self) -> list[dict]:
+        """
+        從 SE2 獲取 mtmpl 資料
+        """
+        await self.db.check_db_connection()
+        mtmpl_df = await get_se2_data.get_mtmpl_subject_list()
+        if mtmpl_df is not None and not mtmpl_df.empty:
+            mtmpl_list = mtmpl_df.to_dict(orient="records")
+            return mtmpl_list
+        return []
+    
+    async def get_se2_sendlog(self, sendtask_uuid: str, sendlog_columns=None) -> list[dict]:
+        """
+        從 SE2 獲取 sendlog 資料
+        :param sendtask_uuid: sendtask 的 UUID
+        :param sendlog_columns: sendlog 的欄位名稱
+        :return: sendlog 資料列表
+        """
+        await self.db.check_db_connection()
+        sendlog_df = await get_se2_data.get_sendlog(sendtask_uuid)
+        if sendlog_df is not None and not sendlog_df.empty:
+            sendlog_list = sendlog_df[sendlog_columns].to_dict(orient="records")
+            return sendlog_list
+        return []
+
+## sendtask 相關操作
+    async def refresh_today_create_task(self):
+        start_ts, end_ts = timestamp()
+        logger.info(f"start_ts: {start_ts}")
+        logger.info(f"end_ts: {end_ts}")
+
+        today_create_tasks_df = await get_se2_data.get_sendtasks(end_time=end_ts, start_time=start_ts, filter_time_range=99)
+        if today_create_tasks_df is not None and not today_create_tasks_df.empty:
+            # 獲取 metadata 資料
+            logger.info("Fetching metadata...")
+            for index, row in today_create_tasks_df.iterrows():
+                uuid = row["sendtask_uuid"]
+                metadata = await get_se2_data.get_sendtask_metadata(uuid)
+                if metadata is not None:
+                    today_create_tasks_df.at[index, "is_pause"] = metadata.get("pause", False)
+                    today_create_tasks_df.at[index, "stop_time_new"] = metadata.get("stop_time_new", -1)
+                    today_create_tasks_df.at[index, "person_count"] = metadata.get("summary", {}).get("person_count", 0)
+                else:
+                    today_create_tasks_df.at[index, "is_pause"] = False
+                    today_create_tasks_df.at[index, "stop_time_new"] = -1
+                    today_create_tasks_df.at[index, "person_count"] = 0
+            logger.info("Metadata fetched successfully.")
+            today_create_tasks_list = today_create_tasks_df[self.sendtasks_columns].to_dict(orient="records")
+            return today_create_tasks_list
+        return []
+
+## sendlog and sendlog_stats相關操作
+    async def check_sendlog(self, sendtask_uuids: list):
+        """
+        檢查 sendlog table 是否存在於資料庫中
+        不存在便新建，並存入資料
+        存在則更新資料
+        :param sendtask_uuid: sendtask 的 UUID
+        """
+        await self.db.check_db_connection()
+        logger.info("Checking sendlog tables...")
+        # 批次檢查所有資料表是否存在
+        tables_to_create = []
+        for uuid in sendtask_uuids:
+            if not await self.db.table_exists(uuid):
+                tables_to_create.append(uuid)
+        # 批次建立資料表
+        for uuid in tables_to_create:
+            await self.db.create_table(uuid, self.sendlog_table_info)
+            logger.info(f"Table {uuid} created.")
+        if not tables_to_create:
+            logger.info("All sendlog tables already exist.")  
+
+        logger.info("Upserting sendlog tables...")
+        sendlog_status = await self.sendlog_write(sendtask_uuids)
+        logger.info(f"Sendlog tables upserted with status: {sendlog_status}")
+        return sendlog_status  # 返回狀態而不是 None
+
+    async def sendlog_write(self, sendtask_uuid: list, sendlog_type="test") -> dict:
+        """ 
+        更新 sendlog 資料到資料庫
+        :param sendtask_uuid: 任務清單的uuid列表
+        :param sendlog_type: sendlog 類型，預設為 "test"
+         """
+        sendlog_status = {}
+        await self.db.check_db_connection()
+        for uuid in sendtask_uuid:
+            # 獲取 sendlog 資料
+            sendlog = await self.get_se2_sendlog(uuid, sendlog_columns=self.sendlog_columns)
+            if sendlog:
+                sendlog_status[uuid] = "unchanged"
+                for log in sendlog:
+                    status = await self.db.upsert_db(uuid, log, conflict_keys=["uuid"])
+                    if status == "changed":
+                        sendlog_status[uuid] = "changed"
+            else:
+                logger.warning(f"No valid columns found in sendlog for task {uuid}")
+
+        return sendlog_status
+
+    async def refresh_sendlog_stats(self, uuids: list[str] = None) -> dict:
+        """
+        刷新 sendlog_stats 資料
+        :param uuid: 如果提供，則僅刷新指定的 sendtask_uuid；如果為 None，則刷新所有 sendtask 的統計資料
+        :return: sendlog_stats 的更新狀態
+        """
+        await self.db.check_db_connection()
+        if uuids is None:
+            logger.info("Fetching all sendtask uuids for refresh...")
+            sendtask_data = await self.db.get_db("sendtasks", select_columns=["sendtask_uuid"])
+            uuids = [task["sendtask_uuid"] for task in sendtask_data]
+        else:
+            logger.info(f"Refreshing sendlog_stats for specified uuids: {uuids}")
+
+        # 確保 sendlog 資料表存在並且為最新狀態
+        await self.check_sendlog(uuids)
+        # 開始刷新 sendlog_stats
+        sendlog_stats_status = {}
+        for uuid in uuids:
+            logger.info(f"Refreshing sendlog_stats for {uuid}")
+            data = await self.get_sendlog(table_name=uuid, need_id=False)
+            stats = calc_stats(data)
+            sendlog_stats_status[uuid] = await self.db.upsert_db("sendlog_stats", {
+                "sendtask_uuid": uuid,
+                **stats
+            }, conflict_keys=["sendtask_uuid"])
+            logger.info(f"Updated sendlog_stats for {uuid}. Status: {sendlog_stats_status[uuid]}")
+        logger.info(f"Finished refreshing sendlog_stats.")
+
+        return sendlog_stats_status
+
+    async def get_sendlog(self, table_name: str, need_id=True):
+        await self.db.check_db_connection()
+        data = await self.db.get_db(table_name)
+        if not need_id:
+            for dd in data:
+                dd.pop("id", None)
+        return data
+
+## user相關操作
+    async def user_exists(self, username: str) -> bool:
+        """
+        檢查使用者是否存在
+        :param username: 使用者名稱
+        :return: 如果使用者存在，返回 True，否則返回 False
+        """
+        await self.db.check_db_connection()
+        result = await self.db.get_db("users", where_column="username", values=username)
+        return len(result) > 0
+
+    async def insert_user(self, username: str, password_hash: str):
+        """
+        插入新使用者
+        :param username: 使用者名稱
+        :param password_hash: 密碼哈希值
+        """
+        await self.db.check_db_connection()
+        accts_data = await self.db.get_db("accts", where_column="acct_id", values=username)
+        if not accts_data:
+            logger.error(f"acct_id {username} does not exist in the main system (accts).")
+            return {"status": "error", "message": "帳號不存在在主系統"}
+        acct = accts_data[0]
+        data = {
+            "acct_uuid": acct["acct_uuid"],
+            "username": username,
+            "password_hash": password_hash,
+            "email": acct["acct_email"],
+            "full_name": acct["acct_full_name"],
+            "orgs": acct["orgs"]
+        }
+        await self.db.insert_db("users", data)
+        return {"status": "success", "message": "註冊成功", "acct_uuid": data["acct_uuid"], "username": data["username"]}
+    
+
+    
+## customer 相關操作
+    async def customer_exists(self, customer_name: str) -> bool:
+        """
+        檢查客戶是否存在
+        :param customer_name: 客戶名稱
+        :return: 如果客戶存在，返回 True，否則返回 False
+        """
+        await self.db.check_db_connection()
+        result = await self.db.get_db("customer_accts", where_column="customer_name", values=customer_name)
+        return len(result) > 0
+
+    async def insert_customer(self, data: dict):
+        """
+        插入新客戶
+        :param data: 客戶資料
+        :return: 
+        """
+        await self.db.check_db_connection()
+        try:
+            data = {
+                "customer_name": data.get("customer_name"),
+                "customer_full_name": data.get("customer_full_name"),
+                "password_hash": data.get("password_hash"),
+                "acct_uuid": data.get("acct_uuid")
+            }
+            await self.db.insert_db("customer_accts", data)
+            return {"status": "success", "message": "新增客戶成功", "customer_name": data["customer_name"]}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+
+    async def update_customer_sendtasks(self, customer_name: str, sendtask_data: List[Dict[str, Any]]):
+        """
+        更新客戶的任務列表，將其存為 JSONB 格式。
+        :param customer_name: 客戶名稱
+        :param sendtask_data: 任務物件的列表 (List of Dictionaries)
+        """
+        await self.db.check_db_connection()
+
+        # 檢查客戶是否存在
+        if not await self.customer_exists(customer_name):
+            logger.error(f"Customer {customer_name} does not exist.")
+            return {"status": "error", "message": "客戶不存在"}
+        
+        sendtasks_json_string = json.dumps(sendtask_data, ensure_ascii=False)
+
+        status = await self.db.update_db(
+            table_name="customer_accts",
+            data={"sendtasks": sendtasks_json_string},
+            condition={"customer_name": customer_name}
+        )
+        return status
+
+    async def update_password(self, user_type: str, identifier: str, new_password: str, old_password: str = None, acct_uuid: str = None) -> dict:
+        """
+        統一的密碼更新方法，支援一般用戶和客戶
+        :param user_type: 用戶類型 ("user" 或 "customer")
+        :param identifier: 用戶識別符（acct_uuid 或 customer_name）
+        :param new_password: 新密碼
+        :param old_password: 舊密碼（可選，用於驗證）
+        :param acct_uuid: 用戶的 UUID（可選，用於權限驗證）
+        :return: 更新結果
+        """
+        await self.db.check_db_connection()
+        
+        try:
+            if user_type == "user":
+                table_name = "users"
+                where_column = "acct_uuid"
+            elif user_type == "customer":
+                table_name = "customer_accts"
+                where_column = "customer_name"
+            else:
+                return {"status": "error", "message": "無效的用戶類型"}
+            
+            # 檢查用戶是否存在
+            user_data = await self.db.get_db(
+                table_name, 
+                where_column=where_column, 
+                values=identifier
+            )
+            
+            if not user_data:
+                return {"status": "error", "message": f"{'用戶' if user_type == 'user' else '客戶'}不存在"}
+            
+            user = user_data[0]
+            
+            # 進行驗證舊密碼
+            if old_password:
+                if not verify_password(old_password, user.get("password_hash")):
+                    return {"status": "error", "message": "舊密碼不正確"}
+                
+                if old_password == new_password:
+                    return {"status": "error", "message": "新密碼不能與舊密碼相同"}
+            
+            # 更新密碼
+            new_password_hash = hash_password(new_password)
+            status = await self.db.update_db(
+                table_name=table_name, 
+                data={"password_hash": new_password_hash}, 
+                condition={where_column: identifier}
+            )
+            
+            if status:
+                logger.info(f"Password updated successfully for {user_type}: {identifier}")
+                return {
+                    "status": "success", 
+                    "message": "密碼更新成功", 
+                    "identifier": identifier,
+                    "user_type": user_type
+                }
+            else:
+                return {"status": "error", "message": "密碼更新失敗"}
+                
+        except Exception as e:
+            logger.error(f"Error updating password for {user_type} {identifier}: {str(e)}")
+            return {"status": "error", "message": f"更新密碼時發生錯誤: {str(e)}"}

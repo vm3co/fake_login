@@ -1,4 +1,6 @@
 import { useRoutes } from "react-router-dom";
+// 彈出訊息
+import { SnackbarProvider } from 'notistack';
 import CssBaseline from "@mui/material/CssBaseline";
 // ROOT THEME PROVIDER
 import { MatxTheme } from "./components";
@@ -18,13 +20,18 @@ export default function App() {
   const content = useRoutes(routes);
 
   return (
-    <SettingsProvider>
-      <AuthProvider>
-        <MatxTheme>
-          <CssBaseline />
-          {content}
-        </MatxTheme>
-      </AuthProvider>
-    </SettingsProvider>
+    <SnackbarProvider 
+      maxSnack={3} 
+      anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+    >
+      <SettingsProvider>
+        <AuthProvider>
+          <MatxTheme>
+            <CssBaseline />
+            {content}
+          </MatxTheme>
+        </AuthProvider>
+      </SettingsProvider>
+    </SnackbarProvider>
   );
 }

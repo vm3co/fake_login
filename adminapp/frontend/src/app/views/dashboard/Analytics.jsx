@@ -57,38 +57,8 @@ export default function Analytics() {
                 taskState={taskState}
                 setTaskState={setTaskState}
               />
-              {/* <StatCards2 /> */}
-
-              {/* <H4>Ongoing Projects</H4>
-              <RowCards /> */}
             </Grid>
-
-            {/* <Grid size={{ md: 4, xs: 12 }}>
-              <Card sx={{ px: 3, py: 2, mb: 3 }}>
-                <Title>今日任務</Title>
-                <SubTitle>{todayTasks.length}</SubTitle>
-
-                <DoughnutChart
-                  height="150px"
-                  // color={[palette.primary.dark, palette.primary.main, palette.primary.light]}
-                  color={["#0080FF", "#02F78E", "#CE0000"]}
-                />
-              </Card>
-
-              <UpgradeCard />
-              <Campaigns />
-            </Grid> */}
-
             <Grid size={{ md: 12, xs: 12 }}>
-              {/* <H4>Top Selling Products</H4> */}
-              {/* <Title>{ showTodayOnly ? "今日任務列表" : "全部任務列表" }</Title>*/}
-              {/* <Switch
-                checked={showTodayOnly}
-                onChange={(e) => {
-                  setShowTodayOnly(e.target.checked);
-                }}
-                color="primary"
-              />  */}
               <Box display="flex" justifyContent="center" mb={2}>
                 <Button
                   variant={showTodayOnly ? "outlined" : "contained"}
@@ -115,7 +85,6 @@ export default function Analytics() {
               ) : (
                 <ShowAllTasks />
               )}
-              {/* <TopSellingTable /> */}
             </Grid>
           </Grid>
         </ContentBox>
