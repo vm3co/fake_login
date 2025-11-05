@@ -27,12 +27,14 @@ form.addEventListener("submit", function (event) {
       return response.text();
     })
     .then(data => {
-      alert(`歡迎，${email}！您已成功登入。`);
-      window.location.href = "https://www.google.com";
+      // alert(`歡迎，${email}！您已成功登入。`);
+      // window.location.href = "https://www.google.com";
+      // 重新導向到警告頁面
+      window.location.href = "/trigger/warning";
+
     })
     .catch(err => {
       alert("⚠️ 登入失敗：" + err.message);
       console.error(err);
     });
 });
-

@@ -13,20 +13,19 @@ from typing import List, Dict, Any
 import os
 import csv
 import io
+import sys
 import pandas as pd
 from datetime import datetime, timedelta
-from dotenv import load_dotenv
 import zipfile
+import urllib.parse
 
 from backend.services.log_manager import Logger
 from backend.services.getSe2data import get_se2_data
+from backend.services.time_utils import format_datetime
 from backend.core.security import verify_password
 from backend.core.security import hash_password
 from backend.api.user_api import get_current_user
 
-
-load_dotenv()
-# 確保環境變數已經載入
 
 def has_common_orgs(a: list, b: list) -> bool:
     return any(item in a for item in b)
@@ -44,14 +43,48 @@ def normalize(data):
     # 將每一筆 dict 轉成排序後的 tuple，然後整個 list 排序
     return sorted(tuple(sorted(d.items())) for d in data)
 
-# 輔助函式：轉換時間戳
-def format_timestamp(ts):
-    if not ts or not isinstance(ts, (int, float)) or ts == 0:
-        return ""
-    try:
-        return datetime.fromtimestamp(int(ts)).strftime('%Y-%m-%d %H:%M:%S')
-    except (ValueError, TypeError, OSError):
-        return ""
+def process_data_for_excel(data: List[dict]) -> List[dict]:
+    """
+    處理撈出的原始資料，特別是 _time 結尾的欄位。
+    """
+    processed_data = []
+    if not data:
+        return []
+        
+    for row in data:  # row 是一個 dict
+        processed_row = {}
+        for col_name, value in row.items():
+            
+            # 檢查：欄位是否以 _time 結尾，且值不是 None
+            if col_name.endswith('_time') and value is not None:
+                
+                # Case 1: 值是一個 list (例如 access_time)
+                if isinstance(value, list) and value:
+                    formatted_list = []
+                    for ts in value:
+                        try:
+                            formatted_list.append(format_datetime(ts))
+                        except (ValueError, TypeError, OSError):
+                            formatted_list.append(str(ts))
+                    processed_row[col_name] = "\n".join(formatted_list)
+                
+                # Case 2: 值是單一數字 (例如 plan_time)
+                elif isinstance(value, (int, float)):
+                    try:
+                        processed_row[col_name] = format_datetime(value)
+                    except (ValueError, TypeError, OSError):
+                        processed_row[col_name] = str(value)
+                
+                # Case 3: 其他類型
+                else:
+                    processed_row[col_name] = value
+            
+            # Case 4: 非 time 欄位，或值為 None
+            else:
+                processed_row[col_name] = value
+        
+        processed_data.append(processed_row)
+    return processed_data
 
 def get_router(db, db_user):
     """
@@ -68,7 +101,10 @@ def get_router(db, db_user):
     class OrgsRequest(BaseModel):
         orgs: list[str] = []
 
-    @router.post("/get_sendtasks")
+    @router.post(
+        "/get_sendtasks",
+        tags=["data"]
+        )
     async def get_sendtasks(request: OrgsRequest):
         try:
             my_tasksname_list = await db.get_db("sendtasks")
@@ -82,7 +118,10 @@ def get_router(db, db_user):
             logger.error(f"Error in get_sendtasks: {str(e)}")
             return {"status": "error", "message": str(e)}
 
-    @router.post("/check_sendtasks")
+    @router.post(
+        "/check_sendtasks",
+        tags=["data"]
+        )
     async def check_sendtasks(request: OrgsRequest):
         """
         檢查sendtask是否有變更
@@ -148,7 +187,10 @@ def get_router(db, db_user):
             logger.error(f"Error in check_sendtasks: {str(e)}")
             return {"status": "error", "message": str(e)}
         
-    @router.post("/refresh_today_create_task")
+    @router.post(
+        "/refresh_today_create_task",
+        tags=["data"]
+        )
     async def refresh_today_create_task(request: OrgsRequest):
         """
         刷新今天建立的任務
@@ -185,7 +227,10 @@ def get_router(db, db_user):
     class CustomerGetSendtasksRequest(BaseModel):
         sendtask_uuids: list[str] = []
 
-    @router.post("/customer_get_sendtasks")
+    @router.post(
+        "/customer_get_sendtasks",
+        tags=["data"]
+        )
     async def get_sendtasks(request: CustomerGetSendtasksRequest):
         sendtask_uuids = request.sendtask_uuids
         if not sendtask_uuids:
@@ -202,7 +247,10 @@ def get_router(db, db_user):
     class SendLogRequest(BaseModel):
         sendtask_uuids: list[str] = []
 
-    @router.post("/refresh_sendlog_stats")
+    @router.post(
+        "/refresh_sendlog_stats",
+        tags=["data"]
+        )
     async def refresh_sendlog_stats(request: SendLogRequest):
         """
         刷新寄送任務統計資料
@@ -225,7 +273,10 @@ def get_router(db, db_user):
             logger.error(f"Error in refresh_sendlog_stats: {str(e)}")
             return {"status": "error", "message": str(e)}
 
-    @router.post("/get_sendlog_stats")
+    @router.post(
+        "/get_sendlog_stats",
+        tags=["data"]
+        )
     async def get_sendlog_stats_batch(request: SendLogRequest):
         """
         取得多個任務的統計資料
@@ -393,7 +444,10 @@ def get_router(db, db_user):
 
         return result
 
-    @router.post("/get_sendlog_detail")
+    @router.post(
+        "/get_sendlog_detail",
+        tags=["data"]
+        )
     async def get_sendlog_detail(request: GetSendlogDetailRequest):
         """
         根據條件取得單一任務的詳細 sendlog 資料 (支援分頁、篩選、排序)
@@ -413,6 +467,109 @@ def get_router(db, db_user):
                 return {"status": "error", "message": f"找不到任務 {request.sendtask_uuid} 的日誌資料表。", "data": [], "total_count": 0}
             return {"status": "error", "message": str(e), "data": [], "total_count": 0}
 
+    class DownloadRequest(BaseModel):
+        sendtask_uuid: str
+        name: str
+
+    @router.post("/download_sendlog_xlsx")
+    async def api_download_sendlog_xlsx(request: DownloadRequest):
+        
+        await db.check_db_connection()
+        
+        try:
+            # --- A. 獲取資料 (簡化邏輯) ---
+            # 直接使用你 db_controller.py 中的 get_db 函式
+            
+            data = await db.get_db(
+                table_name=request.sendtask_uuid
+            )
+
+            if not data:
+                return StreamingResponse(
+                    io.BytesIO(b"No data found for this task uuid."), 
+                    status_code=404, 
+                    media_type="text/plain"
+                )
+
+            # --- B. 處理資料 (使用我們提煉的函式) ---
+            processed_data = process_data_for_excel(data)
+
+            mtmpl_list = await db.get_db(
+                table_name="mtmpl",
+                select_columns=["mtmpl_uuid", "mtmpl_title"]
+            )
+
+            for data in processed_data:
+                del data["uuid"]
+                data["mtmpl_name"] = ""
+                for mtmpl in mtmpl_list:
+                    if mtmpl.get("mtmpl_uuid") == data.get("template_uuid"):
+                        data["mtmpl_name"] = mtmpl.get("mtmpl_title", "")
+                        del data["template_uuid"]
+                        break
+                for col_name, value in data.items():
+                    if isinstance(value, list) and value:
+                        data[col_name] = "\n".join(value)
+                    elif not value:
+                        data[col_name] = "-"
+                        
+            # --- C. 轉換為 Pandas 並存入記憶體 ---
+            df = pd.DataFrame(processed_data)
+
+            # 重新命名欄位，讓 Excel 標頭更易讀
+            df.rename(columns={
+                'target_email': '受測人信箱',
+                'mtmpl_name': '信件名稱', 
+                'person_info': '受測人姓名',
+                'plan_time': '預計寄送時間',
+                'send_time': '實際寄送時間',
+                'send_res': '寄送結果',
+                'second_access_time': '連結點擊時間',
+                'second_access_src': '連結點擊IP', 
+                'second_access_dev': '連結點擊資訊', 
+                'second_input_time': '表單填寫時間', 
+                'second_input_src': '表單填寫IP', 
+                'second_input_dev': '表單填寫資訊', 
+                'second_input_info': '表單填寫內容', 
+                'access_time': '郵件讀取時間',
+                'access_src': '郵件讀取IP',
+                'access_dev': '郵件讀取資訊',
+                'click_time': '按鈕點擊時間',
+                'click_src': '按鈕點擊IP',
+                'click_dev': '按鈕點擊資訊',
+                'file_time': '附件下載時間',
+                'file_src': '附件下載IP',
+                'file_dev': '附件下載資訊'
+            }, inplace=True)
+
+            # 建立一個在記憶體中的 Excel 檔案
+            output_buffer = io.BytesIO()
+            df.to_excel(output_buffer, index=False)
+            output_buffer.seek(0) # 將指標移回開頭
+
+            # --- D. 回傳檔案串流 ---
+
+            filename = urllib.parse.quote(f"{request.name}.xlsx")
+            headers = {
+                'Content-Disposition': f'attachment; filename="{request.sendtask_uuid}.xlsx"; filename*=UTF-8\'\'{filename}'
+            }
+            
+            return StreamingResponse(
+                output_buffer, 
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers=headers
+            )
+
+        except Exception as e:
+            error_message = f"Error generating file: {e}"
+            print(f"下載 Excel 失敗: {error_message}", file=sys.stderr)
+            
+            return StreamingResponse(
+                io.BytesIO(error_message.encode('utf-8')), 
+                status_code=500,
+                media_type="text/plain; charset=utf-8"
+            )
+
     class DownloadSendlogRequest(GetSendlogDetailRequest):
         sendtask_uuid: str
         selected_uuids: list[str] | None = None
@@ -427,8 +584,11 @@ def get_router(db, db_user):
         sortBy: str = "plan_time"
         paginate: bool = False
 
-    @router.post("/download_sendlog_xlsx")
-    async def download_sendlog_xlsx(request: DownloadSendlogRequest):
+    @router.post(
+        "/download_se2_sendlog_xlsx",
+        tags=["data"]
+        )
+    async def download_se2_sendlog_xlsx(request: DownloadSendlogRequest):
         """
         根據條件下載 sendlog 資料為 CSV 檔案。
         如果提供了 selected_uuids，則只下載這些 uuid 的資料。
@@ -455,7 +615,7 @@ def get_router(db, db_user):
             for data in all_data:
                 for col in timestamp_columns:
                     if col in data:
-                        data[col] = format_timestamp(data.get(col))
+                        data[col] = format_datetime(data.get(col))
                 mtmpl_name = await db.get_db(
                     table_name="mtmpl",
                     where_column="mtmpl_uuid",
@@ -491,11 +651,14 @@ def get_router(db, db_user):
             )
 
         except Exception as e:
-            logger.error(f"Error in download_sendlog_xlsx for {request.sendtask_uuid}: {str(e)}")
+            logger.error(f"Error in download_se2_sendlog_xlsx for {request.sendtask_uuid}: {str(e)}")
             return {"status": "error", "message": str(e)}
 
     ## mtmpl 相關的 API
-    @router.get("/get_mtmpl")
+    @router.get(
+        "/get_mtmpl",
+        tags=["data"]
+        )
     async def get_mtmpl():
         """
         取得 mtmpl (郵件樣板) 資料表中的所有資料
@@ -509,7 +672,10 @@ def get_router(db, db_user):
             logger.error(f"Error in get_mtmpl: {str(e)}")
             return {"status": "error", "message": str(e), "data": []}
         
-    @router.post("/update_mtmpl")
+    @router.post(
+        "/update_mtmpl",
+        tags=["data"]
+        )
     async def update_mtmpl():
         """
         從 SE2 獲取最新的郵件樣板資料，並與本地資料庫比對更新。
@@ -565,7 +731,10 @@ def get_router(db, db_user):
     class ExportCsvRequest(BaseModel):
         sendtasks: dict | None = None
     
-    @router.post("/export_xlsx")
+    @router.post(
+        "/export_xlsx",
+        tags=["data"]
+        )
     async def export_xlsx(request: ExportCsvRequest):
         """
         匯出 sendtask 的參與人員清單
@@ -611,7 +780,10 @@ def get_router(db, db_user):
     class GetCustomersRequest(BaseModel):
         acct_uuid: str = ""
 
-    @router.post("/get_customers")
+    @router.post(
+        "/get_customers",
+        tags=["data"]
+        )
     async def get_customers(request: GetCustomersRequest):
         """
         取得客戶帳號列表
@@ -641,7 +813,10 @@ def get_router(db, db_user):
         password: str = ""
         acct_uuid: str = ""
 
-    @router.post("/create_customer")
+    @router.post(
+        "/create_customer",
+        tags=["data"]
+        )
     async def create_customer(request: CreateCustomerRequest):
         """
         建立客戶帳號
@@ -680,7 +855,10 @@ def get_router(db, db_user):
         customer_name: str = ""
         sendtasks_for_db: List[SendtaskItem] = []
 
-    @router.post("/update_customer_sendtasks")
+    @router.post(
+        "/update_customer_sendtasks",
+        tags=["data"]
+        )
     async def update_customer_sendtasks(request: UpdateCustomerSendtasksRequest):
         """
         更新客戶帳號裡的任務
@@ -707,7 +885,10 @@ def get_router(db, db_user):
     class DeleteCustomerRequest(BaseModel):
         del_customer_names: list[str] = []
 
-    @router.post("/delete_customer")
+    @router.post(
+        "/delete_customer",
+        tags=["data"]
+        )
     async def delete_customer(request: DeleteCustomerRequest):
         """
         刪除客戶帳號
@@ -733,7 +914,10 @@ def get_router(db, db_user):
         old_password: str = ""
         new_password: str = ""
 
-    @router.post("/update_customer_password")
+    @router.post(
+        "/update_customer_password",
+        tags=["data"]
+        )
     async def update_customer_password(request: UpdateCustomerPasswordRequest):
         """
         更新客戶帳號密碼

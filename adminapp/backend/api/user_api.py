@@ -4,7 +4,6 @@ This module provides functions to hash passwords and verify them using bcrypt.
 '''
 import os
 from pathlib import Path
-from dotenv import load_dotenv
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 from backend.core.security import verify_password
@@ -17,7 +16,6 @@ logger = Logger().get_logger()
 
 # Load environment variables from .env file
 env_path = Path(__file__).parent.parent.parent.parent.parent / ".env"
-load_dotenv(env_path)
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@acercsi.com")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "super-secret-very-long-random-string")
@@ -53,7 +51,10 @@ def get_router(db, db_user):
         username: str
         password: str
 
-    @router.post("/auth/register")
+    @router.post(
+        "/auth/register",
+        tags=["user"]
+        )
     async def register(data: UserRequest):
         # 檢查帳號是否已註冊
         if await db_user.user_exists(data.username):
@@ -78,7 +79,10 @@ def get_router(db, db_user):
             "user": user_obj
         }
 
-    @router.post("/auth/login")
+    @router.post(
+        "/auth/login",
+        tags=["user"]
+        )
     async def login(data: UserRequest):
         username = data.username
         password = data.password
@@ -157,7 +161,10 @@ def get_router(db, db_user):
         # 都找不到，登入失敗
         return {"status": "error", "message": "帳號或密碼錯誤"}    
 
-    @router.get("/auth/profile")
+    @router.get(
+        "/auth/profile",
+        tags=["user"]
+        )
     async def profile(request: Request):
         auth_header = request.headers.get("Authorization")
         if not auth_header or not auth_header.startswith("Bearer "):
@@ -226,7 +233,10 @@ def get_router(db, db_user):
         old_password: str
         new_password: str
 
-    @router.post("/auth/change_password")
+    @router.post(
+        "/auth/change_password",
+        tags=["user"]
+        )
     async def change_password(request: ChangePasswordRequest):
         """
         更新使用者密碼 API

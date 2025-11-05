@@ -261,12 +261,19 @@ export default function TaskDetail({ task, open, onClose }) {
       setSelectedUuids([]);
       setSelectAllAcrossPages(false);
       fetchTaskLogs();
-    } else if (!open) {
+    }
+  }, [open, task, page, filters]); // 依賴保持不變  
+
+  // 當 Drawer 關閉時 (open 變為 false)，重置所有狀態
+  useEffect(() => {
+    if (!open) {
       // 清理舊資料
       setLogs([]);
       setTaskData(null);
       setPage(0);
-      setFilters({
+
+      // 建立一個乾淨的預設 filters
+      const defaultFilters = {
         searchText:'',
         dateFrom: '',
         dateTo: '',
@@ -277,15 +284,17 @@ export default function TaskDetail({ task, open, onClose }) {
         sortBy: 'target_email',
         rowsPerPage: 20,
         sort: 'asc'
-      });
-      setPendingFilters(filters);
+      };
+      
+      setFilters(defaultFilters);
+      setPendingFilters(defaultFilters);
+
       setSelectedUuids([]);
       setSelectAllAcrossPages(false);
       setNowRowsPerPage(20);
       setIsAsc(false);
     }
-
-  }, [open, task, page, filters]);
+  }, [open]);
 
   // const handleDownloadXlsx = async () => {
   //   if (!task?.sendtask_uuid) return;

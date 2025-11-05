@@ -13,14 +13,12 @@ import json
 import pandas as pd
 import asyncio
 import httpx
-from dotenv import load_dotenv
 from rsa import verify
 
 from backend.services.log_manager import Logger
 from backend.services.get_token import get_token
 
 
-load_dotenv()
 logger = Logger().get_logger()
 
 class getSe2data:

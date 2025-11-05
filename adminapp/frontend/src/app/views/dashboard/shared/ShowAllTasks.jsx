@@ -27,7 +27,7 @@ import SimpleCard from "app/components/SimpleCard";
 import { SendtaskListContext } from "app/contexts/SendtaskListContext";
 import formatDate from "app/utils/formatDate";
 import { useCheckSends } from "app/hooks/useCheckSends";
-import TaskDetail from './TaskDetail';
+import TaskDetail from './TaskDetail_new';
 
 
 // STYLED COMPONENT

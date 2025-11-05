@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useSnackbar } from 'notistack';
 import {
   Box,
@@ -20,11 +20,14 @@ import {
   DialogTitle,
   DialogContent,
   DialogActions,
+  CircularProgress,
+  Alert,
 } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import UploadIcon from '@mui/icons-material/Upload';
-
-import pageOptions from '../../../../../backend/data/pageOptions.json';
+import CloseIcon from '@mui/icons-material/Close';
+import EditIcon from '@mui/icons-material/Edit';
+import DeleteIcon from '@mui/icons-material/Delete';
 
 
 const CreateUrl = () => {
@@ -33,15 +36,47 @@ const CreateUrl = () => {
   const [outputTextQrcode, setOutputTextQrcode] = useState('');
   const { enqueueSnackbar } = useSnackbar();
 
+  // 動態載入 pageOptions
+  const [pageOptions, setPageOptions] = useState([]);
+  const [loadingOptions, setLoadingOptions] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+
   // 彈跳視窗的 State
   const [openUploadDialog, setOpenUploadDialog] = useState(false);
-  const [pageName, setPageName] = useState('');
-  const [urlName, setUrlName] = useState('');
+  const [editMode, setEditMode] = useState(null);
+  const [oldPageValue, setOldPageValue] = useState('');
+  const [pageLabel, setPageLabel] = useState('');
+  const [pageValue, setPageValue] = useState('');
   const [selectedFile, setSelectedFile] = useState(null);
+
+  // 刪除確認視窗
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
 
   const trigger_url = import.meta.env.VITE_APP_BASE_URL;
 
-  // ... 所有的 handle function (handleConfirm, handleCopyUrl, handleCopyQrcode) 保持不變 ...
+  // 載入 json
+  const fetchPageOptions = async () => {
+    setLoadingOptions(true);
+    setLoadError(null);
+    try {
+      const response = await fetch('/api/trigget_page/get');
+      if (!response.ok) {
+        throw new Error('無法載入頁面列表');
+      }
+      const data = await response.json();
+      setPageOptions(data);
+    } catch (err) {
+      console.error(err);
+      setLoadError(err.message);
+    } finally {
+      setLoadingOptions(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPageOptions();
+  }, []);
+
   const handleConfirm = () => {
     const url_head = trigger_url + '/';
     const url_end = '/99999_99999';
@@ -82,15 +117,31 @@ const CreateUrl = () => {
   };
 
   // 彈跳視窗的處理函式
-  const handleOpenUploadDialog = () => {
+  const handleOpenUploadDialog= (option = null) => {
+    if (option) {
+      // 進入修改模式
+      setEditMode(option.value);
+      setPageLabel(option.label);
+      setPageValue(option.value);
+      setOldPageValue(option.value);
+    } else {
+      // 進入新增模式
+      setEditMode(null);
+      setPageLabel('');
+      setPageValue('');
+      setOldPageValue('');
+    }
+    setSelectedFile(null); // 總是清空檔案選擇
     setOpenUploadDialog(true);
   };
 
   const handleCloseUploadDialog = () => {
     setOpenUploadDialog(false);
     // 關閉時清空表單
-    setPageName('');
-    setUrlName('');
+    setEditMode(null);
+    setPageLabel('');
+    setPageValue('');
+    setOldPageValue('');
     setSelectedFile(null);
   };
 
@@ -100,31 +151,94 @@ const CreateUrl = () => {
     }
   };
 
-  const handleUpload = () => {
-    if (!pageName || !urlName || !selectedFile) {
-      enqueueSnackbar('請輸入網頁名稱、url顯示名稱並選擇檔案', { variant: 'warning' });
+  const handleUploadAndUpdate = async () => {
+    if (!pageLabel || !pageValue) {
+      enqueueSnackbar('請輸入網頁名稱和 url 顯示名稱', { variant: 'warning' });
       return;
     }
 
-    // --- 模擬上傳邏輯 ---
-    // 在這裡，你未來會呼叫 API
-    console.log('開始上傳...');
-    console.log('網頁名稱:', pageName);
-    console.log('url顯示名稱:', urlName);
-    console.log('檔案:', selectedFile.name);
+    // 在"新增"模式下，檔案是必需的
+    if (!editMode && !selectedFile) {
+      enqueueSnackbar('請選擇要上傳的檔案', { variant: 'warning' });
+      return;
+    }
 
-    // 模擬 FormData
     const formData = new FormData();
-    formData.append('pageName', pageName);
-    formData.append('urlName', urlName);
-    formData.append('file', selectedFile);
-
-    // 假設上傳成功
-    // axios.post('/api/upload-page', formData).then(...)
+    formData.append('pageLabel', pageLabel);
+    formData.append('pageValue', pageValue);
+    formData.append('oldPageValue', oldPageValue);
     
-    enqueueSnackbar('上傳成功！', { variant: 'success' });
-    handleCloseUploadDialog();
-    // --- 模擬結束 ---
+    // 在"修改"模式下，檔案是可選的
+    if (selectedFile) {
+      formData.append('file', selectedFile);
+    }
+
+    // 決定要呼叫哪個 API
+    const isEdit = !!editMode;
+    const apiUrl = isEdit ? '/api/trigget_page/update' : '/api/trigget_page/upload';
+
+    try {
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.detail || '操作失敗');
+      }
+
+      enqueueSnackbar(isEdit ? '修改成功！' : '上傳成功！', { variant: 'success' });
+      handleCloseUploadDialog();
+      fetchPageOptions();
+
+    } catch (err) {
+      console.error("操作失敗:", err);
+      enqueueSnackbar(err.message, { variant: 'error' });
+    }
+  };
+
+  // [新增] 刪除處理函式
+  const handleOpenDeleteDialog = (option) => {
+    setDeleteConfirm(option);
+  };
+
+  const handleCloseDeleteDialog = () => {
+    setDeleteConfirm(null);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteConfirm) return;
+
+    const formData = new FormData();
+    formData.append('pageValue', deleteConfirm.value);
+
+    try {
+      const response = await fetch('/api/trigget_page/delete', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result.detail || '刪除失敗');
+      }
+
+      enqueueSnackbar('刪除成功！', { variant: 'success' });
+      handleCloseDeleteDialog();
+      fetchPageOptions(); // [重要] 重新載入列表
+      
+      // 如果刪除的是當前選中的，清空選項
+      if (selectedOption === deleteConfirm.value) {
+        setSelectedOption('');
+      }
+
+    } catch (err) {
+      console.error("刪除失敗:", err);
+      enqueueSnackbar(err.message, { variant: 'error' });
+    }
   };
 
 
@@ -151,71 +265,106 @@ const CreateUrl = () => {
           <Stack spacing={3}>
             <Box>
               <Typography variant="h5" component="h1" gutterBottom>
-                產生 QR Code 網址
+                假網址生成
               </Typography>
               <Typography variant="h6" component="h2" sx={{ color: 'text.secondary' }}>
                 請選擇登入頁面版型：
               </Typography>
             </Box>
 
-            <FormControl component="fieldset" fullWidth>
-              <RadioGroup
-                aria-label="trigger-page-template"
-                name="option"
-                value={selectedOption}
-                onChange={(e) => setSelectedOption(e.target.value)}
-              >
-                {/* 使用 Stack 來堆疊選項 */}
-                <Stack spacing={1}>
-                  {pageOptions.map((option) => (
-                    <Paper
-                      key={option.value}
-                      variant="outlined"
-                      sx={{
-                        p: 1.5,
-                        display: 'flex',
-                        alignItems: 'center',
-                        cursor: 'pointer',
-                        '&:hover': {
-                          backgroundColor: 'action.hover'
-                        },
-                        // 如果被選中，顯示主題色的邊框
-                        ...(selectedOption === option.value && {
-                          borderColor: 'primary.main',
-                          boxShadow: (theme) => `0 0 0 1px ${theme.palette.primary.main}`,
-                        })
-                      }}
-                      // 點擊 Paper 任何地方都可以選中
-                      onClick={() => setSelectedOption(option.value)}
-                    >
-                      <Radio
-                        checked={selectedOption === option.value}
-                        value={option.value}
-                        name="option-radio-button"
-                      />
-                      <Typography sx={{ flexGrow: 1, ml: 1, fontWeight: 500 }}>
-                        {option.label}
-                      </Typography>
-                      <Button
-                        component={Link} //
-                        href={trigger_url + '/' + option.value + '/test'}
-                        target="_blank"
-                        rel="noopener noreferrer"
+            {loadingOptions ? (
+              <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+                <CircularProgress />
+              </Box>
+            ) : loadError ? (
+              <Alert severity="error">
+                {loadError} <Button onClick={fetchPageOptions}>重試</Button>
+              </Alert>
+            ) : (
+              <FormControl component="fieldset" fullWidth>
+                <RadioGroup
+                  aria-label="trigger-page-template"
+                  name="option"
+                  value={selectedOption}
+                  onChange={(e) => setSelectedOption(e.target.value)}
+                >
+                  <Stack spacing={1}>
+                    {pageOptions.map((option) => (
+                      <Paper
+                        key={option.value}
                         variant="outlined"
-                        size="small"
-                        // 阻止點擊「預覽」時觸發 Paper 的 onClick
-                        onClick={(e) => e.stopPropagation()} 
+                        sx={{
+                          p: 1.5,
+                          display: 'flex',
+                          alignItems: 'center',
+                          cursor: 'pointer',
+                          '&:hover': {
+                            backgroundColor: 'action.hover'
+                          },
+                          ...(selectedOption === option.value && {
+                            borderColor: 'primary.main',
+                            boxShadow: (theme) => `0 0 0 1px ${theme.palette.primary.main}`,
+                          })
+                        }}
+                        onClick={() => setSelectedOption(option.value)}
                       >
-                        預覽
-                      </Button>
-                    </Paper>
-                  ))}
-                </Stack>
-              </RadioGroup>
-            </FormControl>
+                        <Radio
+                          checked={selectedOption === option.value}
+                          value={option.value}
+                          name="option-radio-button"
+                        />
+                        <Typography sx={{ flexGrow: 1, ml: 1, fontWeight: 500 }}>
+                          {option.label}
+                        </Typography>
+                        
+                        {/* 預覽、修改、刪除按鈕 */}
+                        <Stack direction="row" spacing={0.5}>
+                          <Button
+                            component={Link}
+                            href={trigger_url + '/' + option.value + '/test'}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            variant="outlined"
+                            size="small"
+                            onClick={(e) => e.stopPropagation()} 
+                          >
+                            預覽
+                          </Button>
+                          <IconButton
+                            size="small"
+                            color="primary"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenUploadDialog(option);
+                            }}
+                          >
+                            <EditIcon fontSize="small" />
+                          </IconButton>
+                          <IconButton
+                            size="small"
+                            color="error"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleOpenDeleteDialog(option);
+                            }}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </Stack>
+                      </Paper>
+                    ))}
+                  </Stack>
+                </RadioGroup>
+              </FormControl>
+            )}
 
             <Box>
-              <Button variant="contained" size="large" onClick={handleConfirm}>
+              <Button 
+                variant="contained" 
+                size="large" 
+                onClick={handleConfirm}
+                disabled={loadingOptions || !!loadError}
+              >
                 產生網址
               </Button>
             </Box>
@@ -264,47 +413,54 @@ const CreateUrl = () => {
           </Stack>
         </CardContent>
       </Card>
+      
       <Dialog open={openUploadDialog} onClose={handleCloseUploadDialog} fullWidth maxWidth="xs">
-        <DialogTitle>上傳新頁面版型</DialogTitle>
+        <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          {editMode ? '修改頁面版型' : '上傳新頁面版型'}
+          <IconButton onClick={handleCloseUploadDialog} edge="end">
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
         <DialogContent>
-          {/* 使用 Stack 讓表單有間距 */}
           <Stack spacing={2} sx={{ pt: 1 }}>
             <TextField
               autoFocus
+              required
               margin="dense"
-              id="pageName"
-              label="網頁名稱"
+              id="pageLabel"
+              label="網頁名稱 (Label)"
+              helperText="顯示在選項中的名稱 (e.g., '我的新頁面')"
               type="text"
               fullWidth
               variant="outlined"
-              value={pageName}
-              onChange={(e) => setPageName(e.target.value)}
+              value={pageLabel}
+              onChange={(e) => setPageLabel(e.target.value)}
             />
             <TextField
-              autoFocus
+              required
               margin="dense"
-              id="urlName"
-              label="url顯示名稱(限英文、數字、底線)"
+              id="pageValue"
+              label="網頁值 (Value)"
+              helperText="用於 URL 和檔名 (e.g., 'mynewpage')，只能用小寫英文、數字、底線"
               type="text"
               fullWidth
               variant="outlined"
-              value={urlName}
-              onChange={(e) => setUrlName(e.target.value)}
+              value={pageValue}
+              onChange={(e) => setPageValue(e.target.value.toLowerCase().trim())}
+              // disabled={!!editMode} // 修改時，Value (主鍵) 不可變
             />
             <Button
               variant="outlined"
-              component="label" // 關鍵：讓 Button 觸發 file input
+              component="label" 
             >
-              上傳檔案
+              {editMode ? '上傳新檔案 (可選)' : '上傳 HTML 檔案 (必需)'}
               <input
                 type="file"
                 hidden
                 onChange={handleFileChange}
-                // 限制檔案類型 (可選)
-                accept=".html,.htm,.php,.asp,.aspx,.xml" 
+                accept=".html" 
               />
             </Button>
-            {/* 顯示已選擇的檔案名稱 */}
             {selectedFile && (
               <Typography variant="body2" color="text.secondary">
                 已選擇: {selectedFile.name}
@@ -314,7 +470,35 @@ const CreateUrl = () => {
         </DialogContent>
         <DialogActions>
           <Button onClick={handleCloseUploadDialog}>取消</Button>
-          <Button onClick={handleUpload} variant="contained">上傳</Button>
+          <Button onClick={handleUploadAndUpdate} variant="contained">
+            {editMode ? '儲存修改' : '上傳'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* 刪除確認視窗 */}
+      <Dialog
+        open={!!deleteConfirm}
+        onClose={handleCloseDeleteDialog}
+        maxWidth="xs"
+      >
+        <DialogTitle>確認刪除</DialogTitle>
+        <DialogContent>
+          <Typography>
+            你確定要刪除頁面 <strong>"{deleteConfirm?.label}"</strong> 嗎？
+          </Typography>
+          <Typography color="text.secondary" variant="body2">
+            (value: {deleteConfirm?.value})
+          </Typography>
+          <Alert severity="error" sx={{ mt: 2 }}>
+            此動作無法復原。對應的 HTML 檔案將會被永久刪除。
+          </Alert>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseDeleteDialog}>取消</Button>
+          <Button onClick={handleDeleteConfirm} variant="contained" color="error">
+            確認刪除
+          </Button>
         </DialogActions>
       </Dialog>
     </>

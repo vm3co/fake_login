@@ -4,10 +4,8 @@ import re
 
 from backend.services.log_manager import Logger
 import os
-from dotenv import load_dotenv
 
 
-load_dotenv()
 logger = Logger().get_logger()
 
 class getToken:
@@ -61,7 +59,7 @@ class getToken:
         """ 
         刷新 token 的方法
         """
-        logger.info("Refreshing token...")
+        # logger.info("Refreshing token...")
         # 獲取當前的 cookie
         cookie = self.get()
         if cookie:
@@ -90,6 +88,6 @@ class getToken:
             with open(self.cookie_path, 'w', encoding='utf-8') as f:
                 f.write(result)
 
-            logger.info(f"Token refreshed and saved.")
+            # logger.info(f"Token refreshed and saved.")
 
 get_token = getToken()

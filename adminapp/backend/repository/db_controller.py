@@ -42,7 +42,7 @@ class ApplianceDB:
         )
 
         async with self.db_pool.acquire() as connection:
-            with open("backend/core/config/table_info.sql", mode="r") as f:
+            with open("backend/repository/config/table_info.sql", mode="r") as f:
                 schema_sql = f.read()
                 for stmt in schema_sql.strip().split(";"):
                     stmt = stmt.strip()

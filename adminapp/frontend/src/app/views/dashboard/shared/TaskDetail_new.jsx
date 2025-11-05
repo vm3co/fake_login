@@ -34,7 +34,7 @@ import { styled } from '@mui/material/styles';
 import {
   Assignment,
   Close,
-  // Download,
+  Download,
   Search,
   ExpandMore as ExpandMoreIcon,
 } from '@mui/icons-material';
@@ -152,7 +152,7 @@ export default function TaskDetail({ task, open, onClose }) {
   const [totalLogs, setTotalLogs] = useState(0);
   const [nowRowsPerPage, setNowRowsPerPage] = useState(20);
   const [isAsc, setIsAsc] = useState(false); // false for 'desc', true for 'asc'
-  // const [downloading, setDownloading] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [selectAllAcrossPages, setSelectAllAcrossPages] = useState(false); // 是否選取所有頁面所有資料
   const [acctControl, setAcctControl] = useState([false, false, false, false, false]);
 
@@ -261,12 +261,19 @@ export default function TaskDetail({ task, open, onClose }) {
       setSelectedUuids([]);
       setSelectAllAcrossPages(false);
       fetchTaskLogs();
-    } else if (!open) {
+    }
+  }, [open, task, page, filters]); // 依賴保持不變  
+
+  // 當 Drawer 關閉時 (open 變為 false)，重置所有狀態
+  useEffect(() => {
+    if (!open) {
       // 清理舊資料
       setLogs([]);
       setTaskData(null);
       setPage(0);
-      setFilters({
+
+      // 建立一個乾淨的預設 filters
+      const defaultFilters = {
         searchText:'',
         dateFrom: '',
         dateTo: '',
@@ -277,51 +284,67 @@ export default function TaskDetail({ task, open, onClose }) {
         sortBy: 'target_email',
         rowsPerPage: 20,
         sort: 'asc'
-      });
-      setPendingFilters(filters);
+      };
+      
+      setFilters(defaultFilters);
+      setPendingFilters(defaultFilters);
+
       setSelectedUuids([]);
       setSelectAllAcrossPages(false);
       setNowRowsPerPage(20);
       setIsAsc(false);
     }
+  }, [open]);
 
-  }, [open, task, page, filters]);
+  const handleDownloadXlsx = async () => {
+    if (!task?.sendtask_uuid) {
+        console.error("沒有 task uuid，無法下載");
+        alert("沒有任務 UUID，無法下載");
+        return;
+    }
 
-  // const handleDownloadXlsx = async () => {
-  //   if (!task?.sendtask_uuid) return;
+    setDownloading(true);
+    try {
+      const body = {
+        sendtask_uuid: task.sendtask_uuid,
+        name: task.name
+      };
 
-  //   setDownloading(true);
-  //   try {
-  //     const response = await axios.post("/api/download_sendlog_xlsx", {
-  //       sendtask_uuid: task.sendtask_uuid,
-  //       selected_uuids: selectAllAcrossPages ? [] : selectedUuids,
-  //       ...filters,
-  //     }, {
-  //       responseType: 'blob', // 告訴 axios 預期接收的是二進位檔案資料
-  //     });
+      const response = await axios.post(
+        "/api/download_sendlog_xlsx", 
+        body,
+        {
+          responseType: 'blob', // 告訴 axios 預期接收的是二進位檔案資料
+        }
+      );
 
-  //     if (response.status !== 200) {
-  //       throw new Error(`下載失敗: ${response.statusText}`);
-  //     }
+      if (response.status !== 200) {
+        throw new Error(`下載失敗: ${response.statusText}`);
+      }
 
-  //     const blob = response.data;
-  //     const url = window.URL.createObjectURL(blob);
-  //     const a = document.createElement("a");
-  //     a.style.display = "none";
-  //     a.href = url;
-  //     a.download = `sendlog_${task.sendtask_uuid}.csv`;
-  //     document.body.appendChild(a);
-  //     a.click();
-  //     window.URL.revokeObjectURL(url);
-  //     document.body.removeChild(a);
+      const blob = response.data;
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.style.display = "none";
+      a.href = url;
+      a.download = `${task.name}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(url);
+      document.body.removeChild(a);
 
-  //   } catch (err) {
-  //     console.error("下載 CSV 失敗:", err);
-  //     alert(`下載失敗: ${err.response?.data?.detail || err.message}`);
-  //   } finally {
-  //     setDownloading(false);
-  //   }
-  // };
+    } catch (err) {
+      console.error("下載 XLSX 失敗:", err);
+      if (err.response && err.response.data && err.response.data.type === 'text/plain') {
+          const errorText = await err.response.data.text();
+          alert(`下載失敗: ${errorText}`);
+      } else {
+          alert(`下載失敗: ${err.message || "發生未知錯誤"}`);
+      }
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const handleChangePage = (event, newPage) => {
     setPage(newPage);
@@ -406,7 +429,7 @@ export default function TaskDetail({ task, open, onClose }) {
                       />
                   </Box>
                   </Box>
-                  {/* <Box sx={{ display: 'flex', gap: 1 }}>
+                  <Box sx={{ display: 'flex', gap: 1 }}>
                     <Button 
                       variant="contained" 
                       size="small" 
@@ -418,7 +441,7 @@ export default function TaskDetail({ task, open, onClose }) {
                         (selectedUuids.length > 0 || selectAllAcrossPages) ? '下載選取資料' : '下載全部資料'
                       }
                     </Button>
-                  </Box> */}
+                  </Box>
               </HeaderContent>
               </HeaderCard>
           )}

@@ -13,7 +13,7 @@ from zoneinfo import ZoneInfo
 
 from backend.services.log_manager import Logger
 from backend.services.getSe2data import get_se2_data
-from backend.core.db_controller import ApplianceDB
+from backend.repository.db_controller import ApplianceDB
 from backend.core.security import verify_password
 from backend.core.security import hash_password
 
@@ -168,11 +168,11 @@ class DBUser:
             return acct_list
         return []
 
-    async def get_se2_sendtasks(self, column_names=None, days=15) -> list[dict]:
+    async def get_se2_sendtasks(self, column_names=None, days=7) -> list[dict]:
         """
         從 SE2 獲取 sendtasks 資料
         :param sendtasks_columns: sendtasks 的欄位名稱
-        :param days: 查詢的天數
+        :param days: 查詢的天數(目前預設7天)
         :return: sendtasks 資料列表
         """
         await self.db.check_db_connection()
@@ -200,7 +200,7 @@ class DBUser:
             now = int(time.time())
             # 計算抓取任務範圍的時間戳
             ago = now - (days * 24 * 60 * 60)  # days轉換為秒
-            # 過濾條件(test_end_ut >= days)(結束時間為15天內)
+            # 過濾條件(test_end_ut >= days)(結束時間為days天內)
             filtered_df = sendtasks_df.query(
                 "((test_end_ut >= @ago) or (stop_time_new >= @ago))"
             )

@@ -8,11 +8,10 @@ from fastapi.requests import Request
 from fastapi import status
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
-from dotenv import load_dotenv
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 import asyncio
 
-from backend.core.db_controller import ApplianceDB
+from backend.repository.db_controller import ApplianceDB
 from backend.services.getSe2data import get_se2_data
 from backend.services.db_user import DBUser
 from backend.services.get_token import get_token
@@ -21,7 +20,7 @@ from backend.services.log_manager import Logger
 # 引入分離的路由模組
 from backend.api.data_api import get_router as log_router
 from backend.api.user_api import get_router as user_router
-
+from backend.api.trigger_page_api import get_router as page_router
 
 db = ApplianceDB()
 db_user = DBUser(db=db)
@@ -29,7 +28,7 @@ logger = Logger().get_logger()
 
 # 定義定時任務
 async def refresh_token_job():
-    logger.info("refresh_token_job 執行")
+    # logger.info("refresh_token_job 執行")
     await get_token.refresh()
 
 async def refresh_sendlog_stats_job():
@@ -164,6 +163,7 @@ app.add_middleware(
 # 註冊路由
 app.include_router(log_router(db, db_user), prefix="/api")
 app.include_router(user_router(db, db_user), prefix="/api")
+app.include_router(page_router(), prefix="/api/trigget_page")
 
 # 設定模板目錄：掛載 React 打包好的靜態檔案（注意路徑）
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"

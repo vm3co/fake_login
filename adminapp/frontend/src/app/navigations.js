@@ -1,15 +1,15 @@
 const navigations = [
   { name: "Dashboard", path: "/dashboard/default", icon: "dashboard" },
   { name: "客戶帳號", path: "/customers", icon: "perm_contact_calendar", disabled: true },
-  { name: "QRCode生成", path: "/qrcode", icon: "list", disabled: true },
+  { name: "假網址生成", path: "/qrcode", icon: "list", disabled: true },
   { name: "更換密碼", path: "/change-password", icon: "lock", disabled: true },
   // { label: "PAGES", type: "label" },
   {
     name: "平台設定",
     icon: "security",
     children: [
-      { name: "使用者", iconText: "AC", icon: "account_circle", path: "/admin/accts" },
-      { name: "上傳頁面", iconText: "UP", icon: "upload", path: "/admin/upload" },
+      // { name: "使用者", iconText: "AC", icon: "account_circle", path: "/admin/accts" },
+      // { name: "上傳頁面", iconText: "UP", icon: "upload", path: "/admin/upload" },
       // { name: "Forgot Password", iconText: "FP", path: "/session/forgot-password" },
       // { name: "Error", iconText: "404", path: "/session/404" }
     ]

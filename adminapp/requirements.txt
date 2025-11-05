@@ -11,3 +11,4 @@ httpx
 passlib
 apscheduler
 python-jose
+openpyxl

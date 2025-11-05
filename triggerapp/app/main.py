@@ -3,11 +3,10 @@ from fastapi import FastAPI, Request
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from dotenv import load_dotenv
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from app.core.db_controller import db
+from app.repository.db_controller import db
 # 引入分離的路由模組
 from app.routers.trigger_router import router as trigger_router
 from app.api.record_api import router as record_api

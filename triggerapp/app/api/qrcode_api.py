@@ -1,5 +1,4 @@
 import os
-from dotenv import load_dotenv
 
 from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
@@ -7,8 +6,6 @@ from urllib.parse import urljoin
 # from urllib.parse import urlencode
 from app.services.qrcode import qrcode
 
-
-load_dotenv()
 
 router = APIRouter()
 

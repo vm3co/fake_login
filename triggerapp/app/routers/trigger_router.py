@@ -21,6 +21,12 @@ templates = Jinja2Templates(directory=templates_dir)
 async def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request, "title": "假登入網頁"})
 
+@router.get("/warning")
+async def warning_page(request: Request):
+    # 這裡會去 templates 資料夾找 warning.html
+    return templates.TemplateResponse("warning.html", {"request": request, "title": "社交工程演練警告"})
+
+
 @router.get("/{page_name}/{project_id}", response_class=HTMLResponse)
 async def project_detail_dynamic(request: Request, page_name: str, project_id: str):
     

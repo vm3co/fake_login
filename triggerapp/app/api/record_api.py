@@ -1,12 +1,11 @@
 from pydantic import BaseModel
 from datetime import datetime
-from dotenv import load_dotenv
 import os
 import csv
 from fastapi import Request, APIRouter, Depends
 from typing import Dict, Any
 
-from app.core.db_controller import db
+from app.repository.db_controller import db
 from app.services.log_manager import Logger
 
 
