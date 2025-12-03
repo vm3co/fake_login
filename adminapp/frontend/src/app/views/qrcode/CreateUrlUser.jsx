@@ -68,7 +68,7 @@ const CreateUrl = () => {
       enqueueSnackbar('請先選擇一個選項', { variant: 'warning' });
     } else {
       setOutputTextUrl(`${trigger_url}/page/${selectedOption}/99999_99999`)
-      setOutputTextQrcode(`${trigger_url}/qrcode/type/${selectedOption}/uuid?uuid=99999_99999`);
+      setOutputTextQrcode(`${trigger_url}/qrcode/${selectedOption}/uuid?uuid=99999_99999`);
     }
   };
 
@@ -100,13 +100,13 @@ const CreateUrl = () => {
 
   return (
     <>
-      
+
       <Card sx={{ maxWidth: 1200, mx: 'auto', mt: 4, borderRadius: 3, boxShadow: 3, position: 'relative' }}>
         <CardContent>
           <Grid container spacing={4}>
             {/* 左側: 操作區 */}
             <Grid item xs={12} md={7}>
-              <Stack spacing={3}>                
+              <Stack spacing={3}>
                 <Box>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                     <Typography variant="h5" component="h1">
@@ -163,7 +163,7 @@ const CreateUrl = () => {
                             <Stack direction="row" spacing={0.5}>
                               <Button
                                 component={Link}
-                                href={trigger_url + '/' + option.value + '/test'}
+                                href={trigger_url + '/page/' + option.value + '/test'}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 variant="outlined"
@@ -211,8 +211,8 @@ const CreateUrl = () => {
                         return;
                       }
                       try {
-                        setOutputTextUrl(directUrlInput);
-                        setOutputTextQrcode(`${api_base_url}/qrcode/from-url?url=${encodeURIComponent(directUrlInput)}`);
+                        setOutputTextUrl(`${trigger_url}/page/from-url/99999_99999?url=${encodeURIComponent(directUrlInput)}`)
+                        setOutputTextQrcode(`${trigger_url}/qrcode/from-url/uuid?uuid=99999_99999&url=${encodeURIComponent(directUrlInput)}`);
                       } catch (e) {
                         enqueueSnackbar('請輸入有效的網址 (例如: https://www.google.com)', { variant: e });
                       }

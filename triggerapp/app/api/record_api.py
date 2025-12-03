@@ -44,25 +44,25 @@ async def writer_test(type, new_data):
         # 使用 writerow 寫入單行
         writer.writerow(new_data)
 
-# 進入login後記錄id
-class VisitData(BaseModel):
-    url: str
+# # 進入login後記錄id
+# class VisitData(BaseModel):
+#     url: str
 
-@router.post("/visit")
-async def log_visit(
-    data: VisitData, 
-    request_info: Dict = Depends(get_request_info)
-    ):
-    url_id = data.url.split("/")[-1]
-    now = int(datetime.now().timestamp())   # 記錄當下時間戳
-    columns_list = ["second_access_time", "second_access_src", "second_access_dev"]
-    new_data = [now, request_info["ip"], request_info["user_agent"]]
+# @router.post("/visit")
+# async def log_visit(
+#     data: VisitData, 
+#     request_info: Dict = Depends(get_request_info)
+#     ):
+#     url_id = data.url.split("/")[-1]
+#     now = int(datetime.now().timestamp())   # 記錄當下時間戳
+#     columns_list = ["second_access_time", "second_access_src", "second_access_dev"]
+#     new_data = [now, request_info["ip"], request_info["user_agent"]]
 
-    if url_id == "test":
-        await writer_test('visit', new_data)
-    else:
-        # 寫入db
-        await writer_db(url_id, columns_list, new_data)
+#     if url_id == "test":
+#         await writer_test('visit', new_data)
+#     else:
+#         # 寫入db
+#         await writer_db(url_id, columns_list, new_data)
 
 # 登入後記錄id及email
 class LoginData(BaseModel):

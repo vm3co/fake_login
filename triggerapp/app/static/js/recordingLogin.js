@@ -4,12 +4,12 @@
 
 const url = window.location.href;
 
-// 進頁面 送 IP 紀錄
-fetch(`${API_BASE_PATH}/api/visit`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ url: url })
-});
+// // 進頁面 送 IP 紀錄
+// fetch(`${API_BASE_PATH}/api/visit`, {
+//   method: "POST",
+//   headers: { "Content-Type": "application/json" },
+//   body: JSON.stringify({ url: url })
+// });
 
 // 使用者提交 email
 const form = document.getElementById("login-form");
@@ -21,7 +21,7 @@ form.addEventListener("submit", function (event) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email: email, url: url })
-    })
+  })
     .then(response => {
       if (!response.ok) throw new Error("伺服器錯誤");
       return response.text();

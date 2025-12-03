@@ -3,15 +3,45 @@ from datetime import datetime
 import csv
 import os
 from pathlib import Path
-from fastapi import FastAPI, Request, APIRouter, HTTPException
+from typing import Dict, Any
+from fastapi import FastAPI, Request, APIRouter, HTTPException, Depends
 from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, RedirectResponse
+
+from app.repository.db_controller import db
+from app.services.log_manager import Logger
 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+logger = Logger().get_logger()
+
 router = APIRouter()
+
+async def get_request_info(request: Request) -> Dict[str, Any]:
+    """
+    從請求標頭中提取 IP 和 User-Agent。
+    """
+    ip = request.headers.get("x-forwarded-for", request.client.host)
+    user_agent = request.headers.get("User-Agent", "Unknown")  # 取得 User-Agent
+    return {"ip": ip, "user_agent": user_agent}
+
+async def writer_db(url_id, columns_list, new_data):
+    table_name = url_id[16:48]
+    person_uuid = url_id[48:] + url_id[:16]
+
+    # 先取資料
+    data = await db.get_db(table_name, person_uuid, columns_list)
+    data = data[0]
+    logger.debug(f"data: {data}")
+    # 寫入資料
+    for index, dd in enumerate(data):
+        if data[dd] is None: data[dd] = []
+        data[dd].append(new_data[index])
+    logger.debug(f"data: {data}")
+    condition = {"uuid": person_uuid}
+    await db.update_db(table_name, data, condition)
 
 # 設定模板目錄
 templates_dir = BASE_DIR / "templates"
@@ -28,8 +58,30 @@ async def warning_page(request: Request):
 
 
 @router.get("/page/{page_name}/{project_id}", response_class=HTMLResponse)
-async def project_detail_dynamic(request: Request, page_name: str, project_id: str):
+async def project_detail_dynamic(request: Request, page_name: str, project_id: str, url: str = None):
     
+    # 統一先進行紀錄
+    request_info = await get_request_info(request)
+    now = int(datetime.now().timestamp())
+    columns_list = ["second_access_time", "second_access_src", "second_access_dev"]
+    new_data = [now, request_info["ip"], request_info["user_agent"]]
+    
+    if project_id == "test" or project_id == "99999_99999":
+        with open('data/test_visit.csv', 'a', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f)
+            # 使用 writerow 寫入單行
+            writer.writerow(new_data)
+    else:   
+        # 注意：這裡原本是用 url (redirect target) 當作 id，現在改回用 project_id
+        await writer_db(project_id, columns_list, new_data)
+
+    # 判斷是 from-url (轉址) 還是 一般頁面 (顯示模板)
+    if page_name == "from-url":
+        if not url:
+             # 如果沒有提供 url 參數，可以導向一個預設頁面或報錯，這裡暫時導回首頁或顯示錯誤
+             return Response("Missing 'url' parameter for redirection.", status_code=400)
+        return RedirectResponse(url, status_code=307)
+
     # 根據 URL 的 page_name 組合出模板檔案名稱
     template_name = f"{page_name}.html"
     

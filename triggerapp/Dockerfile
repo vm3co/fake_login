@@ -1,18 +1,22 @@
-# 使用官方 Python 映像檔
+# 使用輕量版 Python
 FROM python:3.12-slim
 
-# 設定工作目錄
+# 設定工作目錄 (Using /app is a common convention)
 WORKDIR /app
 
-# 複製所有檔案進容器
-COPY . /app
+# 複製 requirements.txt 並安裝依賴
+# 利用 Docker Layer Caching：只有當 requirements.txt 變動時才會重新安裝
+COPY requirements.txt .
 
 # 安裝相依套件
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
-# 開放 port 8080
+# 複製應用程式原始碼
+COPY . /app
+
+# 開放對外連接的 port
 EXPOSE 8080
 
-# 執行 FastAPI app（用 run.py 或直接指定 app.main）
+# 啟動 FastAPI，從 run.py 執行
 CMD ["python", "run.py"]

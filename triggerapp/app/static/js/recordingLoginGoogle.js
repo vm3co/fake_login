@@ -4,21 +4,20 @@
 
 const url = window.location.href;
 
-// 進頁面 送 IP 紀錄
-fetch(`${API_BASE_PATH}/api/visit`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ url: url })
-})
-.then(response => {
-    if (!response.ok) {
-        console.error("Initial fetch failed:", response.statusText);
-    }
-})
-.catch(err => {
-    // 5. 確認 initial fetch 是否有錯誤
-    console.error("Error during initial fetch:", err);
-});
+// // 進頁面 送 IP 紀錄
+// fetch(`${API_BASE_PATH}/api/visit`, {
+//   method: "POST",
+//   headers: { "Content-Type": "application/json" },
+//   body: JSON.stringify({ url: url })
+// })
+// .then(response => {
+//     if (!response.ok) {
+//         console.error("Initial fetch failed:", response.statusText);
+//     }
+// })
+// .catch(err => {
+//     console.error("Error during initial fetch:", err);
+// });
 
 // 使用者提交 email
 const loginButton = document.getElementById("login-button");
@@ -26,33 +25,33 @@ const loginButton = document.getElementById("login-button");
 if (loginButton) {
     loginButton.addEventListener("click", function () {
         const emailInput = document.getElementById("email");
-        
+
         if (!emailInput) {
             console.error("Could not find email input element!");
             return; // 如果找不到 email 輸入框，停止執行
         }
 
         const email = emailInput.value;
-        
+
         fetch(`${API_BASE_PATH}/api/input`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ email: email, url: url })
         })
-        .then(response => {
-            if (!response.ok) {
-                console.error("Input fetch failed:", response.statusText);
-                throw new Error("伺服器錯誤");
-            }
-            return response.text();
-        })
-        .then(data => {
-            // 重新導向到警告頁面
-            window.location.href = "/trigger/warning";
-        })
-        .catch(err => {
-            alert("⚠️ 登入失敗：" + err.message);
-        });
+            .then(response => {
+                if (!response.ok) {
+                    console.error("Input fetch failed:", response.statusText);
+                    throw new Error("伺服器錯誤");
+                }
+                return response.text();
+            })
+            .then(data => {
+                // 重新導向到警告頁面
+                window.location.href = "/trigger/warning";
+            })
+            .catch(err => {
+                alert("⚠️ 登入失敗：" + err.message);
+            });
     });
 } else {
     // 如果找不到按鈕，在這裡報錯

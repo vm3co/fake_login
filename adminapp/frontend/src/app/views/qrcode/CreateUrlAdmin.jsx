@@ -87,7 +87,7 @@ const CreateUrl = () => {
       enqueueSnackbar('請先選擇一個選項', { variant: 'warning' });
     } else {
       setOutputTextUrl(`${trigger_url}/page/${selectedOption}/99999_99999`)
-      setOutputTextQrcode(`${trigger_url}/qrcode/type/${selectedOption}/uuid?uuid=99999_99999`);
+      setOutputTextQrcode(`${trigger_url}/qrcode/${selectedOption}/uuid?uuid=99999_99999`);
     }
   };
 
@@ -118,7 +118,7 @@ const CreateUrl = () => {
   };
 
   // 彈跳視窗的處理函式
-  const handleOpenUploadDialog= (option = null) => {
+  const handleOpenUploadDialog = (option = null) => {
     if (option) {
       // 進入修改模式
       setEditMode(option.value);
@@ -168,7 +168,7 @@ const CreateUrl = () => {
     formData.append('pageLabel', pageLabel);
     formData.append('pageValue', pageValue);
     formData.append('oldPageValue', oldPageValue);
-    
+
     // 在"修改"模式下，檔案是可選的
     if (selectedFile) {
       formData.append('file', selectedFile);
@@ -230,7 +230,7 @@ const CreateUrl = () => {
       enqueueSnackbar('刪除成功！', { variant: 'success' });
       handleCloseDeleteDialog();
       fetchPageOptions(); // [重要] 重新載入列表
-      
+
       // 如果刪除的是當前選中的，清空選項
       if (selectedOption === deleteConfirm.value) {
         setSelectedOption('');
@@ -245,13 +245,13 @@ const CreateUrl = () => {
 
   return (
     <>
-      
+
       <Card sx={{ maxWidth: 1200, mx: 'auto', mt: 4, borderRadius: 3, boxShadow: 3, position: 'relative' }}>
         <CardContent>
           <Grid container spacing={4}>
             {/* 左側: 操作區 */}
             <Grid item xs={12} md={7}>
-              <Stack spacing={3}>                
+              <Stack spacing={3}>
                 <Box>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                     <Typography variant="h5" component="h1">
@@ -378,8 +378,8 @@ const CreateUrl = () => {
                         return;
                       }
                       try {
-                        setOutputTextUrl(directUrlInput);
-                        setOutputTextQrcode(`${api_base_url}/qrcode/from-url?url=${encodeURIComponent(directUrlInput)}`);
+                        setOutputTextUrl(`${trigger_url}/page/from-url/99999_99999?url=${encodeURIComponent(directUrlInput)}`)
+                        setOutputTextQrcode(`${trigger_url}/qrcode/from-url/uuid?uuid=99999_99999&url=${encodeURIComponent(directUrlInput)}`);
                       } catch (e) {
                         enqueueSnackbar('請輸入有效的網址 (例如: https://www.google.com)', { variant: e });
                       }
@@ -439,7 +439,7 @@ const CreateUrl = () => {
           </Grid>
         </CardContent>
       </Card>
-      
+
       <Dialog open={openUploadDialog} onClose={handleCloseUploadDialog} fullWidth maxWidth="xs">
         <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
           {editMode ? '修改頁面版型' : '上傳新頁面版型'}
@@ -473,18 +473,18 @@ const CreateUrl = () => {
               variant="outlined"
               value={pageValue}
               onChange={(e) => setPageValue(e.target.value.toLowerCase().trim())}
-              // disabled={!!editMode} // 修改時，Value (主鍵) 不可變
+            // disabled={!!editMode} // 修改時，Value (主鍵) 不可變
             />
             <Button
               variant="outlined"
-              component="label" 
+              component="label"
             >
               {editMode ? '上傳新檔案 (可選)' : '上傳 HTML 檔案 (必需)'}
               <input
                 type="file"
                 hidden
                 onChange={handleFileChange}
-                accept=".html" 
+                accept=".html"
               />
             </Button>
             {selectedFile && (

@@ -5,16 +5,15 @@ FROM python:3.12-slim
 WORKDIR /app
 
 # 複製 requirements.txt 並安裝依賴
-# This leverages Docker's layer caching. Dependencies are only re-installed
-# if requirements.txt changes.
+# 利用 Docker Layer Caching：只有當 requirements.txt 變動時才會重新安裝
 COPY requirements.txt .
 
-# 安裝必要函式庫
+# 安裝相依套件
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir -r requirements.txt
 
 # 複製應用程式原始碼
-COPY . .
+COPY . /app
 
 # 開放對外連接的 port
 EXPOSE 8080
