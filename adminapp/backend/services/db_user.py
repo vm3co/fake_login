@@ -261,14 +261,13 @@ class DBUser:
         logger.info(f"Refreshing tasks created between {start_ts} and {end_ts}")
 
         today_create_tasks_df = await get_se2_data.get_sendtasks(end_time=end_ts, start_time=start_ts)
-        
-        if today_create_tasks_df is not None and not today_create_tasks_df.empty:
-            today_create_tasks_df = await self._fetch_and_apply_metadata(today_create_tasks_df)
-            today_create_tasks_list = today_create_tasks_df[SENDTASKS_COLUMNS].to_dict(orient="records")
-            return today_create_tasks_list
-        
-        logger.info("No new tasks created today found on SE2.")
-        return []
+        if today_create_tasks_df is None or today_create_tasks_df.empty:
+            logger.info("No new tasks created today found on SE2.")
+            return []
+
+        today_create_tasks_df = await self._fetch_and_apply_metadata(today_create_tasks_df)
+        today_create_tasks_list = today_create_tasks_df[SENDTASKS_COLUMNS].to_dict(orient="records")
+        return today_create_tasks_list
 
 ## sendlog and sendlog_stats相關操作
     async def check_sendlog(self, uuids_and_create_time: dict):
@@ -327,11 +326,11 @@ class DBUser:
                 data = await get_se2_data.get_sendtask(uuid)
                 remote_create_ut = data.get("data", {}).get("sendtask_create_ut")
                 if create_ut != remote_create_ut:
-                    log_message = f"Task {uuid} has a new create time. Local: {create_ut}, Remote: {remote_create_ut}. Re-syncing task."
-                    logger.warning(log_message)
+                    # log_message = f"Task {uuid} has a new create time. Local: {create_ut}, Remote: {remote_create_ut}. Re-syncing task."
+                    # logger.warning(log_message)
                     
-                    telegram_message = f"🔄 *任務已重同步*\n任務 `{escape_markdown_v2(uuid)}` 的建立時間不符，已觸發資料重同步。"
-                    await send_telegram_notification(telegram_message)
+                    # telegram_message = f"🔄 *任務已重同步*\n任務 `{escape_markdown_v2(uuid)}` 的建立時間不符，已觸發資料重同步。"
+                    # await send_telegram_notification(telegram_message)
                     
                     # 獲取新任務資料並更新 sendtasks 表
                     task_data_df = pd.DataFrame([data.get("data", {})])

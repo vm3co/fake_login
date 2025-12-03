@@ -218,7 +218,7 @@ def get_router(db, db_user):
                 table_name="sendtasks", 
                 data=task, 
                 conflict_keys=["sendtask_uuid"])
-            if status == "changed": refresh_list.append(task["sendtask_uuid"])
+            refresh_list.append(task["sendtask_uuid"])
 
         sendlog_stats_status = await db_user.refresh_sendlog_stats(refresh_list)
 

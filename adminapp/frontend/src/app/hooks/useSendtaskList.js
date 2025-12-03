@@ -55,7 +55,7 @@ export default function useSendtaskList() {
 
     const fetchData = async (orgsArr, controller) => {
         try {
-            const { data: json } = await axios.post("/api/get_sendtasks", 
+            const { data: json } = await axios.post("/api/get_sendtasks",
                 { orgs: orgsArr },
                 { signal: controller.signal }
             );
@@ -93,7 +93,7 @@ export default function useSendtaskList() {
                 {
                     responseType: "blob", // 重要！讓 axios 以二進位方式處理回應
                     onDownloadProgress, // 傳遞進度更新回呼函式
-                }   
+                }
             );
             // 取得檔名
             const disposition = response.headers["content-disposition"];
@@ -114,7 +114,7 @@ export default function useSendtaskList() {
         } catch (error) {
             enqueueSnackbar(`匯出失敗：${(error?.message || "未知錯誤")}`, { variant: 'warning' });
         }
-    };    
+    };
 
     // 提供 refresh 方法
     function refresh() {
@@ -166,16 +166,16 @@ export default function useSendtaskList() {
         // 監聽頁面獲得焦點（用戶取消離開後回到頁面）
         const handleFocus = () => {
             if (isCheckingSends) {
-                console.log('用戶取消離開，任務繼續進行');
+                // console.log('用戶取消離開，任務繼續進行');
             }
         };
 
         // 監聽頁面可見性變化
         const handleVisibilityChange = () => {
             if (!document.hidden && isCheckingSends) {
-                console.log('頁面重新可見，任務繼續進行');
+                // console.log('頁面重新可見，任務繼續進行');
             } else if (document.hidden && isCheckingSends) {
-                console.log('頁面已隱藏，但保持請求繼續進行');
+                // console.log('頁面已隱藏，但保持請求繼續進行');
             }
         };
 
@@ -205,13 +205,13 @@ export default function useSendtaskList() {
         return hasStats;
     });
 
-    return { 
-        loading, 
-        statsData, 
-        tasksData, 
-        todayTasks, 
-        refresh, 
-        isCheckingSends, 
+    return {
+        loading,
+        statsData,
+        tasksData,
+        todayTasks,
+        refresh,
+        isCheckingSends,
         setIsCheckingSends,
         registerRequest,    // 註冊請求
         abortAllRequests,    // 中止所有請求
