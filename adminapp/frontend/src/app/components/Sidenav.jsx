@@ -4,7 +4,9 @@ import styled from "@mui/material/styles/styled";
 
 import { MatxVerticalNav } from "app/components";
 import useSettings from "app/hooks/useSettings";
-import navigations from "app/navigations";
+// import navigations from "app/navigations";
+import useAuth from "app/hooks/useAuth";
+
 
 // STYLED COMPONENTS
 const StyledScrollBar = styled(Scrollbar)(() => ({
@@ -27,6 +29,7 @@ const SideNavMobile = styled("div")(({ theme }) => ({
 
 export default function Sidenav({ children }) {
   const { settings, updateSettings } = useSettings();
+  const { navigations } = useAuth(); // 從 useAuth 取得過濾後的導覽項目
 
   const updateSidebarMode = (sidebarSettings) => {
     let activeLayoutSettingsName = settings.activeLayout + "Settings";

@@ -48,8 +48,7 @@ export function useCheckTasks({ refresh, setIsCheckingSends }) {
                         `新增 ${added.length} 筆：\n${addedIds || "(無)"}\n\n` +
                         `移除 ${removed.length} 筆：\n${removedIds || "(無)"}`;
                     enqueueSnackbar(message, { variant: 'success' });
-                    // 再次取得最新任務資料
-                    refresh();
+                    refresh(); // 重新載入任務列表
                 } else {
                     enqueueSnackbar(`檢查任務失敗：${json.message}`, { variant: 'warning' });
                 }

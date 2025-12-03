@@ -27,7 +27,7 @@ async def warning_page(request: Request):
     return templates.TemplateResponse("warning.html", {"request": request, "title": "社交工程演練警告"})
 
 
-@router.get("/{page_name}/{project_id}", response_class=HTMLResponse)
+@router.get("/page/{page_name}/{project_id}", response_class=HTMLResponse)
 async def project_detail_dynamic(request: Request, page_name: str, project_id: str):
     
     # 根據 URL 的 page_name 組合出模板檔案名稱

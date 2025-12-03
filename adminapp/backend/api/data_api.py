@@ -268,7 +268,7 @@ def get_router(db, db_user):
                 return {"status": "error", "message": "沒有收到 uuids"}
 
             sendlog_stats_status = await db_user.refresh_sendlog_stats(uuids)
-            return {"status": "success", "sendlog_stats_status": sendlog_stats_status}
+            return {"status": "success", "data": sendlog_stats_status}
         except Exception as e:
             logger.error(f"Error in refresh_sendlog_stats: {str(e)}")
             return {"status": "error", "message": str(e)}

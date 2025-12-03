@@ -132,14 +132,16 @@ class ApplianceDB:
             sql_cmd = f'DELETE FROM "{table_name}"'
             await connection.execute(sql_cmd)
 
-    async def get_db(self, table_name: str, select_columns: list[str] = None, where_column: str = None, values: str | list[str] = None) -> list[dict]:
+    async def get_db(self, table_name: str, select_columns: list[str] = None, where_column: str = None, values: str | list[str] = None, where_clauses: list[str] = None) -> list[dict]:
         """
-        查詢資料，支援欄位選擇與條件過濾（IN 查詢）。
+        查詢資料，支援欄位選擇與條件過濾。
+        優先使用 where_clauses。若 where_clauses 為 None，則使用 where_column 和 values 進行 IN 查詢。
 
         :param table_name: 欲查詢的資料表名稱。
         :param select_columns: 欲查詢的欄位名稱列表，若為 None 則查詢全部欄位（SELECT *）。
         :param where_column: 欲篩選條件的欄位名稱（將搭配 `values` 使用）。
         :param values: 欲查詢的值，可為單筆或多筆，將使用 `IN (...)` 條件查詢。
+        :param where_clauses: SQL WHERE 條件子句列表 (例如 ["todayunsend = 0", "todayfailed = 0"])，會以 AND 連接。
         :return: 查詢結果列表，每筆為 dict 格式。
         :raises ValueError: 傳入值與參數組合不合法時拋出錯誤。
         """
@@ -155,7 +157,11 @@ class ApplianceDB:
         where_clause = ''
         bind_values = []
 
-        if where_column and values is not None:
+        if where_clauses:
+            # 優先使用 where_clauses
+            where_clause = " WHERE " + " AND ".join(where_clauses)
+            # 注意：此模式下不支援參數綁定，條件應為靜態值
+        elif where_column and values is not None:
             if not isinstance(values, list):
                 values = [values]
             if not values:
@@ -377,3 +383,16 @@ class ApplianceDB:
         sql_cmd = f'DROP TABLE IF EXISTS "{table_name}"'
         async with self.db_pool.acquire() as connection:
             await connection.execute(sql_cmd)
+
+    async def execute_query(self, query: str, *params) -> list[dict]:
+        """
+        執行一個原始的 SQL 查詢並回傳結果。
+
+        :param query: 要執行的 SQL 查詢字串。
+        :param params: 傳遞給查詢的參數。
+        :return: 查詢結果列表，每筆為 dict 格式。
+        """
+        await self.check_db_connection()
+        async with self.db_pool.acquire() as connection:
+            result = await connection.fetch(query, *params)
+            return [dict(row) for row in result] if result else []

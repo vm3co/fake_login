@@ -17,7 +17,10 @@ const Customers = Loadable(lazy(() => import("app/views/customers/Customers")));
 // CHANGE PASSWORD PAGE
 const ChangePassword = Loadable(lazy(() => import("app/views/changePassword/ChangePassword")));
 // QRCODE PAGE
-const Qrcode = Loadable(lazy(() => import("app/views/qrcode/CreateUrl")));
+const Qrcode = Loadable(lazy(() => import("app/views/qrcode/QrcodeDispatcher")));
+// ADMIN PAGE → accts page
+const Accts = Loadable(lazy(() => import("app/views/admin/UserListPage")));
+
 
 // CUSTOMER PAGE
 const Customer = Loadable(lazy(() => import("app/views/customer/Customer")));
@@ -40,7 +43,8 @@ const routes = [
       { path: "/change-password", element: <ChangePassword />, auth: authRoles.admin },
       // qrcode route
       { path: "/qrcode", element: <Qrcode />, auth: authRoles.admin },
-
+      // admin page → accts route
+      { path: "/admin/accts", element: <Accts />, auth: authRoles.admin },
     ]
   },
 

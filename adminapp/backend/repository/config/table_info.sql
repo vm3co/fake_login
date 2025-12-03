@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS sendlog_stats (
 -- accts
 CREATE TABLE IF NOT EXISTS accts (
     id SERIAL PRIMARY KEY,
-    acct_uuid VARCHAR(36) NOT NULL,
+    acct_uuid VARCHAR(36) UNIQUE NOT NULL,
     acct_id TEXT NOT NULL,
     acct_full_name TEXT NOT NULL,
     acct_full_name_2nd TEXT,

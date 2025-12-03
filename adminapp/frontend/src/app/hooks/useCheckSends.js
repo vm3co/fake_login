@@ -44,17 +44,36 @@ export function useCheckSends({ refresh, setIsCheckingSends, setUpdatedTodayUuid
             
             // 提取所有 "updated" 的 UUID
             const updatedUuids = results.flatMap(json => {
-                const stats = json.sendlog_stats_status || {};
+                const stats = json.data || {};
                 return Object.entries(stats)
                     .filter(([, status]) => status === "changed")
                     .map(([uuid]) => uuid);
             });
-            setUpdatedTodayUuids(updatedUuids);
-            if (updatedUuids.length === 0) {
+            const deletedUuids = results.flatMap(json => {
+                const stats = json.data || {};
+                return Object.entries(stats)
+                    .filter(([, status]) => status === "deleted")
+                    .map(([uuid]) => uuid);
+            });
+            const errorUuids = results.flatMap(json => {
+                const stats = json.data || {};
+                return Object.entries(stats)
+                    .filter(([, status]) => status === "error")
+                    .map(([uuid]) => uuid);
+            });
+            
+            if (updatedUuids.length + deletedUuids.length + errorUuids.length=== 0) {
                 enqueueSnackbar("任務已是最新狀態", { variant: 'info' });
             } else {
-                enqueueSnackbar(`${updatedUuids.length} 筆任務已更新`, { variant: 'success' });
+                const message =
+                `更新 ${updatedUuids.length} 筆：\n${updatedUuids.join("\n")}\n\n` +
+                `刪除 ${deletedUuids.length} 筆：\n${deletedUuids.join("\n")}\n\n` +
+                `錯誤 ${errorUuids.length} 筆：\n${errorUuids.join("\n")}`;
+                enqueueSnackbar(message, { variant: 'success' });
                 refresh(); // 重新載入任務列表
+            }
+            if (setUpdatedTodayUuids) {
+                setUpdatedTodayUuids(updatedUuids);
             }
         } catch (err) {
             if (err.name === "AbortError") {

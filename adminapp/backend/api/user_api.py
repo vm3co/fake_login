@@ -264,4 +264,36 @@ def get_router(db, db_user):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"更新密碼時發生錯誤: {str(e)}")
 
+    @router.get(
+        "/users/all",
+        tags=["user"]
+    )
+    async def get_all_users(current_user: dict = Depends(get_current_user)):
+        # 這裡可以加上權限檢查，例如只允許 admin 訪問
+        if current_user.get("user_type") != "admin":
+            raise HTTPException(status_code=403, detail="權限不足")
+        
+        users = await db_user.get_all_users_with_registration_status()
+        return users
+
+    @router.post(
+        "/users/sync-accts",
+        tags=["user"]
+    )
+    async def sync_accts(current_user: dict = Depends(get_current_user)):
+        if current_user.get("user_type") != "admin":
+            raise HTTPException(status_code=403, detail="權限不足")
+        
+        try:
+            changed_count = 0
+            se2_list = await db_user.get_se2_accts(db_user.accts_columns)
+            for acct_data in se2_list:
+                status = await db.upsert_db("accts", acct_data, conflict_keys=["acct_uuid"])
+                if status == "changed":
+                    changed_count += 1
+            return {"status": "success", "message": f"同步完成。總共處理 {len(se2_list)} 筆帳號，其中 {changed_count} 筆資料已更新或新增。"}
+        except Exception as e:
+            logger.error(f"Error syncing accts: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"同步帳號時發生錯誤: {str(e)}")
+
     return router

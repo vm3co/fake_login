@@ -91,3 +91,6 @@ class getToken:
             # logger.info(f"Token refreshed and saved.")
 
 get_token = getToken()
+
+if __name__ == "__main__":
+    get_token.refresh()

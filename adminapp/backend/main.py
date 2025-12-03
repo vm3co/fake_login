@@ -36,6 +36,57 @@ async def refresh_sendlog_stats_job():
     # 刷新所有 sendlog_stats 資料
     await db_user.refresh_sendlog_stats()
 
+async def refresh_today_create_task_job():
+    """
+    定時執行 refresh_today_create_task 任務，並更新 sendlog_stats
+    """
+    logger.info("refresh_today_create_task_job 執行")
+    try:
+        today_create_tasks_list = await db_user.refresh_today_create_task()
+        if today_create_tasks_list:
+            refresh_list = []
+            for task in today_create_tasks_list:
+                await db.upsert_db(
+                    table_name="sendtasks", 
+                    data=task, 
+                    conflict_keys=["sendtask_uuid"])
+                refresh_list.append(task["sendtask_uuid"])
+            await db_user.refresh_sendlog_stats(refresh_list)
+            logger.info(f"refresh_today_create_task_job 完成 - 新增或更新了 {len(refresh_list)} 個今日任務")
+    except Exception as e:
+        logger.error(f"refresh_today_create_task_job 執行失敗: {str(e)}")
+
+async def refresh_notyet_today_tasks_job():
+    """
+    在今天有排程的任務中，刷新那些尚未完成或有失敗的任務
+    """
+    # logger.info("refresh_notyet_today_tasks_job 執行")
+    try:
+        # 1. 取得今天有排程的任務 (today_earliest_plan_time != 0)
+        #    並選取需要判斷的欄位
+        tasks_with_today_plan = await db.get_db(
+            table_name="sendlog_stats",
+            select_columns=["sendtask_uuid", "todayunsend", "todayfailed"],
+            where_clauses=["today_earliest_plan_time <> 0"]
+        )
+
+        if not tasks_with_today_plan:
+            # logger.info("refresh_notyet_today_tasks_job: 今日沒有排程中的任務需要檢查。")
+            return
+
+        # 2. 篩選出尚未完成 (todayunsend > 0) 或有失敗 (todayfailed > 0) 的任務
+        uuids_to_refresh = []
+        for task in tasks_with_today_plan:
+            if task.get("todayunsend", 0) > 0 or task.get("todayfailed", 0) > 0:
+                uuids_to_refresh.append(task["sendtask_uuid"])
+
+        if uuids_to_refresh:
+            await db_user.refresh_sendlog_stats(uuids_to_refresh)
+            logger.info(f"refresh_notyet_today_tasks_job 完成 - 已刷新 {len(uuids_to_refresh)} 個未完成或有失敗的今日任務。")
+
+    except Exception as e:
+        logger.error(f"refresh_notyet_today_tasks_job 執行失敗: {str(e)}")
+
 async def check_sendtasks_job():
     """
     定時執行 check_sendtasks 任務
@@ -108,6 +159,20 @@ def start_scheduler():
         minutes=10,
         id='refresh_token'
     )
+    # 每60分鐘執行一次，更新今日建立任務
+    scheduler.add_job(
+        refresh_today_create_task_job,
+        'interval',
+        minutes=60,
+        id='refresh_today_create_task'
+    )
+    # 每5分鐘執行一次，刷新今日任務
+    scheduler.add_job(
+        refresh_notyet_today_tasks_job,
+        'interval',
+        minutes=5,
+        id='refresh_notyet_today_tasks'
+    )
     # 每天凌晨 0:50 執行 check_sendtasks
     scheduler.add_job(
         check_sendtasks_job,
@@ -127,6 +192,8 @@ def start_scheduler():
     scheduler.start()
     logger.info("APScheduler 啟動")
     logger.info("refresh_token_job 已排程在每 10 分鐘執行")
+    logger.info("refresh_today_create_task_job 已排程在每 60 分鐘執行")
+    logger.info("refresh_notyet_today_tasks_job 已排程在每 5 分鐘執行")
     logger.info("check_sendtasks_job 已排程在每日 00:50 執行")
     logger.info("refresh_sendlog_stats_job 已排程在每日 01:00 執行")
 

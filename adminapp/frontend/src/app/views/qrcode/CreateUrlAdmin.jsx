@@ -21,6 +21,7 @@ import {
   DialogContent,
   DialogActions,
   CircularProgress,
+  Grid,
   Alert,
 } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
@@ -52,7 +53,11 @@ const CreateUrl = () => {
   // 刪除確認視窗
   const [deleteConfirm, setDeleteConfirm] = useState(null);
 
-  const trigger_url = import.meta.env.VITE_APP_BASE_URL;
+  const trigger_url = `${window.location.origin}/trigger`;
+
+  // 新增: 直接從 URL 生成 QR Code 的 state
+  const [directUrlInput, setDirectUrlInput] = useState('');
+  const api_base_url = `${window.location.origin}/api`;
 
   // 載入 json
   const fetchPageOptions = async () => {
@@ -78,15 +83,11 @@ const CreateUrl = () => {
   }, []);
 
   const handleConfirm = () => {
-    const url_head = trigger_url + '/';
-    const url_end = '/99999_99999';
-    const url_qrcode_head = trigger_url + '/qrcode/';
-    const url_qrcode_end = '/uuid?uuid=99999_99999';
     if (!selectedOption) {
       enqueueSnackbar('請先選擇一個選項', { variant: 'warning' });
     } else {
-      setOutputTextUrl(url_head + selectedOption + url_end);
-      setOutputTextQrcode(url_qrcode_head + selectedOption + url_qrcode_end);
+      setOutputTextUrl(`${trigger_url}/page/${selectedOption}/99999_99999`)
+      setOutputTextQrcode(`${trigger_url}/qrcode/type/${selectedOption}/uuid?uuid=99999_99999`);
     }
   };
 
@@ -244,135 +245,155 @@ const CreateUrl = () => {
 
   return (
     <>
-      <Card sx={{ maxWidth: 700, mx: 'auto', mt: 4, borderRadius: 3, boxShadow: 3, position: 'relative' }}>
-        <Button
-          variant="contained"
-          color="secondary"
-          startIcon={<UploadIcon />}
-          onClick={handleOpenUploadDialog}
-          sx={{
-            position: 'absolute',
-            top: 16,
-            right: 16,
-            zIndex: 10 // 確保在 CardContent 之上
-          }}
-        >
-          上傳頁面
-        </Button>
-
+      
+      <Card sx={{ maxWidth: 1200, mx: 'auto', mt: 4, borderRadius: 3, boxShadow: 3, position: 'relative' }}>
         <CardContent>
-          {/* 使用 Stack 進行垂直佈局和間距控制 */}
-          <Stack spacing={3}>
-            <Box>
-              <Typography variant="h5" component="h1" gutterBottom>
-                假網址生成
-              </Typography>
-              <Typography variant="h6" component="h2" sx={{ color: 'text.secondary' }}>
-                請選擇登入頁面版型：
-              </Typography>
-            </Box>
+          <Grid container spacing={4}>
+            {/* 左側: 操作區 */}
+            <Grid item xs={12} md={7}>
+              <Stack spacing={3}>                
+                <Box>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+                    <Typography variant="h5" component="h1">
+                      假網址生成
+                    </Typography>
+                    <Button
+                      variant="contained"
+                      color="secondary"
+                      startIcon={<UploadIcon />}
+                      onClick={handleOpenUploadDialog}
+                    >
+                      上傳頁面
+                    </Button>
+                  </Box>
+                  <Typography variant="h6" component="h2" sx={{ color: 'text.secondary' }}>
+                    請選擇登入頁面版型：
+                  </Typography>
+                </Box>
 
-            {loadingOptions ? (
-              <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
-                <CircularProgress />
-              </Box>
-            ) : loadError ? (
-              <Alert severity="error">
-                {loadError} <Button onClick={fetchPageOptions}>重試</Button>
-              </Alert>
-            ) : (
-              <FormControl component="fieldset" fullWidth>
-                <RadioGroup
-                  aria-label="trigger-page-template"
-                  name="option"
-                  value={selectedOption}
-                  onChange={(e) => setSelectedOption(e.target.value)}
-                >
-                  <Stack spacing={1}>
-                    {pageOptions.map((option) => (
-                      <Paper
-                        key={option.value}
-                        variant="outlined"
-                        sx={{
-                          p: 1.5,
-                          display: 'flex',
-                          alignItems: 'center',
-                          cursor: 'pointer',
-                          '&:hover': {
-                            backgroundColor: 'action.hover'
-                          },
-                          ...(selectedOption === option.value && {
-                            borderColor: 'primary.main',
-                            boxShadow: (theme) => `0 0 0 1px ${theme.palette.primary.main}`,
-                          })
-                        }}
-                        onClick={() => setSelectedOption(option.value)}
-                      >
-                        <Radio
-                          checked={selectedOption === option.value}
-                          value={option.value}
-                          name="option-radio-button"
-                        />
-                        <Typography sx={{ flexGrow: 1, ml: 1, fontWeight: 500 }}>
-                          {option.label}
-                        </Typography>
-                        
-                        {/* 預覽、修改、刪除按鈕 */}
-                        <Stack direction="row" spacing={0.5}>
-                          <Button
-                            component={Link}
-                            href={trigger_url + '/' + option.value + '/test'}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                {loadingOptions ? (
+                  <Box sx={{ display: 'flex', justifyContent: 'center', p: 3 }}>
+                    <CircularProgress />
+                  </Box>
+                ) : loadError ? (
+                  <Alert severity="error">
+                    {loadError} <Button onClick={fetchPageOptions}>重試</Button>
+                  </Alert>
+                ) : (
+                  <FormControl component="fieldset" fullWidth>
+                    <RadioGroup
+                      aria-label="trigger-page-template"
+                      name="option"
+                      value={selectedOption}
+                      onChange={(e) => setSelectedOption(e.target.value)}
+                    >
+                      <Stack spacing={1}>
+                        {pageOptions.map((option) => (
+                          <Paper
+                            key={option.value}
                             variant="outlined"
-                            size="small"
-                            onClick={(e) => e.stopPropagation()} 
-                          >
-                            預覽
-                          </Button>
-                          <IconButton
-                            size="small"
-                            color="primary"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenUploadDialog(option);
+                            sx={{
+                              p: 1.5,
+                              display: 'flex',
+                              alignItems: 'center',
+                              cursor: 'pointer',
+                              '&:hover': { backgroundColor: 'action.hover' },
+                              ...(selectedOption === option.value && {
+                                borderColor: 'primary.main',
+                                boxShadow: (theme) => `0 0 0 1px ${theme.palette.primary.main}`,
+                              })
                             }}
+                            onClick={() => setSelectedOption(option.value)}
                           >
-                            <EditIcon fontSize="small" />
-                          </IconButton>
-                          <IconButton
-                            size="small"
-                            color="error"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleOpenDeleteDialog(option);
-                            }}
-                          >
-                            <DeleteIcon fontSize="small" />
-                          </IconButton>
-                        </Stack>
-                      </Paper>
-                    ))}
-                  </Stack>
-                </RadioGroup>
-              </FormControl>
-            )}
+                            <Radio
+                              checked={selectedOption === option.value}
+                              value={option.value}
+                              name="option-radio-button"
+                            />
+                            <Typography sx={{ flexGrow: 1, ml: 1, fontWeight: 500 }}>
+                              {option.label}
+                            </Typography>
+                            <Stack direction="row" spacing={0.5}>
+                              <Button
+                                component={Link}
+                                href={trigger_url + '/' + option.value + '/test'}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                variant="outlined"
+                                size="small"
+                                onClick={(e) => e.stopPropagation()}
+                              >
+                                預覽
+                              </Button>
+                              <IconButton
+                                size="small"
+                                color="primary"
+                                onClick={(e) => { e.stopPropagation(); handleOpenUploadDialog(option); }}
+                              >
+                                <EditIcon fontSize="small" />
+                              </IconButton>
+                              <IconButton
+                                size="small"
+                                color="error"
+                                onClick={(e) => { e.stopPropagation(); handleOpenDeleteDialog(option); }}
+                              >
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </Stack>
+                          </Paper>
+                        ))}
+                      </Stack>
+                    </RadioGroup>
+                  </FormControl>
+                )}
 
-            <Box>
-              <Button 
-                variant="contained" 
-                size="large" 
-                onClick={handleConfirm}
-                disabled={loadingOptions || !!loadError}
-              >
-                產生網址
-              </Button>
-            </Box>
-            
-            {/* 將結果區塊用 Divider 隔開 */}
-            {outputTextUrl && (
-              <Box>
-                <Divider sx={{ mb: 3 }} />
+                <Box>
+                  <Button
+                    variant="contained"
+                    size="large"
+                    onClick={handleConfirm}
+                    disabled={loadingOptions || !!loadError}
+                  >
+                    產生網址
+                  </Button>
+                </Box>
+
+                <Box>
+                  <Divider sx={{ my: 3 }} />
+                  <Typography variant="h6" component="h3" gutterBottom>
+                    從任意網址生成 QR Code
+                  </Typography>
+                  <Stack spacing={2} direction="row" alignItems="center">
+                    <TextField
+                      fullWidth
+                      label="請在此貼上網址"
+                      value={directUrlInput}
+                      onChange={(e) => setDirectUrlInput(e.target.value)}
+                      variant="outlined"
+                      size="small"
+                    />
+                    <Button variant="contained" onClick={() => {
+                      if (!directUrlInput) {
+                        enqueueSnackbar('請輸入網址', { variant: 'warning' });
+                        return;
+                      }
+                      try {
+                        setOutputTextUrl(directUrlInput);
+                        setOutputTextQrcode(`${api_base_url}/qrcode/from-url?url=${encodeURIComponent(directUrlInput)}`);
+                      } catch (e) {
+                        enqueueSnackbar('請輸入有效的網址 (例如: https://www.google.com)', { variant: e });
+                      }
+                    }}>
+                      產生
+                    </Button>
+                  </Stack>
+                </Box>
+              </Stack>
+            </Grid>
+
+            {/* 右側: 結果區 */}
+            <Grid item xs={12} md={5}>
+              <Paper variant="outlined" sx={{ p: 2, position: 'sticky', top: '20px' }}>
                 <Typography variant="h6" component="h3" gutterBottom>
                   產生的網址
                 </Typography>
@@ -407,10 +428,15 @@ const CreateUrl = () => {
                       ),
                     }}
                   />
+                  {outputTextUrl && (
+                    <Box sx={{ textAlign: 'center', mt: 2 }}>
+                      <img src={outputTextQrcode} alt="QR Code" style={{ maxWidth: '150px', height: 'auto' }} />
+                    </Box>
+                  )}
                 </Stack>
-              </Box>
-            )}
-          </Stack>
+              </Paper>
+            </Grid>
+          </Grid>
         </CardContent>
       </Card>
       

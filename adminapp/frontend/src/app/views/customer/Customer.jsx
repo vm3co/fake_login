@@ -7,13 +7,8 @@ import {
   Paper,
   Chip,
   Alert,
-  // List,
-  // ListItem,
-  // ListItemText,
-  // ListItemIcon,
   TextField,
   FormControl,
-  // InputLabel,
   Select,
   MenuItem,
   Switch,
@@ -30,6 +25,7 @@ import {
 } from '@mui/icons-material';
 
 import useCustomer from 'app/hooks/useCustomer';
+import { useCheckSends } from "app/hooks/useCheckSends";
 import TaskDetail from './TaskDetail';
 
 
@@ -74,10 +70,6 @@ const TaskHeader = styled(Box)(({ theme }) => ({
   padding: theme.spacing(2),
   borderBottom: '1px solid #f1f5f9'
 }));
-
-// const TaskContent = styled(Box)(({ theme }) => ({
-//   padding: theme.spacing(2)
-// }));
 
 const FilterSection = styled(Box)(({ theme }) => ({
   marginBottom: theme.spacing(3)
@@ -157,6 +149,12 @@ export default function Customer() {
     task: null
   });
 
+  // 新增：更新按鈕相關 state
+  const [isCheckingSends, setIsCheckingSends] = useState(false);
+  // const [updatedUuids, setUpdatedUuids] = useState([]);
+  const [cooldowns, setCooldowns] = useState({}); // 用於追蹤每個任務的冷卻時間
+
+
   const { loading, error, sendtasksData, fetchCustomerSendtasksData } = useCustomer();
 
   // 載入客戶 Cookie 資料
@@ -169,6 +167,12 @@ export default function Customer() {
     });
   };
 
+  // 初始化更新 Hook
+  const { fetchCheckSends } = useCheckSends({
+    refresh: fetchCustomerSendtasksData,
+    setIsCheckingSends,
+    // setUpdatedTodayUuids: setUpdatedUuids,
+  });
 
   // 組件載入時讀取 Cookie
   useEffect(() => {
@@ -180,6 +184,23 @@ export default function Customer() {
       fetchCustomerSendtasksData();
     }
   }, [customerData.sendtasks]);
+
+  // 處理冷卻時間
+  useEffect(() => {
+    const interval = setInterval(() => {
+      const now = Date.now();
+      const newCooldowns = { ...cooldowns };
+      let changed = false;
+      for (const uuid in newCooldowns) {
+        if (now - newCooldowns[uuid] >= 10000) {
+          delete newCooldowns[uuid];
+          changed = true;
+        }
+      }
+      if (changed) setCooldowns(newCooldowns);
+    }, 1000); // 每秒檢查一次
+    return () => clearInterval(interval);
+  }, [cooldowns]);
 
   // 準備任務資料
   const prepareTaskData = () => {
@@ -243,6 +264,16 @@ export default function Customer() {
       open: true,
       task: { ...task, ...taskStatus }
     });
+  };
+
+  // 處理單一任務更新的函式
+  const handleUpdateTask = async (uuid) => {
+    await fetchCheckSends([uuid]);
+    // 更新成功後，設定冷卻時間
+    setCooldowns(prev => ({
+      ...prev,
+      [uuid]: Date.now()
+    }));
   };
 
 
@@ -374,7 +405,8 @@ export default function Customer() {
           </Alert>
         ) : (
           filteredTasks.map((task) => {
-            const taskStatus = customerData.sendtasks.find(t => t.uuid === task.sendtask_uuid); 
+            const taskStatus = customerData.sendtasks.find(t => t.uuid === task.sendtask_uuid);
+            const isInCooldown = cooldowns[task.sendtask_uuid] && (Date.now() - cooldowns[task.sendtask_uuid] < 10000);
             return (
               <TaskCard 
                 key={task.id} 
@@ -456,8 +488,23 @@ export default function Customer() {
                       size="small"
                     />
                   </Box>
-                  <Box sx={{ flex: 0.1 }}>
-                    <Button onClick={() => handleCardClick(task)}>查看詳情</Button>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
+                    <Button 
+                      variant="outlined" 
+                      size="small" 
+                      onClick={() => handleCardClick(task)}
+                    >
+                      查看詳情
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      onClick={() => handleUpdateTask(task.sendtask_uuid)}
+                      disabled={isCheckingSends || isInCooldown}
+                      sx={{ minWidth: '80px' }}
+                    >
+                      {isInCooldown ? '冷卻中' : '更新'}
+                    </Button>
                   </Box>
                 </TaskHeader>
               </TaskCard>
