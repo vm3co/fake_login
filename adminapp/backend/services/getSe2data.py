@@ -96,7 +96,7 @@ class getSe2data:
                 break
 
             page += 1
-        logger.info(f"Total items fetched: {len(all_data)}")
+        # logger.info(f"Total items fetched: {len(all_data)}")
         return all_data
 
     async def _fetch_with_fallback(self, fetch_function, *args, **kwargs):
@@ -160,7 +160,7 @@ class getSe2data:
     async def get_sendlog(self, uuid: str) -> pd.DataFrame | None:
         '''抓取專案參與人員清單'''
         # 要發送 POST 的目標網址
-        logger.info(f"Fetching sendlog for sendtask {uuid}...")
+        # logger.info(f"Fetching sendlog for sendtask {uuid}...")
         url = self.url + API_ENDPOINTS["get_sendlog"]
         payload_template = {
                             "sendtask_uuid": uuid,

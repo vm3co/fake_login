@@ -26,7 +26,7 @@ async def send_telegram_notification(message: str):
     :param message: 要發送的訊息內容 (不需要手動跳脫)
     """
     if not BOT_TOKEN or not CHAT_ID:
-        logger.warning("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not set. Skipping notification.")
+        # logger.warning("TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is not set. Skipping notification.")
         return
 
     # Telegram Bot API 的端點

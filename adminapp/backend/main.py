@@ -166,11 +166,11 @@ def start_scheduler():
         minutes=60,
         id='refresh_today_create_task'
     )
-    # 每5分鐘執行一次，刷新今日任務
+    # 每30分鐘執行一次，刷新今日任務
     scheduler.add_job(
         refresh_notyet_today_tasks_job,
         'interval',
-        minutes=5,
+        minutes=30,
         id='refresh_notyet_today_tasks'
     )
     # 每天凌晨 0:50 執行 check_sendtasks
@@ -193,7 +193,7 @@ def start_scheduler():
     logger.info("APScheduler 啟動")
     logger.info("refresh_token_job 已排程在每 10 分鐘執行")
     logger.info("refresh_today_create_task_job 已排程在每 60 分鐘執行")
-    logger.info("refresh_notyet_today_tasks_job 已排程在每 5 分鐘執行")
+    logger.info("refresh_notyet_today_tasks_job 已排程在每 30 分鐘執行")
     logger.info("check_sendtasks_job 已排程在每日 00:50 執行")
     logger.info("refresh_sendlog_stats_job 已排程在每日 01:00 執行")
 

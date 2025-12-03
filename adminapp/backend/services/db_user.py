@@ -391,10 +391,10 @@ class DBUser:
         await self.db.check_db_connection()
         if uuids is None:
             logger.info("Fetching all sendtask uuids for refresh...")
-            sendtask_data = await self.db.get_db("sendtasks", select_columns=["sendtask_uuid", "sendtask_create_ut"])
+            sendtask_data = await self.db.get_db("sendtasks", select_columns=["sendtask_uuid", "sendtask_create_ut", "sendtask_id"])
         else:
             logger.info(f"Refreshing sendlog_stats for specified uuids: {uuids}")
-            sendtask_data = await self.db.get_db("sendtasks", select_columns=["sendtask_uuid", "sendtask_create_ut"], where_column="sendtask_uuid", values=uuids)
+            sendtask_data = await self.db.get_db("sendtasks", select_columns=["sendtask_uuid", "sendtask_create_ut", "sendtask_id"], where_column="sendtask_uuid", values=uuids)
         uuids_and_create_time = {task["sendtask_uuid"]: task["sendtask_create_ut"] for task in sendtask_data}
 
         # 確保 sendlog 資料表存在，同時更新資料表
@@ -404,8 +404,8 @@ class DBUser:
         task_names = {task["sendtask_uuid"]: task["sendtask_id"] for task in sendtask_data}
 
         # 開始刷新 sendlog_stats
-        for uuid in [u for u in uuids if check_statuses.get(u) not in ["deleted", "error"]]:
-            logger.info(f"Refreshing sendlog_stats for {uuid}")
+        for uuid in [u for u in uuids_and_create_time.keys() if check_statuses.get(u) not in ["deleted", "error"]]:
+            # logger.info(f"Refreshing sendlog_stats for {uuid}")
 
             # 1. 獲取舊的統計數據
             old_stats_data = await self.db.get_db("sendlog_stats", where_column="sendtask_uuid", values=uuid)
@@ -428,7 +428,7 @@ class DBUser:
                 "sendtask_uuid": uuid,
                 **new_stats
             }, conflict_keys=["sendtask_uuid"])
-            logger.info(f"Updated sendlog_stats for {uuid}. Status: {check_statuses[uuid]}")
+            # logger.info(f"Updated sendlog_stats for {uuid}. Status: {check_statuses[uuid]}")
         logger.info(f"Finished refreshing sendlog_stats.")
 
         return check_statuses
