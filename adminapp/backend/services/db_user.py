@@ -29,7 +29,7 @@ def timestamp():
     tz = ZoneInfo("Asia/Taipei")   # 修改時區
     today = datetime.now(tz).date()
     start_ts = int(datetime.combine(today, datetime.min.time(), tz).timestamp())
-    end_ts = int((datetime.combine(today, datetime.min.time(), tz) + timedelta(days=1)).timestamp())
+    end_ts = int(datetime.combine(today, datetime.max.time(), tz).timestamp())
     return start_ts, end_ts
 
 def calc_stats(stats: List[Dict[str, Any]]) -> Dict[str, Any]:

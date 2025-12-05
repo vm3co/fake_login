@@ -126,7 +126,7 @@ class getSe2data:
         url = self.url + API_ENDPOINTS["get_sendtasks"]
         payload_template = {
             "end_time": end_time,
-            "filter_time_range": 0,
+            "filter_time_range": 99,
             "order_field": "CreateTime",
             "order_method": "desc",
             "page_sn": 1,
