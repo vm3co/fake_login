@@ -124,9 +124,12 @@ class getSe2data:
         # 要發送 POST 的目標網址
         logger.info("Fetching sendtasks...")
         url = self.url + API_ENDPOINTS["get_sendtasks"]
+
+        filter_time_range = 0 if end_time is None and start_time is None else 99
+            
         payload_template = {
             "end_time": end_time,
-            "filter_time_range": 99,
+            "filter_time_range": filter_time_range,
             "order_field": "CreateTime",
             "order_method": "desc",
             "page_sn": 1,
