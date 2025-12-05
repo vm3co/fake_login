@@ -316,7 +316,7 @@ const CreateUrl = () => {
                             <Stack direction="row" spacing={0.5}>
                               <Button
                                 component={Link}
-                                href={trigger_url + '/' + option.value + '/test'}
+                                href={trigger_url + '/page/' + option.value + '/test'}
                                 target="_blank"
                                 rel="noopener noreferrer"
                                 variant="outlined"
