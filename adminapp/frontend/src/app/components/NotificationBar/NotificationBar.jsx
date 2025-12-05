@@ -1,5 +1,5 @@
 import { Fragment, useState } from "react";
-import { Link } from "react-router-dom";
+// import { Link } from "react-router-dom";
 import Box from "@mui/material/Box";
 import Card from "@mui/material/Card";
 import Icon from "@mui/material/Icon";
@@ -11,6 +11,7 @@ import IconButton from "@mui/material/IconButton";
 import ThemeProvider from "@mui/material/styles/ThemeProvider";
 import Notifications from "@mui/icons-material/Notifications";
 import Clear from "@mui/icons-material/Clear";
+import { Dialog, DialogTitle, DialogContent, DialogActions, Typography } from "@mui/material";
 
 import useSettings from "app/hooks/useSettings";
 import useNotification from "app/hooks/useNotification";
@@ -76,8 +77,21 @@ export default function NotificationBar({ container }) {
   const { settings } = useSettings();
   const [panelOpen, setPanelOpen] = useState(false);
   const { deleteNotification, clearNotifications, notifications } = useNotification();
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [selectedNotification, setSelectedNotification] = useState(null);
 
   const handleDrawerToggle = () => setPanelOpen(!panelOpen);
+
+  const handleNotificationClick = (notification) => {
+    setSelectedNotification(notification);
+    setDialogOpen(true);
+    setPanelOpen(false);
+  };
+
+  const handleDialogClose = () => {
+    setDialogOpen(false);
+    setSelectedNotification(null);
+  };
 
   return (
     <Fragment>
@@ -107,19 +121,21 @@ export default function NotificationBar({ container }) {
                 <DeleteButton
                   size="small"
                   className="deleteButton"
-                  onClick={() => deleteNotification(notification.id)}>
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    deleteNotification(notification.id);
+                  }}>
                   <Clear className="icon" />
                 </DeleteButton>
 
-                <Link
-                  to={`/${notification.path}`}
-                  onClick={handleDrawerToggle}
-                  style={{ textDecoration: "none" }}>
+                <Box
+                  onClick={() => handleNotificationClick(notification)}
+                  sx={{ textDecoration: "none", cursor: "pointer" }}>
                   <Card sx={{ mx: 2, mb: 3 }} elevation={3}>
                     <CardLeftContent>
                       <Box display="flex">
-                        <Icon className="icon" color={notification.icon.color}>
-                          {notification.icon.name}
+                        <Icon className="icon" color={notification.icon?.color || "primary"}>
+                          {notification.icon?.name || "notifications"}
                         </Icon>
                         <Heading>{notification.heading}</Heading>
                       </Box>
@@ -135,7 +151,7 @@ export default function NotificationBar({ container }) {
                       <Small color="text.secondary">{notification.subtitle}</Small>
                     </Box>
                   </Card>
-                </Link>
+                </Box>
               </NotificationCard>
             ))}
 
@@ -146,6 +162,48 @@ export default function NotificationBar({ container }) {
             )}
           </Box>
         </Drawer>
+
+        {/* Notification Details Dialog */}
+        {selectedNotification && (
+          <Dialog open={dialogOpen} onClose={handleDialogClose} maxWidth="sm" fullWidth>
+            <DialogTitle>
+              <Box display="flex" alignItems="center">
+                <Icon color={selectedNotification.icon?.color || "primary"} sx={{ mr: 1 }}>
+                  {selectedNotification.icon?.name || "notifications"}
+                </Icon>
+                {selectedNotification.heading || "通知詳情"}
+              </Box>
+            </DialogTitle>
+            <DialogContent>
+              <Box py={2}>
+                <Typography variant="h6" gutterBottom>
+                  {selectedNotification.title}
+                </Typography>
+                <Typography variant="body1" color="textSecondary" paragraph>
+                  {selectedNotification.subtitle}
+                </Typography>
+                <Typography variant="caption" color="textSecondary" display="block">
+                  時間: {new Date(selectedNotification.timestamp).toLocaleString()}
+                </Typography>
+                {selectedNotification.details && (
+                  <Typography variant="body2" color="textPrimary" display="block" sx={{ mt: 2, whiteSpace: "pre-wrap" }}>
+                    {selectedNotification.details}
+                  </Typography>
+                )}
+                {selectedNotification.path && (
+                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 1 }}>
+                    相關路徑: {selectedNotification.path}
+                  </Typography>
+                )}
+              </Box>
+            </DialogContent>
+            <DialogActions>
+              <Button onClick={handleDialogClose} color="primary">
+                關閉
+              </Button>
+            </DialogActions>
+          </Dialog>
+        )}
       </ThemeProvider>
     </Fragment>
   );

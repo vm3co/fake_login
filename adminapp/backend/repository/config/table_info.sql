@@ -79,3 +79,18 @@ CREATE TABLE IF NOT EXISTS mtmpl (
     mtmpl_title TEXT NOT NULL,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- notifications
+CREATE TABLE IF NOT EXISTS notifications (
+    id SERIAL PRIMARY KEY,
+    username TEXT NOT NULL,
+    title TEXT,
+    subtitle TEXT,
+    heading TEXT,
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    path TEXT,
+    icon_name TEXT,
+    icon_color TEXT,
+    details TEXT,
+    is_read BOOLEAN DEFAULT FALSE
+);

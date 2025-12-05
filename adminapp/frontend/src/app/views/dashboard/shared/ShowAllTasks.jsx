@@ -26,7 +26,8 @@ import SimpleCard from "app/components/SimpleCard";
 
 import { SendtaskListContext } from "app/contexts/SendtaskListContext";
 import formatDate from "app/utils/formatDate";
-import { useCheckSends } from "app/hooks/useCheckSends";
+// import { useCheckSends } from "app/hooks/useCheckSends";
+import { useJob } from "app/contexts/JobContext";
 import TaskDetail from './TaskDetail_new';
 
 
@@ -34,8 +35,8 @@ import TaskDetail from './TaskDetail_new';
 const StyledTable = styled(Table)(() => ({
   whiteSpace: "normal",
   "& thead": {
-    "& tr": { 
-      "& th": { 
+    "& tr": {
+      "& th": {
         textAlign: "center", // align="center"
         whiteSpace: "normal", // sx={{ whiteSpace: 'normal' }}
         lineHeight: 1.2, // sx={{ lineHeight: 1.2 }}
@@ -59,12 +60,12 @@ const StyledTable = styled(Table)(() => ({
         "&:nth-of-type(9)": { width: "80px" }, // 最後一封寄出預計日期
         "&:nth-of-type(10)": { width: "60px" }, // 是否暫停
         "&:nth-of-type(11)": { width: "80px" }, // 更新
-      } 
+      }
     }
   },
   "& tbody": {
-    "& tr": { 
-      "& td": { 
+    "& tr": {
+      "& td": {
         textAlign: "center",
         whiteSpace: "normal",
         lineHeight: 1.2,
@@ -79,8 +80,8 @@ const StyledTable = styled(Table)(() => ({
           // color: "#FF6A00" // 橘色
         },
 
-      } 
-    } 
+      }
+    }
   }
 }));
 
@@ -115,18 +116,19 @@ export default function ShowAllTasks() {
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [sortBy, setSortBy] = useState("test_start_ut");  // 預設排序為任務開始日期
   const [sortOrder, setSortOrder] = useState("asc"); // 排序方向：asc 或 desc
-  const { 
-    loading, 
-    statsData, 
-    tasksData, 
-    refresh, 
-    isCheckingSends, 
+  const {
+    loading,
+    statsData,
+    tasksData,
+    refresh,
+    isCheckingSends,
     setIsCheckingSends,
-    exportCsv, 
+    exportCsv,
   } = useContext(SendtaskListContext);
   const [loadingDots, setLoadingDots] = useState(0);
   const [updatedTodayUuids, setUpdatedTodayUuids] = useState([]);
-  const { fetchCheckSends } = useCheckSends({ refresh, setIsCheckingSends, setUpdatedTodayUuids });
+  // const { fetchCheckSends } = useCheckSends({ refresh, setIsCheckingSends, setUpdatedTodayUuids });
+  const { startJob } = useJob();
   const [searchText, setSearchText] = useState("");  // 搜尋任務名稱
   const [selectedUuids, setSelectedUuids] = useState([]);  // 勾選任務並只更新這些任務
   const [isExporting, setIsExporting] = useState(false); // 匯出狀態
@@ -165,43 +167,43 @@ export default function ShowAllTasks() {
 
   // 任務顯示模式
   const filteredTasks = sortedTasks.filter(row => {
-      // 搜尋任務名稱或 UUID
-      if (searchText) {
-        const searchLower = searchText.toLowerCase();
-        const matchesId = row.sendtask_id?.toLowerCase().includes(searchLower);
-        const matchesUuid = row.sendtask_uuid?.toLowerCase().includes(searchLower);
-        
-        if (!(matchesId || matchesUuid)) {
-          return false; // 如果兩者都不符合，則過濾掉
-        }
-      }
+    // 搜尋任務名稱或 UUID
+    if (searchText) {
+      const searchLower = searchText.toLowerCase();
+      const matchesId = row.sendtask_id?.toLowerCase().includes(searchLower);
+      const matchesUuid = row.sendtask_uuid?.toLowerCase().includes(searchLower);
 
-      // 過濾
-      const start = (row.pre_test_enable) 
-                      ? row.pre_test_start_ut 
-                      : row.test_start_ut;
-      const end = (row.stop_time_new && row.stop_time_new !== -1) 
-                    ? row.stop_time_new
-                    : (row.pre_test_enable)
-                      ? row.pre_test_end_ut
-                      : row.test_end_ut;
-      const stats = statsData[row.sendtask_uuid] || {};
-      const sendFailed = stats.totalsend - stats.totalsuccess;
-      let show = true;
-      if (showExpiredOnly) {
-        if (!end || end > todayStartTs) show = false;
-      } 
-      if (showNotStartedOnly) {
-        if (!start || start < todayEndTs) show = false;
-      } 
-      if (showRunningOnly) {
-        if (end < todayStartTs || start > todayEndTs) show = false;
-      } 
-      if (showFailedOnly) {
-        if (sendFailed === 0) show = false;
+      if (!(matchesId || matchesUuid)) {
+        return false; // 如果兩者都不符合，則過濾掉
       }
-      return show;
-    }) || [];
+    }
+
+    // 過濾
+    const start = (row.pre_test_enable)
+      ? row.pre_test_start_ut
+      : row.test_start_ut;
+    const end = (row.stop_time_new && row.stop_time_new !== -1)
+      ? row.stop_time_new
+      : (row.pre_test_enable)
+        ? row.pre_test_end_ut
+        : row.test_end_ut;
+    const stats = statsData[row.sendtask_uuid] || {};
+    const sendFailed = stats.totalsend - stats.totalsuccess;
+    let show = true;
+    if (showExpiredOnly) {
+      if (!end || end > todayStartTs) show = false;
+    }
+    if (showNotStartedOnly) {
+      if (!start || start < todayEndTs) show = false;
+    }
+    if (showRunningOnly) {
+      if (end < todayStartTs || start > todayEndTs) show = false;
+    }
+    if (showFailedOnly) {
+      if (sendFailed === 0) show = false;
+    }
+    return show;
+  }) || [];
 
   const pagedTasks = Array.isArray(filteredTasks)
     ? filteredTasks.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
@@ -266,7 +268,7 @@ export default function ShowAllTasks() {
   };
 
   const handleTaskClick = (taskRow, taskStats) => {
-    
+
     // 建立 "task" 物件
     const adminControls = {
       send: true,
@@ -297,7 +299,7 @@ export default function ShowAllTasks() {
 
   return (
     <Box width="100%" overflow="hidden">
-      <SimpleCard sx={{ padding:1 }}>
+      <SimpleCard sx={{ padding: 1 }}>
         <Stack direction="row" spacing={2} mb={2}>
           <Button
             variant="contained"
@@ -308,12 +310,16 @@ export default function ShowAllTasks() {
             size="small"
           >
             {isExporting ? "資料匯出中" : "匯出勾選任務"}
-          </Button>          
+          </Button>
           <Button
             variant="contained"
             color="primary"
             disabled={selectedUuids.length === 0 || isCheckingSends}
-            onClick={() => fetchCheckSends(selectedUuids)}
+            onClick={() => {
+              if (window.confirm("確定要執行寄送狀態更新嗎？")) {
+                startJob("refresh_sendlog_stats", { uuids: selectedUuids });
+              }
+            }}
             size="small"
           >
             更新勾選任務
@@ -325,9 +331,9 @@ export default function ShowAllTasks() {
           )}
         </Stack>
         <Stack
-          direction="row" 
-          spacing={2} 
-          mb={2} 
+          direction="row"
+          spacing={2}
+          mb={2}
           alignItems="center"
         >
           {isExporting && (
@@ -337,15 +343,15 @@ export default function ShowAllTasks() {
               </Typography>
               <LinearProgress variant="determinate" value={progress} />
             </Box>
-          )}          
+          )}
         </Stack>
-        <Stack 
-          direction="row" 
-          spacing={2} 
-          mb={2} 
+        <Stack
+          direction="row"
+          spacing={2}
+          mb={2}
           alignItems="center"
-          sx={{ 
-            flexWrap: 'wrap', 
+          sx={{
+            flexWrap: 'wrap',
             gap: 1,
             '@media (max-width: 768px)': {
               flexDirection: 'column',
@@ -361,7 +367,7 @@ export default function ShowAllTasks() {
               setSearchText(e.target.value);
               setPage(0);
             }}
-            sx={{ 
+            sx={{
               width: 200,
               '@media (max-width: 768px)': {
                 width: '100%'
@@ -430,16 +436,16 @@ export default function ShowAllTasks() {
               }
               label="有失敗寄送"
               sx={{ margin: 0, color: "red" }}
-            />            
+            />
           </Box>
           {selectedUuids.length > 0 &&
-            <Button 
+            <Button
               onClick={() => {
                 setSelectedUuids([]);
               }}
               variant="text"
               size="small"
-              sx={{ 
+              sx={{
                 textTransform: 'none',
                 minWidth: 'unset',
                 padding: '0 4px',
@@ -450,9 +456,9 @@ export default function ShowAllTasks() {
             </Button>
           }
         </Stack>
-        <TableContainer 
-          component={Paper} 
-          sx={{ 
+        <TableContainer
+          component={Paper}
+          sx={{
             overflow: 'auto',
             maxHeight: '70vh', // 限制最大高度
             '&::-webkit-scrollbar': {
@@ -525,14 +531,14 @@ export default function ShowAllTasks() {
               {pagedTasks.map((row, index) => {
                 const stats = statsData[row.sendtask_uuid] || { planned: "-", send: "-", success: "-" };
                 const rowNumber = page * rowsPerPage + index + 1; // 全域編號
-                const start = (row.pre_test_enable) 
-                      ? formatDate(row.pre_test_start_ut , "date")
-                      : formatDate(row.test_start_ut, "date");
-                const end = (row.stop_time_new && row.stop_time_new !== -1) 
-                              ? formatDate(row.stop_time_new, "date")
-                              : (row.pre_test_enable)
-                                ? formatDate(row.pre_test_end_ut, "date")
-                                : formatDate(row.test_end_ut, "date");
+                const start = (row.pre_test_enable)
+                  ? formatDate(row.pre_test_start_ut, "date")
+                  : formatDate(row.test_start_ut, "date");
+                const end = (row.stop_time_new && row.stop_time_new !== -1)
+                  ? formatDate(row.stop_time_new, "date")
+                  : (row.pre_test_enable)
+                    ? formatDate(row.pre_test_end_ut, "date")
+                    : formatDate(row.test_end_ut, "date");
                 return (
                   <TableRow
                     key={index}
@@ -540,8 +546,8 @@ export default function ShowAllTasks() {
                       backgroundColor: updatedTodayUuids.includes(row.sendtask_uuid)
                         ? "rgba(170, 210, 25, 0.18)" // 更新後的高亮色
                         : index % 2 === 0
-                        ? "rgba(25, 118, 210, 0.14)" // 偶數行背景色
-                        : "transparent",
+                          ? "rgba(25, 118, 210, 0.14)" // 偶數行背景色
+                          : "transparent",
                       "&:hover": {
                         backgroundColor: updatedTodayUuids.includes(row.sendtask_uuid)
                           ? "rgba(107, 133, 16, 0.38)" // 更新後的懸停色
@@ -601,7 +607,11 @@ export default function ShowAllTasks() {
                       <Button
                         variant="outlined"
                         size="small"
-                        onClick={() => fetchCheckSends([row.sendtask_uuid])}
+                        onClick={() => {
+                          if (window.confirm("確定要執行寄送狀態更新嗎？")) {
+                            startJob("refresh_sendlog_stats", { uuids: [row.sendtask_uuid] });
+                          }
+                        }}
                         disabled={isCheckingSends}
                       >
                         更新

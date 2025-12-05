@@ -8,6 +8,8 @@ import { MatxTheme } from "./components";
 import SettingsProvider from "./contexts/SettingsContext";
 // import { AuthProvider } from "./contexts/FirebaseAuthContext";
 import { AuthProvider } from "./contexts/JWTAuthContext";
+import { SendtaskListProvider } from "./contexts/SendtaskListContext";
+import { JobProvider } from "./contexts/JobContext";
 // ROUTES
 import routes from "./routes";
 // Global styles
@@ -20,16 +22,20 @@ export default function App() {
   const content = useRoutes(routes);
 
   return (
-    <SnackbarProvider 
-      maxSnack={3} 
+    <SnackbarProvider
+      maxSnack={3}
       anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
     >
       <SettingsProvider>
         <AuthProvider>
-          <MatxTheme>
-            <CssBaseline />
-            {content}
-          </MatxTheme>
+          <SendtaskListProvider>
+            <JobProvider>
+              <MatxTheme>
+                <CssBaseline />
+                {content}
+              </MatxTheme>
+            </JobProvider>
+          </SendtaskListProvider>
         </AuthProvider>
       </SettingsProvider>
     </SnackbarProvider>

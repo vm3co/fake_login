@@ -16,7 +16,10 @@ import useAuth from "app/hooks/useAuth";
 import useSettings from "app/hooks/useSettings";
 import { useCheckTasks } from "app/hooks/useCheckTasks";
 import { useCheckTodayCreateTasks } from "app/hooks/useCheckTodayCreateTasks";
+import { useJob } from "app/contexts/JobContext";
 import { SendtaskListContext } from "app/contexts/SendtaskListContext";
+import { NotificationProvider } from "app/contexts/NotificationContext";
+import NotificationBar from "app/components/NotificationBar/NotificationBar";
 
 import { Span } from "app/components/Typography";
 import { MatxMenu } from "app/components";
@@ -89,6 +92,7 @@ const Layout1Topbar = () => {
   const { refresh, isCheckingSends, setIsCheckingSends } = useContext(SendtaskListContext);
   const { fetchCheckTasks } = useCheckTasks({ refresh, setIsCheckingSends });
   const { fetchCheckTodayCreateTasks } = useCheckTodayCreateTasks({ refresh, setIsCheckingSends });
+  const { startJob } = useJob();
   const { controllerRef, createController } = useAbortOnUnmount();
 
 
@@ -110,45 +114,11 @@ const Layout1Topbar = () => {
   const fetchUpdataMtmpl = async () => {
     // 彈出確認視窗
     if (!window.confirm("確定要執行郵件樣板更新嗎？")) {
-        return;
+      return;
     }
+    await startJob("update_mtmpl");
+  };
 
-    // 先中止前一個請求
-    if (controllerRef.current) {
-        controllerRef.current.abort();
-    }
-
-    setIsCheckingSends(true);
-    // 建立新的 controller
-    const controller = createController();
-        await axios.post("/api/update_mtmpl", {}, {
-            signal: controller.signal,
-        })
-            .then((res) => res.data)
-            .then(result => {
-              if (result.status === 'success') {
-                  const { added, removed } = result.data;
-                  // const addedTitles = added.map(item => `- ${item.mtmpl_title}`).join("\n");
-                  // const removedTitles = removed.map(item => `- ${item.mtmpl_title}`).join("\n");
-                  // const message = `郵件樣板同步完成！\n\n新增 ${added.length} 筆：\n${addedTitles || "(無)"}\n\n移除 ${removed.length} 筆：\n${removedTitles || "(無)"}`;
-                  const message = `郵件樣板同步完成！\n\n新增 ${added.length} 筆\n\n移除 ${removed.length} 筆`;
-                  enqueueSnackbar(message, { variant: 'success' });
-              } else {
-                  enqueueSnackbar(`更新失敗: ${result.message}`, { variant: 'warning' });
-              } 
-                setIsCheckingSends(false);
-            })
-            .catch((err) => {
-            if (err.name === "AbortError") {
-                // 請求被中止，不顯示錯誤
-            } else {
-                console.error("更新郵件樣板時發生錯誤", err);
-                enqueueSnackbar("網路錯誤，更新失敗，請稍後再試", { variant: 'error' });
-
-            }
-            setIsCheckingSends(false);
-        });
-    };
 
   return (
     <TopbarRoot>
@@ -186,13 +156,13 @@ const Layout1Topbar = () => {
               任務列表更新中...
             </Span>
           )}
-          {/* <MatxSearchBox />
+          {/* <MatxSearchBox /> */}
 
           <NotificationProvider>
             <NotificationBar />
           </NotificationProvider>
 
-          <ShoppingCart /> */}
+          {/* <ShoppingCart /> */}
 
           <MatxMenu
             menuButton={
@@ -204,7 +174,7 @@ const Layout1Topbar = () => {
                 {/* <Avatar src={user.avatar} sx={{ cursor: "pointer" }} /> */}
               </UserMenu>
             }>
-            <StyledItem 
+            <StyledItem
               onClick={isCheckingSends ? undefined : fetchCheckTodayCreateTasks}
               disabled={isCheckingSends}
               sx={{
@@ -219,7 +189,7 @@ const Layout1Topbar = () => {
               <Span sx={{ marginInlineStart: 1 }}>檢查今日建立任務</Span>
             </StyledItem>
 
-            <StyledItem 
+            <StyledItem
               onClick={isCheckingSends ? undefined : fetchUpdataMtmpl}
               disabled={isCheckingSends}
               sx={{

@@ -6,7 +6,7 @@ Created on Thu May  8 14:32:44 2025
 
 用api到se2系統抓取資料
 """
-from fastapi import APIRouter, Request, Body, Depends
+from fastapi import APIRouter, Request, Body, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any
@@ -96,6 +96,19 @@ def get_router(db, db_user):
     # router = APIRouter()
     router = APIRouter(dependencies=[Depends(get_current_user)])
     logger = Logger().get_logger()
+
+    async def refresh_and_notify(refresh_list: list, username: str):
+        await db_user.refresh_sendlog_stats(refresh_list)
+        # Add notification
+        await db.insert_db("notifications", {
+            "username": username,
+            "title": "統計資料刷新完成",
+            "subtitle": f"已刷新 {len(refresh_list)} 個任務",
+            "heading": "系統通知",
+            "path": "send_list",
+            "icon_name": "notifications",
+            "icon_color": "primary"
+        })
 
     ## sendtasks 相關的 API
     class OrgsRequest(BaseModel):
@@ -191,7 +204,7 @@ def get_router(db, db_user):
         "/refresh_today_create_task",
         tags=["data"]
         )
-    async def refresh_today_create_task(request: OrgsRequest):
+    async def refresh_today_create_task(request: OrgsRequest, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
         """
         刷新今天建立的任務
         1. 讀取今天建立的sendtask清單
@@ -220,9 +233,12 @@ def get_router(db, db_user):
                 conflict_keys=["sendtask_uuid"])
             refresh_list.append(task["sendtask_uuid"])
 
-        sendlog_stats_status = await db_user.refresh_sendlog_stats(refresh_list)
+        # sendlog_stats_status = await db_user.refresh_sendlog_stats(refresh_list)
+        # background_tasks.add_task(db_user.refresh_sendlog_stats, refresh_list)
+        username = current_user.get("username", "unknown")
+        background_tasks.add_task(refresh_and_notify, refresh_list, username)
 
-        return {"status": "success", "data": sendlog_stats_status}
+        return {"status": "success", "message": "已開始刷新任務統計資料 (背景執行中)", "data": {}}
 
     class CustomerGetSendtasksRequest(BaseModel):
         sendtask_uuids: list[str] = []

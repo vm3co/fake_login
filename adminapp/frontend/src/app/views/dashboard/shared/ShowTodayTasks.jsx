@@ -30,7 +30,8 @@ import DownloadIcon from "@mui/icons-material/Download";
 
 import { SendtaskListContext } from "app/contexts/SendtaskListContext";
 import formatDate from "app/utils/formatDate";
-import { useCheckSends } from "app/hooks/useCheckSends";
+// import { useCheckSends } from "app/hooks/useCheckSends";
+import { useJob } from "app/contexts/JobContext";
 import TaskDetail from './TaskDetail_new';
 
 
@@ -38,8 +39,8 @@ import TaskDetail from './TaskDetail_new';
 const StyledTable = styled(Table)(() => ({
   whiteSpace: "normal",
   "& thead": {
-    "& tr": { 
-      "& th": { 
+    "& tr": {
+      "& th": {
         textAlign: "center", // align="center"
         whiteSpace: "normal", // sx={{ whiteSpace: 'normal' }}
         lineHeight: 1.2, // sx={{ lineHeight: 1.2 }}
@@ -65,12 +66,12 @@ const StyledTable = styled(Table)(() => ({
         "&:nth-of-type(11)": { width: "80px" }, // 最後一封寄出預計日期
         "&:nth-of-type(12)": { width: "40px" }, // 是否暫停
         "&:nth-of-type(13)": { width: "50px" }, // 更新
-      } 
+      }
     }
   },
   "& tbody": {
-    "& tr": { 
-      "& td": { 
+    "& tr": {
+      "& td": {
         textAlign: "center",
         whiteSpace: "normal",
         lineHeight: 1.2,
@@ -93,8 +94,8 @@ const StyledTable = styled(Table)(() => ({
           fontWeight: "bold",
           color: "#f44336" // 紅色
         }
-      } 
-    } 
+      }
+    }
   }
 }));
 
@@ -106,18 +107,19 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [sortBy, setSortBy] = useState("today_earliest_plan_time");  // 預設排序順序為寄信開始時間
   const [sortOrder, setSortOrder] = useState("asc"); // 排序方向：asc 或 desc
-  const { 
-    loading, 
-    statsData, 
-    todayTasks, 
-    refresh, 
-    isCheckingSends, 
+  const {
+    loading,
+    statsData,
+    todayTasks,
+    refresh,
+    isCheckingSends,
     setIsCheckingSends,
-    exportCsv 
+    exportCsv
   } = useContext(SendtaskListContext);
   const [loadingDots, setLoadingDots] = useState(0);
   const [updatedTodayUuids, setUpdatedTodayUuids] = useState([]);
-  const { fetchCheckSends } = useCheckSends({ refresh, setIsCheckingSends, setUpdatedTodayUuids });
+  // const { fetchCheckSends } = useCheckSends({ refresh, setIsCheckingSends, setUpdatedTodayUuids });
+  const { startJob } = useJob();
   const [searchText, setSearchText] = useState("");  // 搜尋任務名稱
   const [selectedUuids, setSelectedUuids] = useState([]);  // 勾選任務並只更新這些任務
   const [isExporting, setIsExporting] = useState(false);
@@ -146,43 +148,43 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
     if (valueA > valueB) return sortOrder === "asc" ? 1 : -1;
     return 0;
   });
-  
+
   // 任務顯示模式
   const filteredTasks = sortedTasks.filter(row => {
-      // 搜尋任務名稱或 UUID
-      if (searchText) {
-        const searchLower = searchText.toLowerCase();
-        const matchesId = row.sendtask_id?.toLowerCase().includes(searchLower);
-        const matchesUuid = row.sendtask_uuid?.toLowerCase().includes(searchLower);
-        
-        if (!(matchesId || matchesUuid)) {
-          return false; // 如果兩者都不符合，則過濾掉
-        }
-      }
+    // 搜尋任務名稱或 UUID
+    if (searchText) {
+      const searchLower = searchText.toLowerCase();
+      const matchesId = row.sendtask_id?.toLowerCase().includes(searchLower);
+      const matchesUuid = row.sendtask_uuid?.toLowerCase().includes(searchLower);
 
-      const stats = statsData[row.sendtask_uuid] || {};
-      const todayunsend = Number(stats.todayunsend) || 0;
-      const todaysuccess = Number(stats.todaysuccess) || 0;
-      const todayfailed = Number(stats.todayfailed) || 0;;
+      if (!(matchesId || matchesUuid)) {
+        return false; // 如果兩者都不符合，則過濾掉
+      }
+    }
 
-      if (taskState === "doing") {
-        // 執行中：今日尚未寄出>0 且 今日成功寄出>0 且 今日寄出失敗為0
-        return todayunsend > 0 && todaysuccess > 0 && todayfailed === 0;
-      }
-      if (taskState === "notyet") {
-        // 尚未開始：今日尚未寄出>0 且 今日成功寄出=0 且 今日寄出失敗=0
-        return todayunsend > 0 && todaysuccess === 0 && todayfailed === 0;
-      }
-      if (taskState === "done") {
-        // 已完成：今日尚未寄出=0 且 今日寄出失敗=0
-        return todayunsend === 0 && todayfailed === 0;
-      }
-      if (taskState === "warning") {
-        // 異常：今日寄出失敗非0
-        return todayfailed !== 0;
-      }
-      return true;
-    }) || [];
+    const stats = statsData[row.sendtask_uuid] || {};
+    const todayunsend = Number(stats.todayunsend) || 0;
+    const todaysuccess = Number(stats.todaysuccess) || 0;
+    const todayfailed = Number(stats.todayfailed) || 0;;
+
+    if (taskState === "doing") {
+      // 執行中：今日尚未寄出>0 且 今日成功寄出>0 且 今日寄出失敗為0
+      return todayunsend > 0 && todaysuccess > 0 && todayfailed === 0;
+    }
+    if (taskState === "notyet") {
+      // 尚未開始：今日尚未寄出>0 且 今日成功寄出=0 且 今日寄出失敗=0
+      return todayunsend > 0 && todaysuccess === 0 && todayfailed === 0;
+    }
+    if (taskState === "done") {
+      // 已完成：今日尚未寄出=0 且 今日寄出失敗=0
+      return todayunsend === 0 && todayfailed === 0;
+    }
+    if (taskState === "warning") {
+      // 異常：今日寄出失敗非0
+      return todayfailed !== 0;
+    }
+    return true;
+  }) || [];
 
   const pagedTasks = Array.isArray(filteredTasks)
     ? filteredTasks.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
@@ -197,14 +199,14 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
     // 準備 sendtasks 格式: { sendtask_id1: sendtask_uuid1, ... }
     setIsExporting(true);
     setProgress(0);
-    
+
     try {
       const sendtasks = {};
       selectedUuids.forEach(uuid => {
         const task = todayTasks.find(t => t.sendtask_uuid === uuid);
         if (task) sendtasks[task.sendtask_id] = [uuid, task.pre_test_enable];
       });
-      
+
       await exportCsv(sendtasks, {
         onDownloadProgress: (progressEvent) => {
           const total = progressEvent.total || 1; // 總大小
@@ -247,7 +249,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
   };
 
   const handleTaskClick = (taskRow, taskStats) => {
-    
+
     // 建立 "task" 物件
     const adminControls = {
       send: true,
@@ -295,7 +297,9 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
             color="primary"
             disabled={selectedUuids.length === 0 || isCheckingSends}
             onClick={() => {
-              fetchCheckSends(selectedUuids);
+              if (window.confirm("確定要執行寄送狀態更新嗎？")) {
+                startJob("refresh_sendlog_stats", { uuids: selectedUuids });
+              }
             }}
             size="small"
           >
@@ -310,7 +314,10 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
                 enqueueSnackbar('無今日任務可更新', { variant: 'warning' });
                 return;
               }
-              fetchCheckSends(uuids);
+              // fetchCheckSends(uuids);
+              if (window.confirm("確定要執行寄送狀態更新嗎？")) {
+                startJob("refresh_sendlog_stats", { uuids: uuids });
+              }
             }}
             disabled={isCheckingSends}
             size="small"
@@ -324,9 +331,9 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
           )}
         </Stack>
         <Stack
-          direction="row" 
-          spacing={2} 
-          mb={2} 
+          direction="row"
+          spacing={2}
+          mb={2}
           alignItems="center"
         >
           {isExporting && (
@@ -338,13 +345,13 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
             </Box>
           )}
         </Stack>
-        <Stack 
-          direction="row" 
-          spacing={2} 
-          mb={2} 
+        <Stack
+          direction="row"
+          spacing={2}
+          mb={2}
           alignItems="center"
-          sx={{ 
-            flexWrap: 'wrap', 
+          sx={{
+            flexWrap: 'wrap',
             gap: 1,
             '@media (max-width: 768px)': {
               flexDirection: 'column',
@@ -360,7 +367,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
               setSearchText(e.target.value);
               setPage(0);
             }}
-            sx={{ 
+            sx={{
               width: 200,
               '@media (max-width: 768px)': {
                 width: '100%'
@@ -374,7 +381,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
               setTaskState(e.target.value);
               setPage(0);
             }}
-              sx={{ width: 80, minWidth: '120px' }}
+            sx={{ width: 80, minWidth: '120px' }}
             defaultValue="all"
           >
             <MenuItem value="all">今日任務</MenuItem>
@@ -384,13 +391,13 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
             <MenuItem value="warning">異常</MenuItem>
           </Select>
           {selectedUuids.length > 0 &&
-            <Button 
+            <Button
               onClick={() => {
                 setSelectedUuids([]);
               }}
               variant="text"
               size="small"
-              sx={{ 
+              sx={{
                 textTransform: 'none',
                 minWidth: 'unset',
                 padding: '0 4px',
@@ -401,9 +408,9 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
             </Button>
           }
         </Stack>
-        <TableContainer 
-          component={Paper} 
-          sx={{ 
+        <TableContainer
+          component={Paper}
+          sx={{
             overflow: 'auto',
             maxHeight: '70vh', // 限制最大高度
             '&::-webkit-scrollbar': {
@@ -490,8 +497,8 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
                       backgroundColor: updatedTodayUuids.includes(row.sendtask_uuid)
                         ? "rgba(170, 210, 25, 0.18)" // 更新後的高亮色
                         : index % 2 === 0
-                        ? "rgba(25, 118, 210, 0.14)" // 偶數行背景色
-                        : "transparent",
+                          ? "rgba(25, 118, 210, 0.14)" // 偶數行背景色
+                          : "transparent",
                       "&:hover": {
                         backgroundColor: updatedTodayUuids.includes(row.sendtask_uuid)
                           ? "rgba(107, 133, 16, 0.38)" // 更新後的懸停色
@@ -561,7 +568,11 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
                       <Button
                         variant="outlined"
                         size="small"
-                        onClick={() => fetchCheckSends([row.sendtask_uuid])}
+                        onClick={() => {
+                          if (window.confirm("確定要執行寄送狀態更新嗎？")) {
+                            startJob("refresh_sendlog_stats", { uuids: [row.sendtask_uuid] });
+                          }
+                        }}
                         disabled={isCheckingSends}
                         sx={{
                           minWidth: 'auto',

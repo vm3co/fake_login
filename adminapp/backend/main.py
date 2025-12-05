@@ -21,6 +21,7 @@ from backend.services.log_manager import Logger
 from backend.api.data_api import get_router as log_router
 from backend.api.user_api import get_router as user_router
 from backend.api.trigger_page_api import get_router as page_router
+from backend.api import notification_api, job_api
 
 db = ApplianceDB()
 db_user = DBUser(db=db)
@@ -231,6 +232,8 @@ app.add_middleware(
 app.include_router(log_router(db, db_user), prefix="/api")
 app.include_router(user_router(db, db_user), prefix="/api")
 app.include_router(page_router(), prefix="/api/trigget_page")
+app.include_router(notification_api.router, prefix="/api")
+app.include_router(job_api.router, prefix="/api")
 
 # 設定模板目錄：掛載 React 打包好的靜態檔案（注意路徑）
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
@@ -256,6 +259,3 @@ async def custom_404_handler(request: Request, exc):
 def main():
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8080, reload=True)
-
-if __name__ == "__main__":
-    main()
