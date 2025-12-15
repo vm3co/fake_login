@@ -406,7 +406,7 @@ export default function TaskDetail({ task, open, onClose }) {
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                       {task.sendtask_uuid}
                     </Typography>
-                    {/* <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                    <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
                       <Chip
                         label={`觸發率: ${taskData.totalsuccess > 0 ? ((taskData.totaltriggered / taskData.totalplanned) * 100).toFixed(1) : 0}%`}
                         color="warning"
@@ -427,7 +427,7 @@ export default function TaskDetail({ task, open, onClose }) {
                         color="error"
                         size="small"
                       />
-                    </Box> */}
+                    </Box>
                   </Box>
                   <Box sx={{ display: 'flex', gap: 1 }}>
                     <Button
