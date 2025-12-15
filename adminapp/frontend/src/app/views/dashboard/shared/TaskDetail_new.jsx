@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios'; 
+import axios from 'axios';
 import {
   Box,
   Card,
@@ -92,8 +92,8 @@ const StyledTable = styled(Table)(() => ({
     }
   },
   "& thead": {
-    "& tr": { 
-      "& th": { 
+    "& tr": {
+      "& th": {
         textAlign: "center", // align="center"
         whiteSpace: "normal", // sx={{ whiteSpace: 'normal' }}
         lineHeight: 1.2, // sx={{ lineHeight: 1.2 }}
@@ -113,24 +113,24 @@ const StyledTable = styled(Table)(() => ({
         "&:nth-of-type(9)": { width: "140px" }, // 附件開啟資訊
         "&:nth-of-type(10)": { width: "140px" }, // 連結點擊orQrcode資訊
         "&:nth-of-type(11)": { width: "140px" }, // 表格輸入資訊
-      } 
+      }
     }
   },
-    "& tbody": {
-      "& tr": { 
-        "& td": { 
-          textAlign: "center",
-          whiteSpace: "normal",
-          lineHeight: 1.2,
-          wordBreak: "keep-all", // 保持單詞完整，不斷字
-          overflowWrap: "break-word", // 當單詞太長時才斷字
-          borderRight: "1px solid #e0e0e0",
-          "&:last-child": {
-            borderRight: "none",
-          }
-        } 
-      } 
+  "& tbody": {
+    "& tr": {
+      "& td": {
+        textAlign: "center",
+        whiteSpace: "normal",
+        lineHeight: 1.2,
+        wordBreak: "keep-all", // 保持單詞完整，不斷字
+        overflowWrap: "break-word", // 當單詞太長時才斷字
+        borderRight: "1px solid #e0e0e0",
+        "&:last-child": {
+          borderRight: "none",
+        }
+      }
     }
+  }
 }));
 
 
@@ -158,7 +158,7 @@ export default function TaskDetail({ task, open, onClose }) {
 
   // 篩選條件
   const [filters, setFilters] = useState({
-    searchText:'',
+    searchText: '',
     dateFrom: '',
     dateTo: '',
     resultType: 'all',
@@ -187,11 +187,11 @@ export default function TaskDetail({ task, open, onClose }) {
       setLoading(true);
       setError(null);
       // 獲取詳細日誌 (帶上所有參數)
-      const response = await axios.post("/api/get_sendlog_detail", { 
+      const response = await axios.post("/api/get_sendlog_detail", {
         sendtask_uuid: task.sendtask_uuid,
         page: page + 1, // 後端頁碼從 1 開始
         acctControl: acctControlArr,
-        ...filters 
+        ...filters
       });
 
       const logsResult = response.data;
@@ -222,7 +222,7 @@ export default function TaskDetail({ task, open, onClose }) {
         !!task.notTriggered,
         !!task.triggered
       ]);
-      
+
       // 重置狀態
       setLogs([]);
       setTotalLogs(0);
@@ -230,24 +230,24 @@ export default function TaskDetail({ task, open, onClose }) {
       setTaskData(null);
 
       try {
-          const [taskResponse, mtmplResponse] = await Promise.all([
-              axios.post("/api/get_sendlog_stats", { 
-                  sendtask_uuids: [task.sendtask_uuid] 
-              }),
-              axios.get("/api/get_mtmpl")
-          ]);
+        const [taskResponse, mtmplResponse] = await Promise.all([
+          axios.post("/api/get_sendlog_stats", {
+            sendtask_uuids: [task.sendtask_uuid]
+          }),
+          axios.get("/api/get_mtmpl")
+        ]);
 
-          const taskResult = taskResponse.data;
-          if (taskResult.status === "success" && taskResult.data.length > 0) {
-              setTaskData(taskResult.data[0]);
-          }
+        const taskResult = taskResponse.data;
+        if (taskResult.status === "success" && taskResult.data.length > 0) {
+          setTaskData(taskResult.data[0]);
+        }
 
-          const mtmplResult = mtmplResponse.data;
-          if (mtmplResult.status === "success") {
-              setMailTemplates(mtmplResult.data || []);
-          }
+        const mtmplResult = mtmplResponse.data;
+        if (mtmplResult.status === "success") {
+          setMailTemplates(mtmplResult.data || []);
+        }
       } catch (error) {
-          console.error("獲取初始資料失敗:", error);
+        console.error("獲取初始資料失敗:", error);
       }
     };
     if (open && task) {
@@ -274,7 +274,7 @@ export default function TaskDetail({ task, open, onClose }) {
 
       // 建立一個乾淨的預設 filters
       const defaultFilters = {
-        searchText:'',
+        searchText: '',
         dateFrom: '',
         dateTo: '',
         resultType: 'all',
@@ -285,7 +285,7 @@ export default function TaskDetail({ task, open, onClose }) {
         rowsPerPage: 20,
         sort: 'asc'
       };
-      
+
       setFilters(defaultFilters);
       setPendingFilters(defaultFilters);
 
@@ -298,9 +298,9 @@ export default function TaskDetail({ task, open, onClose }) {
 
   const handleDownloadXlsx = async () => {
     if (!task?.sendtask_uuid) {
-        console.error("沒有 task uuid，無法下載");
-        alert("沒有任務 UUID，無法下載");
-        return;
+      console.error("沒有 task uuid，無法下載");
+      alert("沒有任務 UUID，無法下載");
+      return;
     }
 
     setDownloading(true);
@@ -311,7 +311,7 @@ export default function TaskDetail({ task, open, onClose }) {
       };
 
       const response = await axios.post(
-        "/api/download_sendlog_xlsx", 
+        "/api/download_sendlog_xlsx",
         body,
         {
           responseType: 'blob', // 告訴 axios 預期接收的是二進位檔案資料
@@ -336,10 +336,10 @@ export default function TaskDetail({ task, open, onClose }) {
     } catch (err) {
       console.error("下載 XLSX 失敗:", err);
       if (err.response && err.response.data && err.response.data.type === 'text/plain') {
-          const errorText = await err.response.data.text();
-          alert(`下載失敗: ${errorText}`);
+        const errorText = await err.response.data.text();
+        alert(`下載失敗: ${errorText}`);
       } else {
-          alert(`下載失敗: ${err.message || "發生未知錯誤"}`);
+        alert(`下載失敗: ${err.message || "發生未知錯誤"}`);
       }
     } finally {
       setDownloading(false);
@@ -357,20 +357,20 @@ export default function TaskDetail({ task, open, onClose }) {
         open={open}
         onClose={onClose}
         sx={{
-            // 關鍵：使用 '& .MuiDrawer-paper' 選擇器
-            // 來鎖定 Drawer 內部的 Paper 元件
-            '& .MuiDrawer-paper': {
-              width: '90%', // 佔螢幕 85%
-              maxWidth: '1900px', // 'xl' 的寬度
-            }
-          }}
+          // 關鍵：使用 '& .MuiDrawer-paper' 選擇器
+          // 來鎖定 Drawer 內部的 Paper 元件
+          '& .MuiDrawer-paper': {
+            width: '90%', // 佔螢幕 85%
+            maxWidth: '1900px', // 'xl' 的寬度
+          }
+        }}
       >
         <Box sx={{
-          display: 'flex', 
-          alignItems: 'center', 
+          display: 'flex',
+          alignItems: 'center',
           justifyContent: 'space-between',
           padding: '12px 24px', // 同 DialogTitle 的 padding
-          borderBottom: 1, 
+          borderBottom: 1,
           borderColor: 'divider',
           // 讓標題列固定在最上方
           position: 'sticky',
@@ -379,10 +379,10 @@ export default function TaskDetail({ task, open, onClose }) {
           zIndex: 10 // 確保在內容之上
         }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-              <Typography variant="h6">任務詳細資訊</Typography>
+            <Typography variant="h6">任務詳細資訊</Typography>
           </Box>
           <IconButton onClick={onClose}>
-              <Close />
+            <Close />
           </IconButton>
         </Box>
 
@@ -392,47 +392,47 @@ export default function TaskDetail({ task, open, onClose }) {
           overflowY: 'auto'
         }}>
           <MainContainer>
-          {/* 任務基本資訊 */}
-          {task && taskData && (
+            {/* 任務基本資訊 */}
+            {task && taskData && (
               <HeaderCard>
-              <HeaderContent>
+                <HeaderContent>
                   <Avatar sx={{ bgcolor: '#3b82f6', width: 56, height: 56 }}>
-                  <Assignment />
+                    <Assignment />
                   </Avatar>
                   <Box sx={{ flex: 1 }}>
-                  <Typography variant="h6" sx={{ fontWeight: 600, mb: 1 }}>
+                    <Typography variant="h6" sx={{ fontWeight: 600, mb: 1 }}>
                       {task.name}
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
+                    </Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
                       {task.sendtask_uuid}
-                  </Typography>
-                  <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                      <Chip 
-                      label={`觸發率: ${taskData.totalsuccess > 0 ? ((taskData.totaltriggered / taskData.totalsuccess) * 100).toFixed(1) : 0}%`}
-                      color="warning"
-                      size="small"
+                    </Typography>
+                    {/* <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                      <Chip
+                        label={`觸發率: ${taskData.totalsuccess > 0 ? ((taskData.totaltriggered / taskData.totalplanned) * 100).toFixed(1) : 0}%`}
+                        color="warning"
+                        size="small"
                       />
-                      <Chip 
-                      label={`總信件數: ${taskData.totalplanned || 0}`}
-                      color="info"
-                      size="small"
+                      <Chip
+                        label={`總信件數: ${taskData.totalplanned || 0}`}
+                        color="info"
+                        size="small"
                       />
-                      <Chip 
-                      label={`已成功寄出: ${taskData.totalsuccess || 0}`}
-                      color="success"
-                      size="small"
+                      <Chip
+                        label={`已寄出: ${taskData.totalsuccess + taskData.totalfailed || 0}`}
+                        color="success"
+                        size="small"
                       />
-                      <Chip 
-                      label={`已觸發: ${taskData.totaltriggered || 0}`}
-                      color="error"
-                      size="small"
+                      <Chip
+                        label={`已觸發: ${taskData.totaltriggered || 0}`}
+                        color="error"
+                        size="small"
                       />
-                  </Box>
+                    </Box> */}
                   </Box>
                   <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Button 
-                      variant="contained" 
-                      size="small" 
+                    <Button
+                      variant="contained"
+                      size="small"
                       startIcon={downloading ? <CircularProgress size={20} color="inherit" /> : <Download />}
                       onClick={handleDownloadXlsx}
                       disabled={downloading}
@@ -442,256 +442,256 @@ export default function TaskDetail({ task, open, onClose }) {
                       }
                     </Button>
                   </Box>
-              </HeaderContent>
+                </HeaderContent>
               </HeaderCard>
-          )}
+            )}
 
-          <FilterCard>
-              <Accordion sx={{ boxShadow: 'none', '&:before': { display: 'none' } }}>  
-                  <AccordionSummary expandIcon={<ExpandMoreIcon />}>              
+            <FilterCard>
+              <Accordion sx={{ boxShadow: 'none', '&:before': { display: 'none' } }}>
+                <AccordionSummary expandIcon={<ExpandMoreIcon />}>
+                  <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
+                    篩選項目
+                  </Typography>
+                </AccordionSummary>
+                <AccordionDetails>
+                  <Divider />
+                  <br />
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 2 }}>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, flexWrap: 'wrap' }}>
                       <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                          篩選項目
+                        寄送時間
                       </Typography>
-                  </AccordionSummary>
-                  <AccordionDetails>
-                    <Divider />
-                    <br />
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap', mb: 2 }}>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, mb: 2, flexWrap: 'wrap' }}>
-                        <Typography variant="subtitle2" sx={{ fontWeight: 600 }}>
-                            寄送時間
-                        </Typography>
-                        <TextField
-                            size="small"
-                            type="date"
-                            label="起始日期"
-                            value={pendingFilters.dateFrom}
-                            onChange={(e) => setPendingFilters({ ...pendingFilters, dateFrom: e.target.value })}
-                            InputLabelProps={{ shrink: true }}
-                            sx={{ width: 150 }}
-                        />
-                        <TextField
-                            size="small"
-                            type="date"
-                            label="結束日期"
-                            value={pendingFilters.dateTo}
-                            onChange={(e) => setPendingFilters({ ...pendingFilters, dateTo: e.target.value })}
-                            InputLabelProps={{ shrink: true }}
-                            sx={{ width: 150 }}
-                        />
-                        <FormControl  size="small" sx={{ minWidth: 120 }}>
-                            <Select
-                            value={pendingFilters.resultType}
-                            onChange={(e) => setPendingFilters({ ...pendingFilters, resultType: e.target.value })}
-                            >
-                            <MenuItem value="all">ALL</MenuItem>
-                            {acctControl[0] && <MenuItem value="send">已寄出</MenuItem>}
-                            {acctControl[1] && <MenuItem value="failed">寄出失敗</MenuItem>}
-                            {acctControl[2] && <MenuItem value="notyet">待寄出</MenuItem>}
-                            {acctControl[3] && <MenuItem value="notTriggered">未觸發</MenuItem>}
-                            {acctControl[4] && <MenuItem value="triggered">已觸發</MenuItem>}
-                            </Select>
-                        </FormControl>
-                        <TextField
-                            size="small"
-                            placeholder="搜尋姓名或郵件位址"
-                            value={pendingFilters.searchText}
-                            onChange={(e) => setPendingFilters({ ...pendingFilters, searchText: e.target.value })}
-                            InputProps={{
-                              startAdornment: <Search sx={{ mr: 1, color: '#94a3b8' }} />
-                            }}
-                        />                                            
-                      </Box>
-                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-                        {acctControl[4] &&
+                      <TextField
+                        size="small"
+                        type="date"
+                        label="起始日期"
+                        value={pendingFilters.dateFrom}
+                        onChange={(e) => setPendingFilters({ ...pendingFilters, dateFrom: e.target.value })}
+                        InputLabelProps={{ shrink: true }}
+                        sx={{ width: 150 }}
+                      />
+                      <TextField
+                        size="small"
+                        type="date"
+                        label="結束日期"
+                        value={pendingFilters.dateTo}
+                        onChange={(e) => setPendingFilters({ ...pendingFilters, dateTo: e.target.value })}
+                        InputLabelProps={{ shrink: true }}
+                        sx={{ width: 150 }}
+                      />
+                      <FormControl size="small" sx={{ minWidth: 120 }}>
+                        <Select
+                          value={pendingFilters.resultType}
+                          onChange={(e) => setPendingFilters({ ...pendingFilters, resultType: e.target.value })}
+                        >
+                          <MenuItem value="all">ALL</MenuItem>
+                          {acctControl[0] && <MenuItem value="send">已寄出</MenuItem>}
+                          {acctControl[1] && <MenuItem value="failed">寄出失敗</MenuItem>}
+                          {acctControl[2] && <MenuItem value="notyet">待寄出</MenuItem>}
+                          {acctControl[3] && <MenuItem value="notTriggered">未觸發</MenuItem>}
+                          {acctControl[4] && <MenuItem value="triggered">已觸發</MenuItem>}
+                        </Select>
+                      </FormControl>
+                      <TextField
+                        size="small"
+                        placeholder="搜尋姓名或郵件位址"
+                        value={pendingFilters.searchText}
+                        onChange={(e) => setPendingFilters({ ...pendingFilters, searchText: e.target.value })}
+                        InputProps={{
+                          startAdornment: <Search sx={{ mr: 1, color: '#94a3b8' }} />
+                        }}
+                      />
+                    </Box>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
+                      {acctControl[4] &&
                         <>
                           <Typography variant="subtitle2">行為過濾：</Typography>
                           <FormControlLabel
-                              control={
-                                  <Checkbox
-                                      checked={pendingFilters.showAccessed}
-                                      onChange={(e) => setPendingFilters({ ...pendingFilters, showAccessed: e.target.checked })}
-                                      size="small"
-                                  />
-                              }
-                              label="讀取"
+                            control={
+                              <Checkbox
+                                checked={pendingFilters.showAccessed}
+                                onChange={(e) => setPendingFilters({ ...pendingFilters, showAccessed: e.target.checked })}
+                                size="small"
+                              />
+                            }
+                            label="讀取"
                           />
                           <FormControlLabel
-                              control={
-                                  <Checkbox
-                                      checked={pendingFilters.showClicked}
-                                      onChange={(e) => setPendingFilters({ ...pendingFilters, showClicked: e.target.checked })}
-                                      size="small"
-                                  />
-                              }
-                              label="點擊"
+                            control={
+                              <Checkbox
+                                checked={pendingFilters.showClicked}
+                                onChange={(e) => setPendingFilters({ ...pendingFilters, showClicked: e.target.checked })}
+                                size="small"
+                              />
+                            }
+                            label="點擊"
                           />
                           <FormControlLabel
-                              control={
-                                  <Checkbox
-                                      checked={pendingFilters.showFiled}
-                                      onChange={(e) => setPendingFilters({ ...pendingFilters, showFiled: e.target.checked })}
-                                      size="small"
-                                  />
-                              }
-                              label="開啟"
+                            control={
+                              <Checkbox
+                                checked={pendingFilters.showFiled}
+                                onChange={(e) => setPendingFilters({ ...pendingFilters, showFiled: e.target.checked })}
+                                size="small"
+                              />
+                            }
+                            label="開啟"
                           />
                         </>}
-                        <Typography variant="subtitle2">排序方式: </Typography>
-                        <FormControl size="small" sx={{ minWidth: 160 }}>
-                            <Select
-                            value={pendingFilters.sortBy}
-                            onChange={(e) => setPendingFilters({ ...pendingFilters, sortBy: e.target.value })}
-                            >
-                            <MenuItem value="target_email">郵件地址</MenuItem>
-                            <MenuItem value="plan_time">預計寄送時間</MenuItem>
-                            <MenuItem value="send_time">實際寄送時間</MenuItem>
-                            <MenuItem value="person_info">姓名</MenuItem>
-                            </Select>
-                        </FormControl>
-                        <FormControlLabel
-                          control={
-                            <Switch
-                              checked={isAsc}
-                              onChange={(e) => {
-                                setIsAsc(e.target.checked);
-                                setPendingFilters({ ...pendingFilters, sort: isAsc ? "asc" : "desc" });
-                              }}
-                              color="primary"
-                            />
-                          }
-                          label={isAsc ? "正序" : "反序"}
-                        />
-                        <Typography variant="subtitle2">每頁 </Typography>
-                        <FormControl size="small" sx={{ minWidth: 80 }}>
-                            <Select
-                              value={pendingFilters.rowsPerPage}
-                              onChange={(e) => {
-                                setPendingFilters({ ...pendingFilters, rowsPerPage: e.target.value });
-                              }}
-                            >
-                            <MenuItem value={20}>20</MenuItem>
-                            <MenuItem value={50}>50</MenuItem>
-                            <MenuItem value={100}>100</MenuItem>
-                            <MenuItem value={200}>200</MenuItem>
-                            </Select>
-                        </FormControl>
-                        <Typography variant="subtitle2">筆 </Typography>  
-                      </Box>
+                      <Typography variant="subtitle2">排序方式: </Typography>
+                      <FormControl size="small" sx={{ minWidth: 160 }}>
+                        <Select
+                          value={pendingFilters.sortBy}
+                          onChange={(e) => setPendingFilters({ ...pendingFilters, sortBy: e.target.value })}
+                        >
+                          <MenuItem value="target_email">郵件地址</MenuItem>
+                          <MenuItem value="plan_time">預計寄送時間</MenuItem>
+                          <MenuItem value="send_time">實際寄送時間</MenuItem>
+                          <MenuItem value="person_info">姓名</MenuItem>
+                        </Select>
+                      </FormControl>
+                      <FormControlLabel
+                        control={
+                          <Switch
+                            checked={isAsc}
+                            onChange={(e) => {
+                              setIsAsc(e.target.checked);
+                              setPendingFilters({ ...pendingFilters, sort: isAsc ? "asc" : "desc" });
+                            }}
+                            color="primary"
+                          />
+                        }
+                        label={isAsc ? "正序" : "反序"}
+                      />
+                      <Typography variant="subtitle2">每頁 </Typography>
+                      <FormControl size="small" sx={{ minWidth: 80 }}>
+                        <Select
+                          value={pendingFilters.rowsPerPage}
+                          onChange={(e) => {
+                            setPendingFilters({ ...pendingFilters, rowsPerPage: e.target.value });
+                          }}
+                        >
+                          <MenuItem value={20}>20</MenuItem>
+                          <MenuItem value={50}>50</MenuItem>
+                          <MenuItem value={100}>100</MenuItem>
+                          <MenuItem value={200}>200</MenuItem>
+                        </Select>
+                      </FormControl>
+                      <Typography variant="subtitle2">筆 </Typography>
                     </Box>
-                    <Box sx={{ display: 'flex', gap: 2 }}>
-                      <Button 
-                        variant="contained" 
-                        size="small" 
-                        color="secondary"
-                        onClick={() => {
-                          setPendingFilters({
-                            searchText:'',
-                            dateFrom: '',
-                            dateTo: '',
-                            resultType: 'all',
-                            showAccessed: false,
-                            showClicked: false,
-                            showFiled: false,
-                            sortBy: 'target_email',
-                            rowsPerPage: 20,
-                            sort: 'asc'
-                          });
-                        }}>
-                          清空
-                      </Button>
-                      <Button 
-                        variant="contained" 
-                        size="small" 
-                        onClick={() => {
-                          setFilters(pendingFilters);
-                          setNowRowsPerPage(pendingFilters.rowsPerPage);
-                          setPage(0);
-                          setSelectedUuids([]);
-                          setSelectAllAcrossPages(false);
-                          // fetchTaskLogs();
-                        }}>
-                          查詢
-                      </Button>
-                    </Box>
-                  </AccordionDetails>
+                  </Box>
+                  <Box sx={{ display: 'flex', gap: 2 }}>
+                    <Button
+                      variant="contained"
+                      size="small"
+                      color="secondary"
+                      onClick={() => {
+                        setPendingFilters({
+                          searchText: '',
+                          dateFrom: '',
+                          dateTo: '',
+                          resultType: 'all',
+                          showAccessed: false,
+                          showClicked: false,
+                          showFiled: false,
+                          sortBy: 'target_email',
+                          rowsPerPage: 20,
+                          sort: 'asc'
+                        });
+                      }}>
+                      清空
+                    </Button>
+                    <Button
+                      variant="contained"
+                      size="small"
+                      onClick={() => {
+                        setFilters(pendingFilters);
+                        setNowRowsPerPage(pendingFilters.rowsPerPage);
+                        setPage(0);
+                        setSelectedUuids([]);
+                        setSelectAllAcrossPages(false);
+                        // fetchTaskLogs();
+                      }}>
+                      查詢
+                    </Button>
+                  </Box>
+                </AccordionDetails>
               </Accordion>
-          </FilterCard>
+            </FilterCard>
 
-          {/* 資料表格 */}
-          {error && (
+            {/* 資料表格 */}
+            {error && (
               <Alert severity="error" sx={{ mb: 2 }}>
-              {error}
+                {error}
               </Alert>
-          )}
+            )}
 
-          {loading ? (
+            {loading ? (
               <Box display="flex" alignItems="center" justifyContent="center" minHeight="300px">
-                  <CircularProgress />
-                  <Typography sx={{ ml: 2 }}>載入中...</Typography>
+                <CircularProgress />
+                <Typography sx={{ ml: 2 }}>載入中...</Typography>
               </Box>
-          ) : (
+            ) : (
               <Card sx={{ borderRadius: '12px', overflow: 'hidden' }}>
-                  <TablePagination
-                      component="div"
-                      count={totalLogs}
-                      page={page}
-                      onPageChange={handleChangePage}
-                      rowsPerPage={nowRowsPerPage}
-                      onRowsPerPageChange={() => {}}
-                      rowsPerPageOptions={[]}
-                      labelRowsPerPage=""
-                      labelDisplayedRows={({ from, to, count }) => 
-                      `${from}-${to} / 共 ${count} 筆`
-                      }
-                  />
-                  {totalLogs > 0 && selectedUuids.length === logs.length && !selectAllAcrossPages && 
-                    <Typography sx={{ ml: 2, mb: 1 }}>
-                      已選取這個頁面上全部{logs.length}個項目
-                      <Button 
-                        onClick={() => {setSelectAllAcrossPages(true);}}
-                        variant="text"
-                        size="small"
-                        sx={{ 
-                          textTransform: 'none',
-                          minWidth: 'unset',
-                          padding: '0 4px',
-                          verticalAlign: 'baseline'
-                        }}
-                      >
-                          選取所有篩選資料項目
-                      </Button>
-                    </Typography>
+                <TablePagination
+                  component="div"
+                  count={totalLogs}
+                  page={page}
+                  onPageChange={handleChangePage}
+                  rowsPerPage={nowRowsPerPage}
+                  onRowsPerPageChange={() => { }}
+                  rowsPerPageOptions={[]}
+                  labelRowsPerPage=""
+                  labelDisplayedRows={({ from, to, count }) =>
+                    `${from}-${to} / 共 ${count} 筆`
                   }
-                  {selectAllAcrossPages &&
-                    <Typography sx={{ ml: 2, mb: 1 }}>
-                      已選取全部{totalLogs}個篩選資料項目
-                      <Button 
-                        onClick={() => {
-                          setSelectAllAcrossPages(false);
-                          setSelectedUuids([]);
-                        }}
-                        variant="text"
-                        size="small"
-                        sx={{ 
-                          textTransform: 'none',
-                          minWidth: 'unset',
-                          padding: '0 4px',
-                          verticalAlign: 'baseline'
-                        }}
-                      >
-                        清除選取資料項目
-                      </Button>
-                    </Typography>
-                  }
-                  <TableContainer sx={{ maxHeight: '60vh' }}>
-                      <StyledTable stickyHeader>
-                      <TableHead>
-                          <TableRow>
-                          <TableCell>
-                            {/* 選取下載 <br /> */}
-                            NO. <br />
-                            {/* <Checkbox
+                />
+                {totalLogs > 0 && selectedUuids.length === logs.length && !selectAllAcrossPages &&
+                  <Typography sx={{ ml: 2, mb: 1 }}>
+                    已選取這個頁面上全部{logs.length}個項目
+                    <Button
+                      onClick={() => { setSelectAllAcrossPages(true); }}
+                      variant="text"
+                      size="small"
+                      sx={{
+                        textTransform: 'none',
+                        minWidth: 'unset',
+                        padding: '0 4px',
+                        verticalAlign: 'baseline'
+                      }}
+                    >
+                      選取所有篩選資料項目
+                    </Button>
+                  </Typography>
+                }
+                {selectAllAcrossPages &&
+                  <Typography sx={{ ml: 2, mb: 1 }}>
+                    已選取全部{totalLogs}個篩選資料項目
+                    <Button
+                      onClick={() => {
+                        setSelectAllAcrossPages(false);
+                        setSelectedUuids([]);
+                      }}
+                      variant="text"
+                      size="small"
+                      sx={{
+                        textTransform: 'none',
+                        minWidth: 'unset',
+                        padding: '0 4px',
+                        verticalAlign: 'baseline'
+                      }}
+                    >
+                      清除選取資料項目
+                    </Button>
+                  </Typography>
+                }
+                <TableContainer sx={{ maxHeight: '60vh' }}>
+                  <StyledTable stickyHeader>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell>
+                          {/* 選取下載 <br /> */}
+                          NO. <br />
+                          {/* <Checkbox
                                 checked={totalLogs > 0 && selectedUuids.length === logs.length}
                                 indeterminate={selectedUuids.length > 0 && selectedUuids.length < logs.length}
                                 onChange={e => {
@@ -705,31 +705,31 @@ export default function TaskDetail({ task, open, onClose }) {
                                   }                                    
                                 }}
                             /> */}
-                          </TableCell>
-                          <TableCell>類型</TableCell>
-                          <TableCell>受測人</TableCell>
-                          <TableCell>信件主旨</TableCell>
-                          <TableCell>預計寄送時間</TableCell>
-                          <TableCell>實際寄送時間</TableCell>
-                          <TableCell>郵件讀取資訊</TableCell>
-                          <TableCell>按鈕點擊資訊</TableCell>
-                          <TableCell>附件開啟資訊</TableCell>
-                          <TableCell>連結點擊資訊</TableCell>
-                          <TableCell>表格輸入資訊</TableCell>
-                          </TableRow>
-                      </TableHead>
-                      <TableBody>
-                          {logs.map((log, index) => {
-                          const globalIndex = page * nowRowsPerPage + index + 1;
-                          const templateTitle = mailTemplates.find(
-                            (tmpl) => tmpl.mtmpl_uuid === log.template_uuid
-                          )?.mtmpl_title;
+                        </TableCell>
+                        <TableCell>類型</TableCell>
+                        <TableCell>受測人</TableCell>
+                        <TableCell>信件主旨</TableCell>
+                        <TableCell>預計寄送時間</TableCell>
+                        <TableCell>實際寄送時間</TableCell>
+                        <TableCell>郵件讀取資訊</TableCell>
+                        <TableCell>按鈕點擊資訊</TableCell>
+                        <TableCell>附件開啟資訊</TableCell>
+                        <TableCell>連結點擊資訊</TableCell>
+                        <TableCell>表格輸入資訊</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {logs.map((log, index) => {
+                        const globalIndex = page * nowRowsPerPage + index + 1;
+                        const templateTitle = mailTemplates.find(
+                          (tmpl) => tmpl.mtmpl_uuid === log.template_uuid
+                        )?.mtmpl_title;
 
-                          return (
-                              <TableRow key={log.id || index}>
-                                  <TableCell>
-                                      <Box>
-                                          {/* <Checkbox
+                        return (
+                          <TableRow key={log.id || index}>
+                            <TableCell>
+                              <Box>
+                                {/* <Checkbox
                                           checked={selectedUuids.includes(log.uuid)}
                                           onChange={e => {
                                               if (e.target.checked) {
@@ -739,99 +739,99 @@ export default function TaskDetail({ task, open, onClose }) {
                                               }
                                           }}
                                           /> */}
-                                          {globalIndex}
-                                      </Box>
-                                  </TableCell>
-                                  <TableCell>
-                                      <Box>
-                                          <Chip 
-                                              label={log.access_dev ? '已觸發' : 
-                                                (log.send_time && log.send_res && log.send_res.includes("True")) ? '已寄出' : 
-                                                (log.send_time && log.send_res && log.send_res.includes("False")) ? '寄出失敗' : '待寄出'}
-                                              size="small"
-                                              color={log.access_dev ? 'error' : 
-                                                (log.send_time && log.send_res && log.send_res.includes("True")) ? 'success' :
-                                                (log.send_time && log.send_res && log.send_res.includes("False")) ? 'secondary' : 'info'}
-                                          />
-                                      </Box>
-                                  </TableCell>
-                                  <TableCell>
-                                      <Typography>
-                                          {log.person_info || ''}
-                                      </Typography>
-                                      <Typography>
-                                          {log.target_email || ''}
-                                      </Typography>
-                                  </TableCell>
-                                  <TableCell>{templateTitle || log.template_uuid}</TableCell>
-                                  <TableCell>{formatDateTime(log.plan_time)}</TableCell>
-                                  <TableCell>{formatDateTime(log.send_time)}</TableCell>
-                                  <TableCell>
-                                      <Typography>
-                                          <strong>{formatDateTime(log.access_time)}</strong>
-                                      </Typography>
-                                      <Typography>
-                                          {log.access_src}
-                                      </Typography>
-                                      <Typography>
-                                          {log.access_dev}
-                                      </Typography>
-                                  </TableCell>
-                                  <TableCell>
-                                      <Typography>
-                                          <strong>{formatDateTime(log.click_time)}</strong>
-                                      </Typography>
-                                      <Typography>
-                                          {log.click_src}
-                                      </Typography>
-                                      <Typography>
-                                          {log.click_dev}
-                                      </Typography>
-                                  </TableCell>
-                                  <TableCell>
-                                      <Typography>
-                                          <strong>{formatDateTime(log.file_time)}</strong>
-                                      </Typography>
-                                      <Typography>
-                                          {log.file_src}
-                                      </Typography>
-                                      <Typography>
-                                          {log.file_dev}
-                                      </Typography>
-                                  </TableCell>
-                                  <TableCell>
-                                      <Typography>
-                                          <strong>{formatDateTime(log.second_access_time)}</strong>
-                                      </Typography>
-                                      <Typography>
-                                          {log.second_access_src}
-                                      </Typography>
-                                      <Typography>
-                                          {log.second_access_dev}
-                                      </Typography>                                      
-                                  </TableCell>
-                                  <TableCell>
-                                      <Typography>
-                                          <strong>{formatDateTime(log.second_input_time)}</strong>
-                                      </Typography>
-                                      <Typography>
-                                          {log.second_input_src}
-                                      </Typography>
-                                      <Typography>
-                                          {log.second_input_dev}
-                                      </Typography>
-                                      <Typography>
-                                          {log.second_input_info}
-                                      </Typography>
-                                  </TableCell>
-                              </TableRow>
-                          );
-                          })}
-                      </TableBody>
-                      </StyledTable>
-                  </TableContainer>
+                                {globalIndex}
+                              </Box>
+                            </TableCell>
+                            <TableCell>
+                              <Box>
+                                <Chip
+                                  label={log.access_dev ? '已觸發' :
+                                    (log.send_time && log.send_res && log.send_res.includes("True")) ? '已寄出' :
+                                      (log.send_time && log.send_res && log.send_res.includes("False")) ? '寄出失敗' : '待寄出'}
+                                  size="small"
+                                  color={log.access_dev ? 'error' :
+                                    (log.send_time && log.send_res && log.send_res.includes("True")) ? 'success' :
+                                      (log.send_time && log.send_res && log.send_res.includes("False")) ? 'secondary' : 'info'}
+                                />
+                              </Box>
+                            </TableCell>
+                            <TableCell>
+                              <Typography>
+                                {log.person_info || ''}
+                              </Typography>
+                              <Typography>
+                                {log.target_email || ''}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>{templateTitle || log.template_uuid}</TableCell>
+                            <TableCell>{formatDateTime(log.plan_time)}</TableCell>
+                            <TableCell>{formatDateTime(log.send_time)}</TableCell>
+                            <TableCell>
+                              <Typography>
+                                <strong>{formatDateTime(log.access_time)}</strong>
+                              </Typography>
+                              <Typography>
+                                {log.access_src}
+                              </Typography>
+                              <Typography>
+                                {log.access_dev}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography>
+                                <strong>{formatDateTime(log.click_time)}</strong>
+                              </Typography>
+                              <Typography>
+                                {log.click_src}
+                              </Typography>
+                              <Typography>
+                                {log.click_dev}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography>
+                                <strong>{formatDateTime(log.file_time)}</strong>
+                              </Typography>
+                              <Typography>
+                                {log.file_src}
+                              </Typography>
+                              <Typography>
+                                {log.file_dev}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography>
+                                <strong>{formatDateTime(log.second_access_time)}</strong>
+                              </Typography>
+                              <Typography>
+                                {log.second_access_src}
+                              </Typography>
+                              <Typography>
+                                {log.second_access_dev}
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Typography>
+                                <strong>{formatDateTime(log.second_input_time)}</strong>
+                              </Typography>
+                              <Typography>
+                                {log.second_input_src}
+                              </Typography>
+                              <Typography>
+                                {log.second_input_dev}
+                              </Typography>
+                              <Typography>
+                                {log.second_input_info}
+                              </Typography>
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </StyledTable>
+                </TableContainer>
               </Card>
-          )}
+            )}
           </MainContainer>
         </Box>
       </Drawer>

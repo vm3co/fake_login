@@ -96,9 +96,9 @@ function getCookie(name) {
   const value = document.cookie
     .split("; ")
     .find(row => row.startsWith(`${name}=`));
-  
+
   if (!value) return null;
-  
+
   try {
     const decoded = decodeURIComponent(value.split("=")[1]);
     return JSON.parse(decoded);
@@ -117,7 +117,7 @@ const parseTasks = (sendtasks) => {
     } catch (e) {
       console.error("解析客戶任務 JSON 失敗:", e);
       return []; // 解析失敗則給空陣列
-    }       
+    }
   }
   return []; // 對於其他類型，回傳空陣列
 };
@@ -125,9 +125,9 @@ const parseTasks = (sendtasks) => {
 // 格式化日期函數
 const formatDate = (timestamp, type = "datetime") => {
   if (!timestamp || timestamp === 0) return "-";
-  
+
   const date = new Date(timestamp * 1000);
-  
+
   if (type === "date") {
     return date.toLocaleDateString('zh-TW');
   }
@@ -205,16 +205,17 @@ export default function Customer() {
   // 準備任務資料
   const prepareTaskData = () => {
     return sendtasksData.map((task, index) => ({
-        id: index + 1,
-        sendtask_uuid: task.sendtask_uuid,
-        name: task.sendtask_id,
-        status: task.status,
-        startDate: formatDate(task.test_start_ut, "date"),
-        endDate: task.stop_time_new === -1 ? formatDate(task.test_end_ut, "date") : formatDate(task.stop_time_new, "date"),
-        is_pause: task.is_pause,
-        totalplanned: task.totalplanned || 0,
-        totalsuccess: task.totalsuccess || 0,
-        totaltriggered: task.totaltriggered || 0,
+      id: index + 1,
+      sendtask_uuid: task.sendtask_uuid,
+      name: task.sendtask_id,
+      status: task.status,
+      startDate: formatDate(task.test_start_ut, "date"),
+      endDate: task.stop_time_new === -1 ? formatDate(task.test_end_ut, "date") : formatDate(task.stop_time_new, "date"),
+      is_pause: task.is_pause,
+      totalplanned: task.totalplanned || 0,
+      totalsuccess: task.totalsuccess || 0,
+      totalfailed: task.totalfailed || 0,
+      totaltriggered: task.totaltriggered || 0,
     }));
   };
 
@@ -231,7 +232,7 @@ export default function Customer() {
   });
 
   const getStatusText = (status) => {
-    switch(status) {
+    switch (status) {
       case 'triggered': return '已觸發';
       case 'active': return '進行中';
       case 'pending': return '等待中';
@@ -241,7 +242,7 @@ export default function Customer() {
   };
 
   const getStatusColor = (status) => {
-    switch(status) {
+    switch (status) {
       case 'triggered': return '#ef4444';
       case 'active': return '#10b981';
       case 'pending': return '#f59e0b';
@@ -388,8 +389,8 @@ export default function Customer() {
         )}
 
         {!customerData.sendtasks ? (
-          <Alert 
-            severity="info" 
+          <Alert
+            severity="info"
             sx={{ borderRadius: '12px' }}
           >
             未找到任務資料，請洽詢管理者
@@ -408,20 +409,20 @@ export default function Customer() {
             const taskStatus = customerData.sendtasks.find(t => t.uuid === task.sendtask_uuid);
             const isInCooldown = cooldowns[task.sendtask_uuid] && (Date.now() - cooldowns[task.sendtask_uuid] < 10000);
             return (
-              <TaskCard 
-                key={task.id} 
+              <TaskCard
+                key={task.id}
                 elevation={0}
               >
                 <TaskHeader>
-                  <Avatar 
-                    sx={{ 
+                  <Avatar
+                    sx={{
                       bgcolor: getStatusColor(task.status),
-                      mr: 2 
+                      mr: 2
                     }}
                   >
                     <Assignment />
                   </Avatar>
-                  
+
                   <Box sx={{ flex: 1 }}>
                     <Typography variant="h6" sx={{ fontWeight: 600 }}>
                       {task.name}
@@ -433,10 +434,10 @@ export default function Customer() {
                       </Typography>
                     </Box>
 
-                    <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                    {/* <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
                       {taskStatus.triggered &&
                       <Chip 
-                      label={`觸發率: ${task.totalsuccess > 0 ? ((task.totaltriggered / task.totalsuccess) * 100).toFixed(1) : 0}%`}
+                      label={`觸發率: ${task.totalsuccess > 0 ? ((task.totaltriggered / task.totalplanned) * 100).toFixed(1) : 0}%`}
                       color="warning"
                       size="small"
                       />
@@ -448,7 +449,7 @@ export default function Customer() {
                       />
                       {taskStatus.send && 
                       <Chip 
-                      label={`已成功寄出: ${task.totalsuccess || 0}`}
+                      label={`已寄出: ${task.totalsuccess + task.totalfailed || 0}`}
                       color="secondary"
                       size="small"
                       />
@@ -460,19 +461,19 @@ export default function Customer() {
                       size="small"
                       />
                       }
-                    </Box>
+                    </Box> */}
                     {taskStatus && (
                       <Box sx={{ mt: 1 }}>
                         <Typography variant="subtitle2">顯示：</Typography>
                         <ul style={{ margin: 0, paddingLeft: 16 }}>
-                          {taskStatus.send && 
-                          <li>
-                            已成功寄送:
-                            <ul>
-                            {taskStatus.notTriggered && <li>未觸發</li>}
-                            {taskStatus.triggered && <li>已觸發</li>}
-                            </ul>
-                          </li>}
+                          {taskStatus.send &&
+                            <li>
+                              已成功寄送:
+                              <ul>
+                                {taskStatus.notTriggered && <li>未觸發</li>}
+                                {taskStatus.triggered && <li>已觸發</li>}
+                              </ul>
+                            </li>}
                           {taskStatus.failed && <li>寄送失敗</li>}
                           {taskStatus.notyet && <li>待寄送</li>}
                           {!taskStatus.send && !taskStatus.failed && !taskStatus.notyet && !taskStatus.notTriggered && !taskStatus.triggered && <li>無</li>}
@@ -489,9 +490,9 @@ export default function Customer() {
                     />
                   </Box>
                   <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
-                    <Button 
-                      variant="outlined" 
-                      size="small" 
+                    <Button
+                      variant="outlined"
+                      size="small"
                       onClick={() => handleCardClick(task)}
                     >
                       查看詳情

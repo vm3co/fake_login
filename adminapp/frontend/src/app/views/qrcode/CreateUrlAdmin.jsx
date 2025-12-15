@@ -415,7 +415,7 @@ const CreateUrl = () => {
                   />
                   <TextField
                     fullWidth
-                    label="Qrcode網址"
+                    label="Qrcode網址(圖片網址)"
                     value={outputTextQrcode}
                     InputProps={{
                       readOnly: true,
@@ -428,6 +428,10 @@ const CreateUrl = () => {
                       ),
                     }}
                   />
+                  <Typography variant="body2" color="textSecondary">
+                    說明：請將Url貼至「插入/編輯連結」的「網址」，將Qrcode網址貼至「插入/編輯 圖片」的「圖片網址」。
+                    不要將下方的Qrcode圖片直接貼到郵件裡，會無法記錄觸發紀錄。
+                  </Typography>
                   {outputTextUrl && (
                     <Box sx={{ textAlign: 'center', mt: 2 }}>
                       <img src={outputTextQrcode} alt="QR Code" style={{ maxWidth: '150px', height: 'auto' }} />

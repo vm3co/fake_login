@@ -248,7 +248,7 @@ const CreateUrl = () => {
                   />
                   <TextField
                     fullWidth
-                    label="Qrcode網址"
+                    label="Qrcode網址(圖片網址)"
                     value={outputTextQrcode}
                     InputProps={{
                       readOnly: true,
