@@ -22,7 +22,7 @@ async def lifespan(app: FastAPI):
     yield
     await db.db_close()
 
-app = FastAPI(lifespan=lifespan, root_path="/trigger")
+app = FastAPI(lifespan=lifespan, root_path=os.getenv("ROOT_PATH", ""))
 # app = FastAPI(lifespan=lifespan)
 # app = FastAPI()
 

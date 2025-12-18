@@ -47,7 +47,7 @@ if (loginButton) {
             })
             .then(data => {
                 // 重新導向到警告頁面
-                window.location.href = "/trigger/warning";
+                window.location.href = `${API_BASE_PATH}/warning`;
             })
             .catch(err => {
                 alert("⚠️ 登入失敗：" + err.message);

@@ -11,9 +11,13 @@ router = APIRouter()
 
 '''組合qrcode網址'''
 def creat_qrcode_url(base_url: str, logintype: str, uuid: str):
-    # base_url 範例: "https://www.your-domain.com"
-    # 我們希望組合出像 "https://www.your-domain.com/trigger/page/test/some-uuid" 的網址
-    input_page_url = urljoin(base_url, "trigger/page/")
+    # base_url 範例: "https://selink.20231202.xyz" (正式) 或 "http://localhost/trigger" (本地)
+    # 我們希望組合出像 "https://.../page/test/some-uuid" 的網址
+    # 注意: urljoin 的行為與 path 有關，建議 base_url 結尾補上 / 
+    if not base_url.endswith("/"):
+        base_url += "/"
+    
+    input_page_url = urljoin(base_url, "page/")
     reurl = urljoin(input_page_url, logintype) + "/"
     # query_string = urlencode({QUERY_STRINGS: urljoin(reurl, uuid)})
     # url = urljoin(HOST_URL, uuid) + "?" + query_string
@@ -34,8 +38,10 @@ def creat_qrcode_url(base_url: str, logintype: str, uuid: str):
 
 @router.get("/{logintype}/uuid")
 async def project_qrcode_image(logintype: str, request: Request, uuid: str, url: str = None):
-    # 從 request 物件動態產生基礎 URL (例如: "https://example.com" 或 "http://localhost:8000")
-    base_url = f"{request.url.scheme}://{request.url.netloc}"
+    # 優先從環境變數讀取外部網址，若無則 fallback 到 request 分析 (for local dev default)
+    base_url = os.getenv("TRIGGER_APP_URL")
+    if not base_url:
+        base_url = f"{request.url.scheme}://{request.url.netloc}"
     qrcode_url = creat_qrcode_url(base_url, logintype, uuid)
     if url:
         qrcode_url = qrcode_url + "?url=" + url

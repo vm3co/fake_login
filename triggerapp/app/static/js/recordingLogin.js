@@ -30,7 +30,7 @@ form.addEventListener("submit", function (event) {
       // alert(`歡迎，${email}！您已成功登入。`);
       // window.location.href = "https://www.google.com";
       // 重新導向到警告頁面
-      window.location.href = "/trigger/warning";
+      window.location.href = `${API_BASE_PATH}/warning`;
 
     })
     .catch(err => {

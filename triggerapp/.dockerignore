@@ -1,8 +1,10 @@
+.git
+.gitignore
+.env
+venv/
+.venv/
 __pycache__/
 *.pyc
 *.pyo
-*.pyd
-.Python
-env/
-venv/
-.git/
+docker-compose.yaml
+Dockerfile

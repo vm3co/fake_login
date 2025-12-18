@@ -1,66 +1,68 @@
-# version: "3.9"
-
 services:
+  # =========================================
+  # 資料庫服務
+  # =========================================
   postgres-db:
-
     image: postgres:16
     container_name: fake-login-postgres-db
     environment:
       POSTGRES_USER: myuser
       POSTGRES_PASSWORD: mypassword
       POSTGRES_DB: mydatabase
-    ports:
-      - "15432:5432"
+    # 正式環境：不開放 ports，只允許內部 Nginx/App 連線，避免資料庫裸露
     volumes:
-      # - ./data/db:/var/lib/postgresql/data
       - pgdata:/var/lib/postgresql/data
-      - ./pg_backup:/backup
-    # 監控DB是否建好
-    healthcheck:   
-      test: ["CMD", "pg_isready", "-U", "myuser", "-d", "mydatabase"]
+      - ./pg_backup:/backup # 備份路徑保留
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-U", "myuser", "-d", "mydatabase" ]
       interval: 5s
       timeout: 5s
       retries: 5
 
+  # =========================================
+  # 觸發系統 (Trigger App)
+  # =========================================
   trigger-app:
     build:
       context: ./triggerapp
     container_name: fake-login-trigger-app
-    # ports:
-    #   - "${TRIGGER_PORT}:8080"
     environment:
       - LOG_FILE=${LOG_PATH}
+      - TRIGGER_APP_URL=${TRIGGER_APP_URL}
+      - ROOT_PATH=${ROOT_PATH}
+    # 正式環境：依賴 Dockerfile 內的 COPY 指令，不掛載本地原始碼
     volumes:
-      - ./triggerapp:/app
-    # 監控DB是否建好，建好再連線
+      # 只掛載templates資料
+      - templates_data:/app/templates
     depends_on:
       postgres-db:
         condition: service_healthy
     env_file:
       - .env
 
+  # =========================================
+  # 管理後台 (Admin App)
+  # =========================================
   admin-app:
     build:
       context: ./adminapp
       dockerfile: Dockerfile
     container_name: fake-login-admin-app
-    # ports:
-    #   - "${ADMIN_PORT}:8080"
+    # 正式環境：依賴 Dockerfile 內的 COPY 指令
     volumes:
-      # - ./adminapp/Logger:/app/Logger
-      # - ./adminapp/app/certs:/app/app/certs
-      # - ./adminapp/frontend:/app/frontend
-      - ./adminapp:/app
-      - ./triggerapp/app/templates:/app/uploads_for_trigger_app_templates
-    # 監控DB是否建好，建好再連線
+      # 只掛載templates資料
+      - templates_data:/app/uploads_for_trigger_app_templates
     depends_on:
       postgres-db:
         condition: service_healthy
     env_file:
       - .env
+    environment:
+      - TRIGGER_APP_URL=${TRIGGER_APP_URL}
 
-
-  # Nginx 代理服務
+  # =========================================
+  # Nginx 反向代理
+  # =========================================
   nginx:
     build:
       context: .
@@ -68,11 +70,17 @@ services:
     container_name: fake-login-nginx
     ports:
       - "80:80"
-      - "443:443" # 為未來啟用 HTTPS 預留
+      - "443:443"
     depends_on:
       - admin-app
       - trigger-app
-
+    # Nginx 需要讀取最新的設定檔
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      # 如果你有 SSL 憑證，未來可以在這裡掛載
+      # - ./certs:/etc/nginx/certs
 
 volumes:
-  pgdata:
+  pgdata: # 定義這個共用卷
+
+  templates_data:

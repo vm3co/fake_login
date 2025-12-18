@@ -10,5 +10,9 @@
   {
     "value": "google",
     "label": "Google"
+  },
+  {
+    "value": "modern_login",
+    "label": "Modern Login"
   }
 ]
