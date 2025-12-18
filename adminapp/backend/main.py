@@ -160,43 +160,43 @@ def start_scheduler():
         minutes=10,
         id='refresh_token'
     )
-    # # 每60分鐘執行一次，更新今日建立任務
-    # scheduler.add_job(
-    #     refresh_today_create_task_job,
-    #     'interval',
-    #     minutes=60,
-    #     id='refresh_today_create_task'
-    # )
-    # # 每30分鐘執行一次，刷新今日任務
-    # scheduler.add_job(
-    #     refresh_notyet_today_tasks_job,
-    #     'interval',
-    #     minutes=30,
-    #     id='refresh_notyet_today_tasks'
-    # )
-    # # 每天凌晨 0:50 執行 check_sendtasks
-    # scheduler.add_job(
-    #     check_sendtasks_job,
-    #     'cron',
-    #     hour=0,
-    #     minute=50,
-    #     id='check_sendtasks'
-    # )
-    # # 每天凌晨 1:00 執行 sendlog_stats 刷新
-    # scheduler.add_job(
-    #     refresh_sendlog_stats_job, 
-    #     'cron', 
-    #     hour=1, 
-    #     minute=0,
-    #     id='refresh_sendlog_stats'
-    # )
+    # 每60分鐘執行一次，更新今日建立任務
+    scheduler.add_job(
+        refresh_today_create_task_job,
+        'interval',
+        minutes=60,
+        id='refresh_today_create_task'
+    )
+    # 每30分鐘執行一次，刷新今日任務
+    scheduler.add_job(
+        refresh_notyet_today_tasks_job,
+        'interval',
+        minutes=30,
+        id='refresh_notyet_today_tasks'
+    )
+    # 每天凌晨 0:50 執行 check_sendtasks
+    scheduler.add_job(
+        check_sendtasks_job,
+        'cron',
+        hour=0,
+        minute=50,
+        id='check_sendtasks'
+    )
+    # 每天凌晨 1:00 執行 sendlog_stats 刷新
+    scheduler.add_job(
+        refresh_sendlog_stats_job, 
+        'cron', 
+        hour=1, 
+        minute=0,
+        id='refresh_sendlog_stats'
+    )
     scheduler.start()
     logger.info("APScheduler 啟動")
     logger.info("refresh_token_job 已排程在每 10 分鐘執行")
-    # logger.info("refresh_today_create_task_job 已排程在每 60 分鐘執行")
-    # logger.info("refresh_notyet_today_tasks_job 已排程在每 30 分鐘執行")
-    # logger.info("check_sendtasks_job 已排程在每日 00:50 執行")
-    # logger.info("refresh_sendlog_stats_job 已排程在每日 01:00 執行")
+    logger.info("refresh_today_create_task_job 已排程在每 60 分鐘執行")
+    logger.info("refresh_notyet_today_tasks_job 已排程在每 30 分鐘執行")
+    logger.info("check_sendtasks_job 已排程在每日 00:50 執行")
+    logger.info("refresh_sendlog_stats_job 已排程在每日 01:00 執行")
 
 # 引入資料庫
 @asynccontextmanager
