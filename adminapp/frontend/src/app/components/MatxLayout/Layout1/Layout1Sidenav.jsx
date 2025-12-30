@@ -38,6 +38,14 @@ const SidebarNavRoot = styled("div", {
       maxWidth: "100%",
       "& .nav-bullet": { display: "block" },
       "& .nav-bullet-text": { display: "none" }
+    },
+    "& .brand-root": {
+      padding: "20px 18px 20px 29px",
+      justifyContent: "space-between"
+    },
+    "& .brand-logo": {
+      width: "96px",
+      height: "64px"
     }
   }
 }));

@@ -1,6 +1,5 @@
 import useAuth from 'app/hooks/useAuth';
-import CreateUrlAdmin from './CreateUrlAdmin';
-import CreateUrlUser from './CreateUrlUser';
+import CreateUrl from './CreateUrl';
 
 /**
  * Qrcode 頁面的分派器元件。
@@ -12,7 +11,7 @@ const QrcodeDispatcher = () => {
   // 判斷使用者 email 是否為 admin
   const isAdmin = user?.name === 'admin@acercsi.com';
 
-  return isAdmin ? <CreateUrlAdmin /> : <CreateUrlUser />;
+  return <CreateUrl isAdmin={isAdmin} />;
 };
 
 export default QrcodeDispatcher;

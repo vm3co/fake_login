@@ -14,5 +14,13 @@
   {
     "value": "modern_login",
     "label": "Modern Login"
+  },
+  {
+    "value": "instagram",
+    "label": "ig_dark"
+  },
+  {
+    "value": "railway",
+    "label": "台鐵"
   }
 ]

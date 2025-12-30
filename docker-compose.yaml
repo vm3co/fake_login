@@ -29,7 +29,6 @@ services:
     environment:
       - LOG_FILE=${LOG_PATH}
       - TRIGGER_APP_URL=${TRIGGER_APP_URL}
-      - ROOT_PATH=${ROOT_PATH}
     # 正式環境：依賴 Dockerfile 內的 COPY 指令，不掛載本地原始碼
     volumes:
       # 只掛載templates資料
@@ -59,6 +58,7 @@ services:
       - .env
     environment:
       - TRIGGER_APP_URL=${TRIGGER_APP_URL}
+      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
 
   # =========================================
   # Nginx 反向代理
@@ -76,7 +76,8 @@ services:
       - trigger-app
     # Nginx 需要讀取最新的設定檔
     volumes:
-      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/proxy_params_common:/etc/nginx/proxy_params_common:ro
       # 如果你有 SSL 憑證，未來可以在這裡掛載
       # - ./certs:/etc/nginx/certs
 

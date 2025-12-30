@@ -615,3 +615,41 @@ class DBUser:
         except Exception as e:
             logger.error(f"Error updating password for {user_type} {identifier}: {str(e)}")
             return {"status": "error", "message": f"更新密碼時發生錯誤: {str(e)}"}
+
+    async def add_login_log(self, username: str, action: str, status: str, ip_address: str = None, details: str = None):
+        """
+        登入/登出紀錄
+        :param username: 使用者名稱
+        :param action: 動作 ('login', 'logout')
+        :param status: 狀態 ('success', 'failed')
+        :param ip_address: IP 位址
+        :param details: 詳細資訊
+        """
+        await self.db.check_db_connection()
+        try:
+            data = {
+                "username": username,
+                "action": action,
+                "status": status,
+                "ip_address": ip_address,
+                "details": details
+            }
+            await self.db.insert_db("login_logs", data)
+            logger.info(f"Added login log: {username} {action} {status}")
+        except Exception as e:
+            logger.error(f"Error adding login log: {str(e)}")
+
+    async def get_login_logs(self, limit: int = 100):
+        """
+        取得登入/登出紀錄
+        :param limit: 限制筆數
+        :return: 紀錄列表
+        """
+        await self.db.check_db_connection()
+        try:
+            query = f'SELECT * FROM login_logs ORDER BY create_time DESC LIMIT {limit}'
+            logs = await self.db.execute_query(query)
+            return logs
+        except Exception as e:
+            logger.error(f"Error fetching login logs: {str(e)}")
+            return []

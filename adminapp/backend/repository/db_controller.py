@@ -17,12 +17,13 @@ logger = Logger().get_logger()
 class ApplianceDB:
     def __init__(self):
         self.db_pool = None
-        self.allowed_tables = {"sendtasks", "accts", "users", "notifications"}
+        self.allowed_tables = {"sendtasks", "accts", "users", "notifications", "login_logs"}
         self.allowed_columns = {
             "sendtasks": {"sendtask_id", "sendtask_uuid", "sendtask_owner_gid", "sendtask_create_ut"},
             "accts": {"acct_id", "acct_uuid", "acct_email", "acct_full_name", "acct_full_name_2nd", "acct_activate", "orgs"},
             "users": {"username", "password_hash", "email", "full_name", "orgs", "create_time"},
-            "notifications": {"username", "title", "subtitle", "heading", "timestamp", "path", "icon_name", "icon_color", "is_read", "details"}
+            "notifications": {"username", "title", "subtitle", "heading", "timestamp", "path", "icon_name", "icon_color", "is_read", "details"},
+            "login_logs": {"username", "action", "status", "ip_address", "details", "create_time"}
         }
 
     async def db_init(self):

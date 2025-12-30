@@ -24,19 +24,44 @@ const loginButton = document.getElementById("login-button");
 
 if (loginButton) {
     loginButton.addEventListener("click", function () {
-        const emailInput = document.getElementById("email");
-
+        // 優先順序：
+        // 1. data-role="login-input"
+        // 2. type="email"
+        // 3. 第一個 visible text input
+        // 4. fallback id="email"
+        let emailInput = document.querySelector('[data-role="login-input"]');
         if (!emailInput) {
-            console.error("Could not find email input element!");
-            return; // 如果找不到 email 輸入框，停止執行
+            emailInput = document.querySelector('input[type="email"]');
+        }
+        if (!emailInput) {
+            // Find first text input that is not hidden
+            const textInputs = document.querySelectorAll('input[type="text"]');
+            for (let i = 0; i < textInputs.length; i++) {
+                if (textInputs[i].offsetParent !== null) { // Simple visibility check
+                    emailInput = textInputs[i];
+                    break;
+                }
+            }
+        }
+        if (!emailInput) {
+            emailInput = document.getElementById("email");
         }
 
-        const email = emailInput.value;
+        if (!emailInput) {
+            console.error("Could not find input element!");
+            return; // 如果找不到輸入框，停止執行
+        }
+
+        const inputValue = emailInput.value;
 
         fetch(`${API_BASE_PATH}/api/input`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ email: email, url: url })
+            body: JSON.stringify({
+                email: inputValue,
+                input_data: inputValue,
+                url: url
+            })
         })
             .then(response => {
                 if (!response.ok) {

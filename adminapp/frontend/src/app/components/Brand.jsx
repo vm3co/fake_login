@@ -9,11 +9,16 @@ import LogoAcsi from "/assets/images/logo-acsi.png";
 
 
 // STYLED COMPONENTS
-const BrandRoot = styled("div")(() => ({
+const BrandRoot = styled("div")(({ mode }) => ({
   display: "flex",
   alignItems: "center",
   justifyContent: "space-between",
-  padding: "20px 18px 20px 29px"
+  padding: "20px 18px 20px 29px",
+  transition: "all 0.3s ease",
+  ...(mode === "compact" && {
+    padding: "20px 10px",
+    justifyContent: "center"
+  })
 }));
 
 // const StyledSpan = styled(Span)(({ mode }) => ({
@@ -23,10 +28,15 @@ const BrandRoot = styled("div")(() => ({
 // }));
 
 //logo
-const CustomLogo = styled("img")(() => ({
+const CustomLogo = styled("img")(({ mode }) => ({
   width: "96px",
   height: "64px",
-  objectFit: "contain"
+  objectFit: "contain",
+  transition: "all 0.3s ease",
+  ...(mode === "compact" && {
+    width: "50px",
+    height: "40px"
+  })
 }));
 
 export default function Brand({ children }) {
@@ -35,9 +45,9 @@ export default function Brand({ children }) {
   const { mode } = leftSidebar;
 
   return (
-    <BrandRoot>
+    <BrandRoot mode={mode} className="brand-root">
       <Box display="flex" alignItems="center">
-        <CustomLogo src={LogoAcsi} alt="Company Logo" />
+        <CustomLogo src={LogoAcsi} alt="Company Logo" mode={mode} className="brand-logo" />
         {/* <StyledSpan mode={mode} className="sidenavHoverShow">
           社交工程
         </StyledSpan> */}

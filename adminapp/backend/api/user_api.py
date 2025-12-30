@@ -15,9 +15,12 @@ from jose import jwt, JWTError
 logger = Logger().get_logger()
 
 # Load environment variables from .env file
+from dotenv import load_dotenv
 env_path = Path(__file__).parent.parent.parent.parent.parent / ".env"
-ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@acercsi.com")
-ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "admin123")
+load_dotenv(dotenv_path=env_path)
+
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL")
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "super-secret-very-long-random-string")
 ALGORITHM = "HS256"
 
@@ -83,7 +86,7 @@ def get_router(db, db_user):
         "/auth/login",
         tags=["user"]
         )
-    async def login(data: UserRequest):
+    async def login(data: UserRequest, request: Request):
         username = data.username
         password = data.password
         # 檢查是否為管理員登入
@@ -101,6 +104,13 @@ def get_router(db, db_user):
                 "user_type": "admin",
                 "full_name": "admin"
             }
+            await db_user.add_login_log(
+                username=username,
+                action="login",
+                status="success",
+                ip_address=request.client.host,
+                details="Admin login"
+            )
             return {
                 "status": "success", 
                 "message": "管理員登入成功",
@@ -126,6 +136,13 @@ def get_router(db, db_user):
                     "user_type": "user",
                     "full_name": user.get("full_name", "")
                 }
+                await db_user.add_login_log(
+                    username=username,
+                    action="login",
+                    status="success",
+                    ip_address=request.client.host,
+                    details="User login"
+                )
                 return {
                     "status": "success", 
                     "message": "使用者登入成功",
@@ -151,6 +168,13 @@ def get_router(db, db_user):
                     "user_type": "customer",
                     "full_name": customer.get("customer_full_name", "")
                 }
+                await db_user.add_login_log(
+                    username=username,
+                    action="login",
+                    status="success",
+                    ip_address=request.client.host,
+                    details="Customer login"
+                )
                 return {
                     "status": "success", 
                     "message": "客戶登入成功",
@@ -159,7 +183,26 @@ def get_router(db, db_user):
                 }
     
         # 都找不到，登入失敗
+        await db_user.add_login_log(
+            username=username,
+            action="login",
+            status="failed",
+            ip_address=request.client.host,
+            details="Invalid credentials"
+        )
         return {"status": "error", "message": "帳號或密碼錯誤"}    
+
+    @router.post("/auth/logout", tags=["user"])
+    async def logout(request: Request, current_user: dict = Depends(get_current_user)):
+        username = current_user.get("username", "unknown")
+        await db_user.add_login_log(
+            username=username,
+            action="logout",
+            status="success",
+            ip_address=request.client.host,
+            details="User logout"
+        )
+        return {"status": "success", "message": "登出成功"}
 
     @router.get(
         "/auth/profile",
@@ -295,5 +338,16 @@ def get_router(db, db_user):
         except Exception as e:
             logger.error(f"Error syncing accts: {str(e)}")
             raise HTTPException(status_code=500, detail=f"同步帳號時發生錯誤: {str(e)}")
+
+    @router.get(
+        "/auth/logs",
+        tags=["user"]
+    )
+    async def get_login_logs(limit: int = 100, current_user: dict = Depends(get_current_user)):
+        if current_user.get("user_type") != "admin":
+            raise HTTPException(status_code=403, detail="權限不足")
+        
+        logs = await db_user.get_login_logs(limit)
+        return logs
 
     return router

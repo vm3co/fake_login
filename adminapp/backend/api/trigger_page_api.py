@@ -48,7 +48,7 @@ def validate_page_value(pageValue: str = Form(...)):
     if not re.match(r"^[a-z0-9_]+$", pageValue):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="「網頁值 (value)」只能包含小寫字母、數字和底線。"
+            detail="網址 ID 只能包含小寫字母、數字和底線。"
         )
     return pageValue
 
@@ -166,7 +166,7 @@ def get_router():
                 save_path.unlink() 
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail=f"「網頁值 (value)」 '{pageValue}' 已存在於 pageOptions.json 中。"
+                    detail=f" 網址 ID '{pageValue}' 已存在於 pageOptions.json 中。"
                 )
 
             # 新增資料
@@ -221,7 +221,7 @@ def get_router():
             if any(item.get("value") == pageValue for item in data):
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail=f"新的網頁值 '{pageValue}' 已經存在於另一個項目中。"
+                    detail=f"新的網址 ID '{pageValue}' 已經存在於另一個項目中。"
                 )
 
         try:
@@ -671,7 +671,7 @@ def get_router():
                 save_path.unlink() # Rollback
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
-                    detail=f"「網頁值 (value)」 '{pageValue}' 已存在於 pageOptions.json 中。"
+                    detail=f"網址 ID '{pageValue}' 已存在於 pageOptions.json 中。"
                 )
 
             new_entry = {"value": pageValue, "label": pageLabel}
@@ -692,5 +692,107 @@ def get_router():
             "message": f"自訂頁面 '{pageLabel}' 已成功建立。",
             "new_entry": new_entry
         }
+
+    @router.post(
+        "/generate_with_ai",
+        summary="使用 AI 生成頁面",
+        tags=["trigger page"]
+    )
+    async def generate_page_with_ai(
+        prompt: str = Form(..., description="使用者的提示詞"),
+        refUrl: str = Form(None, description="參考網址 (可選)"),
+        apiKey: str = Form(None, description="Google Gemini API Key (可選)")
+    ):
+        """
+        接收 Prompt，呼叫 Gemini API 生成 HTML。
+        """
+        import google.generativeai as genai
+        from fastapi.responses import PlainTextResponse
+
+        # 1. 決定 API Key
+        # 優先使用傳入的，否則使用環境變數
+        api_key_to_use = apiKey
+        if not api_key_to_use:
+            api_key_to_use = os.getenv("GOOGLE_API_KEY")
+        
+        if not api_key_to_use:
+             raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="未提供 Gemini API Key，且後端環境變數也未設定 GOOGLE_API_KEY。"
+            )
+
+        # 2. 設定 Gemini
+        try:
+            genai.configure(api_key=api_key_to_use)
+            model = genai.GenerativeModel("gemini-2.5-flash") # 使用較快且新的模型
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Gemini 設定失敗: {str(e)}"
+            )
+
+        # 3. 準備 System Prompt / 指令
+        # 這裡我們定義嚴格的規則
+        system_instructions = """
+你是一個專業的前端工程師，專門製作社交演練用的登入頁面。
+使用者會給你一個描述 (e.g. "Facebook 登入頁面")，你需要生成一個單一的 HTML 檔案。
+
+[重點功能 - 仿真設計]
+1. 如果使用者指定了特定的知名服務 (例如：Facebook, Google, 台鐵, Instagram, Microsoft 365 等)：
+   - 你必須運用你內部的知識，精確還原該品牌 **真實登入頁面** 的視覺風格。
+   - 使用該品牌的官方配色 (Brand Colors)。
+   - 模仿其佈局結構 (例如：左右分割、置中卡片、背景圖風格)。
+   - 盡可能還原按鈕樣式、輸入框樣式和字體風格。
+   - 如果需要 Logo，請使用 SVG 繪製或使用可靠的 CDN 連結，使其看起來像真的。
+
+[必要的技術限制 - 絕對必須遵守]
+1. 這是一個釣魚演練系統的模板。
+2. **必須**包含以下 Script 區塊，且必須放在 `</body>` 之前：
+   ```html
+   <script>
+     const API_BASE_PATH = "{{ api_base_path }}";
+   </script>
+   <script src="{{ url_for('static', path='js/recordingLogin.js') }}"></script>
+   ```
+   **注意**：`API_BASE_PATH` 的值必須保留為 Jinja2 的模板語法 `{{ api_base_path }}`，`src` 也必須保留 `{{ url_for(...) }}`。不要更改它們。
+
+3. **登入表單的輸入欄位**：
+   - **必須**使用 `<form id="login-form">` 包裝所有的輸入欄位和提交按鈕。
+   - 所有的 `<input>` 標籤，如果是用來讓使用者輸入資料的 (如 Email, 帳號, 密碼)，**必須**加上屬性 `data-role="login-input"`。
+   - 例如：`<input type="email" name="email" data-role="login-input" required>`
+   - `input` 的 `id` 屬性也請設定。
+
+4. **樣式 (CSS)**：
+   - 請將 CSS 直接寫在 `<style>` 標籤內 (Internal CSS)。
+   - 版面要符合使用者的描述。
+
+5. **輸出格式**：
+   - 只回傳純 HTML 程式碼。
+   - 不要包含 Markdown 的 ```html ... ``` 標記，只要 HTML 本身。
+   - 不要包含解釋性文字。
+"""
+
+        prompt_suffix = f"使用者的需求：{prompt}"
+        if refUrl:
+            prompt_suffix += f"\n\n[參考網址]\n使用者提供了一個參考網址：{refUrl}\n這是使用者想模仿的目標。請盡可能參考該網址對應的現有網站設計風格（如果該網站在你的知識庫中）。"
+
+        full_prompt = f"{system_instructions}\n\n{prompt_suffix}"
+
+        # 4. 呼叫模型
+        try:
+            response = model.generate_content(full_prompt)
+            generated_text = response.text
+            
+            # 清理可能的 markdown 標記 (如果模型還是輸出的話)
+            generated_text = generated_text.replace("```html", "").replace("```", "").strip()
+
+            return PlainTextResponse(generated_text)
+
+        except Exception as e:
+            logger.error(f"Gemini 生成失敗: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"AI 生成失敗: {str(e)}"
+            )
 
     return router

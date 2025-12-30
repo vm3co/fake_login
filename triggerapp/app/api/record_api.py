@@ -66,7 +66,8 @@ async def writer_test(type, new_data):
 
 # 登入後記錄id及email
 class LoginData(BaseModel):
-    email: str
+    email: str = None  # Make email optional
+    input_data: str = None
     url: str
 
 @router.post("/input")
@@ -76,7 +77,11 @@ async def log_input(
     ):
     url_id = data.url.split("/")[-1][:64]
     now = int(datetime.now().timestamp())   # 記錄當下時間戳
-    new_data = [now, request_info["ip"], request_info["user_agent"], data.email]
+
+    # Determine what info to record: input_data has priority, fallback to email
+    info_to_record = data.input_data if data.input_data else data.email
+    
+    new_data = [now, request_info["ip"], request_info["user_agent"], info_to_record]
     columns_list = ["second_input_time", "second_input_src", "second_input_dev", "second_input_info"]
 
     if url_id == "test":

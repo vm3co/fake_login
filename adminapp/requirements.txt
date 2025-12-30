@@ -12,3 +12,4 @@ passlib
 apscheduler
 python-jose
 openpyxl
+google-generativeai

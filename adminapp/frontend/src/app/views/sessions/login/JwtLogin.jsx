@@ -53,8 +53,8 @@ const StyledRoot = styled("div")(() => ({
 
 // initial login credentials
 const initialValues = {
-  username: import.meta.env.DEV ? "admin@acercsi.com" : "",
-  password: import.meta.env.DEV ? "admin123" : "",
+  username: import.meta.env.VITE_ADMIN_EMAIL || "",
+  password: import.meta.env.VITE_ADMIN_PASSWORD || "",
   remember: true
 };
 // const initialValues = {

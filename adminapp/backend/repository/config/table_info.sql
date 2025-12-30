@@ -94,3 +94,14 @@ CREATE TABLE IF NOT EXISTS notifications (
     details TEXT,
     is_read BOOLEAN DEFAULT FALSE
 );
+
+-- login_logs
+CREATE TABLE IF NOT EXISTS login_logs (
+    id SERIAL PRIMARY KEY,
+    username TEXT NOT NULL,
+    action TEXT NOT NULL, -- 'login', 'logout'
+    status TEXT NOT NULL, -- 'success', 'failed'
+    ip_address TEXT,
+    details TEXT,
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

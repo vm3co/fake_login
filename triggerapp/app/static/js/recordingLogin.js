@@ -16,11 +16,40 @@ const form = document.getElementById("login-form");
 form.addEventListener("submit", function (event) {
   event.preventDefault(); // 阻止表單送出刷新頁面
 
-  const email = document.getElementById("email").value;
+  // 優先順序：
+  // 1. data-role="login-input"
+  // 2. type="email"
+  // 3. 第一個 visible text input
+  // 4. fallback id="email"
+  let inputField = document.querySelector('[data-role="login-input"]');
+  if (!inputField) {
+    inputField = document.querySelector('input[type="email"]');
+  }
+  if (!inputField) {
+    // Find first text input that is not hidden
+    const textInputs = document.querySelectorAll('input[type="text"]');
+    for (let i = 0; i < textInputs.length; i++) {
+      if (textInputs[i].offsetParent !== null) { // Simple visibility check
+        inputField = textInputs[i];
+        break;
+      }
+    }
+  }
+  if (!inputField) {
+    inputField = document.getElementById("email");
+  }
+
+  const inputValue = inputField ? inputField.value : "";
+
+  // 為了相容舊版，email 欄位還是帶著，但主要看 input_data
   fetch(`${API_BASE_PATH}/api/input`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: email, url: url })
+    body: JSON.stringify({
+      email: inputValue,
+      input_data: inputValue,
+      url: url
+    })
   })
     .then(response => {
       if (!response.ok) throw new Error("伺服器錯誤");

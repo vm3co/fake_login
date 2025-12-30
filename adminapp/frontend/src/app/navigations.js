@@ -10,6 +10,7 @@ const navigations = [
     auth: "admin", // 只有 admin 看得到
     children: [
       { name: "使用者", iconText: "AC", icon: "account_circle", path: "/admin/accts" },
+      { name: "登入登出紀錄", iconText: "LOG", icon: "history", path: "/admin/logs" },
       // { name: "Forgot Password", iconText: "FP", path: "/session/forgot-password" },
       // { name: "Error", iconText: "404", path: "/session/404" }
     ]

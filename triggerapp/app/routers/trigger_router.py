@@ -28,6 +28,10 @@ async def get_request_info(request: Request) -> Dict[str, Any]:
     return {"ip": ip, "user_agent": user_agent}
 
 async def writer_db(url_id, columns_list, new_data):
+    if len(url_id) < 48:
+        # Avoid empty table name error for test/short IDs
+        return
+        
     table_name = url_id[16:48]
     person_uuid = url_id[48:] + url_id[:16]
 
@@ -67,7 +71,11 @@ async def project_detail_dynamic(request: Request, page_name: str, project_id: s
     new_data = [now, request_info["ip"], request_info["user_agent"]]
     
     if project_id == "test" or project_id == "99999_99999":
-        with open('data/test_visit.csv', 'a', newline='', encoding='utf-8') as f:
+        # Ensure data directory exists
+        data_file = Path('data/test_visit.csv')
+        data_file.parent.mkdir(parents=True, exist_ok=True)
+        
+        with open(data_file, 'a', newline='', encoding='utf-8') as f:
             writer = csv.writer(f)
             # 使用 writerow 寫入單行
             writer.writerow(new_data)
