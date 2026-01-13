@@ -105,3 +105,13 @@ CREATE TABLE IF NOT EXISTS login_logs (
     details TEXT,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- trigger_pages
+CREATE TABLE IF NOT EXISTS trigger_pages (
+    id SERIAL PRIMARY KEY,
+    page_value VARCHAR(255) UNIQUE NOT NULL,
+    page_label TEXT NOT NULL,
+    owner_uuid VARCHAR(36), -- NULL 表示系統預設頁面
+    page_type TEXT DEFAULT 'custom', -- 'system', 'custom', 'ai'
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);

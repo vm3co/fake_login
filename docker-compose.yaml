@@ -58,7 +58,10 @@ services:
       - .env
     environment:
       - TRIGGER_APP_URL=${TRIGGER_APP_URL}
-      - GOOGLE_API_KEY=${GOOGLE_API_KEY}
+      - GEMINI_APY_KEY=${GEMINI_APY_KEY}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - LITELLM_API_KEY=${LITELLM_API_KEY}
+      - LITELLM_SERVER_IP=${LITELLM_SERVER_IP}
 
   # =========================================
   # Nginx 反向代理

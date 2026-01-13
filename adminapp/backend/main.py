@@ -231,7 +231,7 @@ app.add_middleware(
 # 註冊路由
 app.include_router(log_router(db, db_user), prefix="/api")
 app.include_router(user_router(db, db_user), prefix="/api")
-app.include_router(page_router(), prefix="/api/trigget_page")
+app.include_router(page_router(db, db_user), prefix="/api/trigger_page")
 app.include_router(notification_api.router, prefix="/api")
 app.include_router(job_api.router, prefix="/api")
 

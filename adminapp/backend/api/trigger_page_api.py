@@ -1,7 +1,6 @@
 '''
 處理trigger網頁
 '''
-import json
 import os
 import shutil
 import re
@@ -13,12 +12,19 @@ from fastapi import (
     UploadFile, 
     File, 
     HTTPException, 
-    status
+    status,
+    Request,
+    Request,
+    Query
 )
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, FileResponse
+from openai import OpenAI
+import google.generativeai as genai
 
 from backend.services.log_manager import Logger
-
+from backend.repository.db_controller import ApplianceDB
+from backend.services.db_user import DBUser
+from backend.api.user_api import get_current_user
 
 logger = Logger().get_logger()
 
@@ -27,15 +33,10 @@ logger = Logger().get_logger()
 # 容器內的程式根目錄
 BASE_DIR = Path("/app")
 
-# JSON 設定檔的路徑
-DATA_DIR = BASE_DIR / "backend" / "static"
-JSON_FILE_PATH = DATA_DIR / "pageOptions.json"
-
 # 檔案上傳的目的地 (對應到 loginapp/templates)
 UPLOAD_DIR = BASE_DIR / "uploads_for_trigger_app_templates" 
 
 # 應用啟動時，確保資料夾存在
-DATA_DIR.mkdir(parents=True, exist_ok=True)
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # --- 2. 驗證函式 (Dependency) ---
@@ -52,47 +53,74 @@ def validate_page_value(pageValue: str = Form(...)):
         )
     return pageValue
 
-def get_page_data():
-    """輔助函式：讀取 JSON 資料"""
-    if not JSON_FILE_PATH.exists():
-        return []
-    try:
-        with JSON_FILE_PATH.open("r", encoding="utf-8") as f:
-            data = json.load(f)
-            if not isinstance(data, list):
-                return []
-            return data
-    except json.JSONDecodeError:
-        return []
-
-def save_page_data(data: list):
-    """輔助函式：寫回 JSON 資料"""
-    try:
-        with JSON_FILE_PATH.open("w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.error(f"寫入 JSON 失敗: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"寫入 JSON 檔案失敗: {str(e)}"
-        )
-
 # --- 3. API 端點 ---
 
-def get_router():
+def get_router(db: ApplianceDB, db_user: DBUser):
 
     router = APIRouter()
+
+    # 初始化預設頁面
+    async def init_defaults():
+        defaults = ["test", "modern", "google", "onedrive"]
+        await db.check_db_connection()
+        
+        for val in defaults:
+            # 檢查是否已存在
+            exists = await db.get_db("trigger_pages", where_column="page_value", values=val)
+            if not exists:
+                logger.info(f"初始化預設頁面: {val}")
+                try:
+                    await db.insert_db("trigger_pages", {
+                        "page_value": val,
+                        "page_label": val, # 預設 label 同 value
+                        "owner_uuid": None, # 系統頁面
+                        "page_type": "system"
+                    })
+                    # 確保檔案存在 (如果沒有，可能需要從哪裡複製? 這裡假設使用者會手動放，或者是空的)
+                    # 這裡僅確保 DB 條目存在
+                except Exception as e:
+                    logger.error(f"初始化頁面 {val} 失敗: {e}")
+
+    @router.on_event("startup")
+    async def startup_event():
+        # 注意:在這個架構下 router startup 可能不會被觸發，因為它是透過 include_router 加載的
+        # 我們可能需要在第一次請求時檢查，或是在 main.py 統一做
+        # 這裡先做一個簡單的 lazy check function
+        pass
 
     @router.get(
         "/get",
         summary="獲取所有頁面選項",
         tags=["trigger page"]
     )
-    async def get_page_options():
+    async def get_page_options(request: Request):
         """
-        讀取 pageOptions.json 並將其作為 API 回傳。
+        從資料庫讀取頁面選項。
         """
-        data = get_page_data()
+        # 這裡順便做一次初始化檢查 (雖然有點髒，但確保無痛遷移)
+        # 更好的做法是在 main.py lifespan 中做
+        defaults = ["test", "google", "onedrive"]
+        for val in defaults:
+             exists = await db.get_db("trigger_pages", where_column="page_value", values=val)
+             if not exists:
+                await db.insert_db("trigger_pages", {
+                    "page_value": val,
+                    "page_label": val.capitalize(),
+                    "owner_uuid": None,
+                    "page_type": "system"
+                })
+
+        # 查詢所有頁面
+        # 我們讓所有登入者都能看到所有頁面 (包括別人的)，但前端會根據 owner_uuid 決定能不能改
+        query = "SELECT page_value, page_label, owner_uuid FROM trigger_pages ORDER BY create_time DESC"
+        rows = await db.execute_query(query)
+        
+        # 轉換格式以符合前端需求
+        data = [
+            {"value": row["page_value"], "label": row["page_label"], "owner": row["owner_uuid"]}
+            for row in rows
+        ]
+        
         return JSONResponse(content=data)
 
     @router.get(
@@ -108,6 +136,36 @@ def get_router():
             "triggerUrl": os.getenv("TRIGGER_APP_URL", "")
         }
 
+    @router.get(
+        "/download",
+        summary="下載頁面模板檔案",
+        tags=["trigger page"]
+    )
+    async def download_page(
+        pageValue: str = Query(..., description="要下載的頁面ID"),
+        current_user: dict = Depends(get_current_user)
+    ):
+        """
+        下載指定頁面的 HTML 檔案
+        """
+        if not re.match(r"^[a-z0-9_]+$", pageValue):
+             raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="網址 ID 只能包含小寫字母、數字和底線。"
+            )
+
+        filename = f"{pageValue}.html"
+        file_path = UPLOAD_DIR / filename
+
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="找不到指定的頁面檔案")
+
+        return FileResponse(
+            path=file_path, 
+            filename=filename, 
+            media_type='text/html'
+        )
+
     @router.post(
         "/upload", 
         summary="上傳新頁面模板",
@@ -117,28 +175,28 @@ def get_router():
         # Form(...) 用於接收 multipart/form-data 的文字欄位
         pageLabel: str = Form(..., description="顯示在選項中的名稱 (e.g., '我的新頁面')"),
         pageValue: str = Depends(validate_page_value), # 使用 Depends 來驗證
-        file: UploadFile = File(..., description="要上傳的 HTML 模板檔案")
+        file: UploadFile = File(..., description="要上傳的 HTML 模板檔案"),
+        current_user: dict = Depends(get_current_user)
     ):
         """
-        此 API 執行兩個任務:
-        1. 將上傳的檔案儲存到 loginapp 的 templates 資料夾。
-        2. 將新頁面的資訊 (value, label) 新增到 pageOptions.json。
+        上傳並儲存新頁面。
         """
+        user_uuid = current_user.get("acct_uuid")
         
-        # --- 任務 1: 將上傳的頁面新增到資料夾裡 ---
-        
+        # 檢查是否已存在 (Global Check)
+        exists = await db.get_db("trigger_pages", where_column="page_value", values=pageValue)
+        if exists:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"網址 ID '{pageValue}' 已存在。"
+            )
+
+        # --- 任務 1: 將上傳的檔案儲存到 loginapp 的 templates 資料夾 ---
         new_filename = f"{pageValue}.html"
         save_path = UPLOAD_DIR / new_filename
 
-        # 檢查檔案是否已存在
-        if save_path.exists():
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"檔案 '{new_filename}' 已存在於 templates 資料夾中。"
-            )
-
+        # 雖然 DB 檢查過了，但檔案系統也要確保一下 (或直接覆蓋)
         try:
-            # 儲存上傳的檔案
             with save_path.open("wb") as buffer:
                 shutil.copyfileobj(file.file, buffer)
         except Exception as e:
@@ -149,50 +207,30 @@ def get_router():
         finally:
             await file.close()
 
-        # --- 任務 2: 將資料新增到 json 檔裡 ---
-        
-        data = []
+        # --- 任務 2: 將資料新增到 DB ---
         try:
-            # 讀取現有的 JSON 檔案 (如果存在)
-            if JSON_FILE_PATH.exists():
-                with JSON_FILE_PATH.open("r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if not isinstance(data, list):
-                        data = [] # 如果格式不對，重設為空列表
-            
-            # 再次檢查 value 是否在 JSON 中重複
-            if any(item.get("value") == pageValue for item in data):
-                # [復原] 如果 JSON 重複，刪除剛剛上傳的檔案
-                save_path.unlink() 
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f" 網址 ID '{pageValue}' 已存在於 pageOptions.json 中。"
-                )
-
-            # 新增資料
-            new_entry = {"value": pageValue, "label": pageLabel}
-            data.append(new_entry)
-
-            # 寫回 JSON 檔案
-            with JSON_FILE_PATH.open("w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
-
+            new_page_data = {
+                "page_value": pageValue,
+                "page_label": pageLabel,
+                "owner_uuid": user_uuid,
+                "page_type": "custom"
+            }
+            await db.insert_db("trigger_pages", new_page_data)
         except Exception as e:
-            # [復原] 如果 JSON 操作失敗，也要刪除剛剛上傳的檔案
+            # [復原] 如果 DB 操作失敗，刪除剛剛上傳的檔案
             if save_path.exists():
                 save_path.unlink()
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"更新 JSON 檔案失敗: {str(e)}"
+                detail=f"寫入資料庫失敗: {str(e)}"
             )
 
         return {
             "status": "success",
             "message": f"頁面 '{pageLabel}' 已成功上傳。",
-            "new_entry": new_entry
+            "new_entry": {"value": pageValue, "label": pageLabel, "owner": user_uuid}
         }
 
-    # (Update) 修改頁面模板
     @router.post(
         "/update",
         summary="修改現有頁面模板"
@@ -201,113 +239,113 @@ def get_router():
         pageLabel: str = Form(..., description="新的Label"),
         pageValue: str = Depends(validate_page_value),
         oldPageValue: str = Form(..., description="要修改的目標 value"),
-        file: UploadFile = File(None, description="上傳新的 HTML 檔案來覆蓋")
+        file: UploadFile = File(None, description="上傳新的 HTML 檔案來覆蓋"),
+        current_user: dict = Depends(get_current_user)
     ):
+        user_uuid = current_user.get("acct_uuid")
+        user_type = current_user.get("user_type")
         
-        data = get_page_data()
+        # 權限檢查: 找出舊頁面
+        old_page_list = await db.get_db("trigger_pages", where_column="page_value", values=oldPageValue)
+        if not old_page_list:
+            raise HTTPException(status_code=404, detail="找不到欲修改的頁面")
+        old_page = old_page_list[0]
         
-        # --- 任務 1: 覆蓋檔案 ---
-        # 定義新舊檔案路徑
+        # 權限邏輯
+        # 1. 如果是系統頁面 (owner_uuid is None) -> 絕對禁止修改
+        if old_page["owner_uuid"] is None:
+            raise HTTPException(status_code=403, detail="系統預設頁面無法修改")
+            
+        # 2. 如果是 Admin -> 允許
+        # 3. 如果是 Owner -> 允許
+        if user_type != "admin" and old_page["owner_uuid"] != user_uuid:
+             raise HTTPException(status_code=403, detail="您沒有權限修改此頁面")
+
+        is_value_changing = (pageValue != oldPageValue)
+
+        # 如果改了 pageValue，檢查新 value 是否衝突
+        if is_value_changing:
+            conflict_check = await db.get_db("trigger_pages", where_column="page_value", values=pageValue)
+            if conflict_check:
+                raise HTTPException(status_code=409, detail=f"網址 ID '{pageValue}' 已被使用")
+
+        # --- 檔案處理 ---
         old_filename = f"{oldPageValue}.html"
         old_file_path = UPLOAD_DIR / old_filename
         
         new_filename = f"{pageValue}.html"
         new_file_path = UPLOAD_DIR / new_filename
         
-        is_value_changing = (pageValue != oldPageValue)
-
-        # 檢查：如果要改 value，但新 value 已經在 JSON 中存在 (且不是自己)
-        if is_value_changing:
-            if any(item.get("value") == pageValue for item in data):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"新的網址 ID '{pageValue}' 已經存在於另一個項目中。"
-                )
-
         try:
             if file:
-                # 覆蓋儲存
+                # 有上傳新檔 -> 寫入新檔
                 with new_file_path.open("wb") as buffer:
                     shutil.copyfileobj(file.file, buffer)
                 
-                # 如果 value 也變了，且舊檔案存在，就把舊檔案刪除
+                # 如果改名且舊檔存在，刪除舊檔
                 if is_value_changing and old_file_path.exists():
                     old_file_path.unlink()
             else:
-                # 情況 2: 使用者沒有上傳新檔案
-                # 只有在 value 改變時，才需要重命名
+                # 沒上傳新檔，只有改名
                 if is_value_changing:
-                    # 檢查：舊檔案是否存在
-                    if not old_file_path.exists():
-                        logger.warning(f"找不到舊檔案 {old_filename}，但仍會更新 JSON。")
-                        # 檔案不存在，但我們還是可以繼續更新 JSON，所以不用 raise error
-                    
-                    # 檢查：新檔名是否已存在 (避免衝突)
-                    elif new_file_path.exists():
-                        raise HTTPException(
-                            status_code=status.HTTP_409_CONFLICT,
-                            detail=f"無法重命名：檔案 '{new_filename}' 已存在。"
-                        )
-                    
-                    # 重命名
-                    else:
+                    if old_file_path.exists():
                         old_file_path.rename(new_file_path)
-
+                    else:
+                        logger.warning(f"舊檔案 {old_filename} 不存在，跳過重命名")
+        
         except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"處理檔案時失敗: {str(e)}"
-            )
+            raise HTTPException(status_code=500, detail=f"檔案處理失敗: {str(e)}")
         finally:
             if file:
                 await file.close()
-            
 
-        # --- 任務 2: 更新 JSON ---
-        
-        item_found = False
-        for item in data:
-            if item.get("value") == oldPageValue:
-                item["label"] = pageLabel 
-                item["value"] = pageValue
-                item_found = True
-                break
-        
-        if not item_found:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"找不到 value 為 '{pageValue}' 的項目。"
-            )
-        
-        save_page_data(data) # 寫回 JSON
+        # --- DB 更新 ---
+        try:
+            update_data = {
+                "page_label": pageLabel,
+                "page_value": pageValue
+            }
+            await db.update_db("trigger_pages", update_data, condition={"id": old_page["id"]})
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"資料庫更新失敗: {str(e)}")
 
         return {
             "status": "success",
             "message": f"頁面 '{pageLabel}' 已成功更新。"
         }    
 
-    # (Delete) 刪除頁面模板
     @router.post(
         "/delete",
         summary="刪除現有頁面模板"
     )
     async def delete_page(
-        pageValue: str = Form(..., description="要刪除的目標 value")
+        pageValue: str = Form(..., description="要刪除的目標 value"),
+        current_user: dict = Depends(get_current_user)
     ):
+        user_uuid = current_user.get("acct_uuid")
+        user_type = current_user.get("user_type")
         
-        # --- 任務 1: 刪除 JSON 條目 ---
-        data = get_page_data()
+        # 查詢頁面
+        page_list = await db.get_db("trigger_pages", where_column="page_value", values=pageValue)
+        if not page_list:
+            raise HTTPException(status_code=404, detail="找不到頁面")
         
-        original_length = len(data)
-        data = [item for item in data if item.get("value") != pageValue]
+        page = page_list[0]
         
-        if len(data) == original_length:
-            logger.warning(f"試圖刪除不存在的 JSON 條目: {pageValue}")
-            # 注意：即使 JSON 找不到，我們仍然嘗試刪除檔案
+        # 權限邏輯
+        if page["owner_uuid"] is None:
+            raise HTTPException(status_code=403, detail="系統預設頁面無法刪除")
+            
+        if user_type != "admin" and page["owner_uuid"] != user_uuid:
+            raise HTTPException(status_code=403, detail="您沒有權限刪除此頁面")
 
-        save_page_data(data) # 寫回 JSON
+        # --- 刪除 DB ---
+        try:
+            await db.delete_db("trigger_pages", condition={"id": page["id"]})
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"資料庫刪除失敗: {str(e)}")
 
-        # --- 任務 2: 刪除檔案 ---
+        # --- 刪除檔案 (不阻擋流程) ---
         filename = f"{pageValue}.html"
         save_path = UPLOAD_DIR / filename
         
@@ -315,17 +353,11 @@ def get_router():
             try:
                 save_path.unlink()
             except Exception as e:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail=f"刪除檔案 '{filename}' 失敗: {str(e)}"
-                )
-        else:
-            logger.warning(f"試圖刪除不存在的檔案: {filename}")
-            # 即使檔案不存在，也回傳成功 (因為目的已達到)
-
+                logger.error(f"刪除檔案 {filename} 失敗: {e}")
+        
         return {
             "status": "success",
-            "message": f"頁面 (value: {pageValue}) 已成功刪除。"
+            "message": f"頁面已成功刪除。"
         }
 
     # (Create Custom) 建立自訂頁面
@@ -346,10 +378,18 @@ def get_router():
         btnText: str = Form(..., description="按鈕文字 (e.g., '登入')"),
         templateType: str = Form("classic", description="版型選擇: 'classic' or 'modern'"),
         svgContent: str = Form("", description="SVG 圖示內容 (僅用於 Modern 版型)"),
+        current_user: dict = Depends(get_current_user)
     ):
         """
         根據使用者輸入的設定，自動生成 HTML 檔案並新增到選項中。
         """
+        user_uuid = current_user.get("acct_uuid")
+
+        # 檢查重複
+        exists = await db.get_db("trigger_pages", where_column="page_value", values=pageValue)
+        if exists:
+            raise HTTPException(status_code=409, detail=f"網址 ID '{pageValue}' 已存在")
+
         mail_type = "email" if isEmail else "text"
 
         # --- 1. 準備 HTML 內容 ---
@@ -638,161 +678,256 @@ def get_router():
 
         
         # --- 2. 儲存檔案 ---
-        
         filename = f"{pageValue}.html"
         save_path = UPLOAD_DIR / filename
         
+        # 雖然 DB 檢查過 UNIQUE，但檔案系統再檢查一次比較保險
         if save_path.exists():
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"檔案 '{filename}' 已存在於 templates 資料夾中。"
-            )
+            raise HTTPException(status_code=409, detail=f"檔案 '{filename}' 已存在")
             
         try:
              with save_path.open("w", encoding="utf-8") as f:
                 f.write(html_content)
         except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"建立檔案失敗: {str(e)}"
-            )
+            raise HTTPException(status_code=500, detail=f"建立檔案失敗: {str(e)}")
 
-        # --- 3. 更新 JSON ---
-        
-        data = []
+        # --- 3. 更新 DB ---
         try:
-            if JSON_FILE_PATH.exists():
-                with JSON_FILE_PATH.open("r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    if not isinstance(data, list):
-                        data = []
-            
-            if any(item.get("value") == pageValue for item in data):
-                save_path.unlink() # Rollback
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"網址 ID '{pageValue}' 已存在於 pageOptions.json 中。"
-                )
-
-            new_entry = {"value": pageValue, "label": pageLabel}
-            data.append(new_entry)
-
-            save_page_data(data)
-
+            new_page_data = {
+                "page_value": pageValue,
+                "page_label": pageLabel,
+                "owner_uuid": user_uuid,
+                "page_type": "custom"
+            }
+            await db.insert_db("trigger_pages", new_page_data)
         except Exception as e:
             if save_path.exists():
                 save_path.unlink() # Rollback
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"更新 JSON 檔案失敗: {str(e)}"
-            )
+            raise HTTPException(status_code=500, detail=f"資料庫寫入失敗: {str(e)}")
 
         return {
             "status": "success",
             "message": f"自訂頁面 '{pageLabel}' 已成功建立。",
-            "new_entry": new_entry
+            "new_entry": {"value": pageValue, "label": pageLabel, "owner": user_uuid}
         }
 
     @router.post(
-        "/generate_with_ai",
-        summary="使用 AI 生成頁面",
+        "/generate_with_litellm",
+        summary="使用 LiteLLM 生成頁面",
         tags=["trigger page"]
     )
-    async def generate_page_with_ai(
+    async def generate_page_with_litellm(
         prompt: str = Form(..., description="使用者的提示詞"),
         refUrl: str = Form(None, description="參考網址 (可選)"),
-        apiKey: str = Form(None, description="Google Gemini API Key (可選)")
+        current_user: dict = Depends(get_current_user)
     ):
         """
-        接收 Prompt，呼叫 Gemini API 生成 HTML。
+        接收 Prompt，呼叫 LiteLLM (Local) 生成 HTML。
         """
-        import google.generativeai as genai
-        from fastapi.responses import PlainTextResponse
+        # 1. 取得設定
+        server_ip = os.getenv("LITELLM_SERVER_IP")
+        api_key = os.getenv("LITELLM_API_KEY")
 
-        # 1. 決定 API Key
-        # 優先使用傳入的，否則使用環境變數
-        api_key_to_use = apiKey
-        if not api_key_to_use:
-            api_key_to_use = os.getenv("GOOGLE_API_KEY")
-        
-        if not api_key_to_use:
+        if not server_ip or not api_key:
              raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="未提供 Gemini API Key，且後端環境變數也未設定 GOOGLE_API_KEY。"
-            )
-
-        # 2. 設定 Gemini
-        try:
-            genai.configure(api_key=api_key_to_use)
-            model = genai.GenerativeModel("gemini-2.5-flash") # 使用較快且新的模型
-        except Exception as e:
-            raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Gemini 設定失敗: {str(e)}"
+                detail="未設定 LiteLLM 環境變數 (LITELLM_SERVER_IP, LITELLM_API_KEY)。"
             )
 
-        # 3. 準備 System Prompt / 指令
-        # 這裡我們定義嚴格的規則
-        system_instructions = """
-你是一個專業的前端工程師，專門製作社交演練用的登入頁面。
-使用者會給你一個描述 (e.g. "Facebook 登入頁面")，你需要生成一個單一的 HTML 檔案。
+        # 2. 設定 Client
+        try:
+            client = OpenAI(
+                api_key=api_key,
+                base_url=f"http://{server_ip}/v1"
+            )
+            # 使用 gpt-oss (程式碼 / 特定任務)
+            model_name = "gpt-oss"
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"LiteLLM Client 設定失敗: {str(e)}")
 
-[重點功能 - 仿真設計]
-1. 如果使用者指定了特定的知名服務 (例如：Facebook, Google, 台鐵, Instagram, Microsoft 365 等)：
-   - 你必須運用你內部的知識，精確還原該品牌 **真實登入頁面** 的視覺風格。
-   - 使用該品牌的官方配色 (Brand Colors)。
-   - 模仿其佈局結構 (例如：左右分割、置中卡片、背景圖風格)。
-   - 盡可能還原按鈕樣式、輸入框樣式和字體風格。
-   - 如果需要 Logo，請使用 SVG 繪製或使用可靠的 CDN 連結，使其看起來像真的。
-
-[必要的技術限制 - 絕對必須遵守]
-1. 這是一個釣魚演練系統的模板。
-2. **必須**包含以下 Script 區塊，且必須放在 `</body>` 之前：
-   ```html
-   <script>
-     const API_BASE_PATH = "{{ api_base_path }}";
-   </script>
-   <script src="{{ url_for('static', path='js/recordingLogin.js') }}"></script>
-   ```
-   **注意**：`API_BASE_PATH` 的值必須保留為 Jinja2 的模板語法 `{{ api_base_path }}`，`src` 也必須保留 `{{ url_for(...) }}`。不要更改它們。
-
-3. **登入表單的輸入欄位**：
-   - **必須**使用 `<form id="login-form">` 包裝所有的輸入欄位和提交按鈕。
-   - 所有的 `<input>` 標籤，如果是用來讓使用者輸入資料的 (如 Email, 帳號, 密碼)，**必須**加上屬性 `data-role="login-input"`。
-   - 例如：`<input type="email" name="email" data-role="login-input" required>`
-   - `input` 的 `id` 屬性也請設定。
-
-4. **樣式 (CSS)**：
-   - 請將 CSS 直接寫在 `<style>` 標籤內 (Internal CSS)。
-   - 版面要符合使用者的描述。
-
-5. **輸出格式**：
-   - 只回傳純 HTML 程式碼。
-   - 不要包含 Markdown 的 ```html ... ``` 標記，只要 HTML 本身。
-   - 不要包含解釋性文字。
-"""
-
-        prompt_suffix = f"使用者的需求：{prompt}"
+        # 3. 準備 System Prompt (共用)
+        system_instructions = get_system_prompt()
+        user_prompt = f"使用者的需求：{prompt}"
         if refUrl:
-            prompt_suffix += f"\n\n[參考網址]\n使用者提供了一個參考網址：{refUrl}\n這是使用者想模仿的目標。請盡可能參考該網址對應的現有網站設計風格（如果該網站在你的知識庫中）。"
+            user_prompt += f"\n\n[參考網址]\n使用者提供了一個參考網址：{refUrl}\n這是使用者想模仿的目標。請盡可能參考該網址對應的現有網站設計風格。"
 
-        full_prompt = f"{system_instructions}\n\n{prompt_suffix}"
+        messages = [
+            {"role": "system", "content": system_instructions},
+            {"role": "user", "content": user_prompt}
+        ]
 
         # 4. 呼叫模型
         try:
-            response = model.generate_content(full_prompt)
-            generated_text = response.text
+            # LiteLLM 範例使用 stream=True，這裡為了 API 簡單性，我們先用非串流，或者看前端是否支援串流。
+            # 原本的 generate_with_ai 也是回傳 PlainTextResponse，所以這裡先用非串流。
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                stream=False
+            )
             
-            # 清理可能的 markdown 標記 (如果模型還是輸出的話)
+            generated_text = response.choices[0].message.content
+            
+            # 清理可能的 markdown 標記
             generated_text = generated_text.replace("```html", "").replace("```", "").strip()
 
             return PlainTextResponse(generated_text)
 
         except Exception as e:
-            logger.error(f"Gemini 生成失敗: {e}")
-            raise HTTPException(
+            logger.error(f"LiteLLM 生成失敗: {e}")
+            raise HTTPException(status_code=500, detail=f"LiteLLM 生成失敗: {str(e)}")
+
+    @router.post(
+        "/generate_with_gpt",
+        summary="使用 GPT 生成頁面",
+        tags=["trigger page"]
+    )
+    async def generate_page_with_gpt(
+        prompt: str = Form(..., description="使用者的提示詞"),
+        refUrl: str = Form(None, description="參考網址 (可選)"),
+        current_user: dict = Depends(get_current_user)
+    ):
+        """
+        接收 Prompt，呼叫 OpenAI GPT 生成 HTML。
+        """
+        # 1. 取得設定
+        api_key = os.getenv("OPENAI_API_KEY")
+
+        if not api_key:
+             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"AI 生成失敗: {str(e)}"
+                detail="未設定 OPENAI_API_KEY 環境變數。"
             )
 
+        # 2. 設定 Client
+        try:
+            client = OpenAI(api_key=api_key)
+            # 使用 GPT-5.2
+            model_name = "gpt-5.2" 
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"OpenAI Client 設定失敗: {str(e)}")
+
+        # 3. 準備 System Prompt (共用)
+        system_instructions = get_system_prompt()
+        user_prompt = f"使用者的需求：{prompt}"
+        if refUrl:
+            user_prompt += f"\n\n[參考網址]\n使用者提供了一個參考網址：{refUrl}\n這是使用者想模仿的目標。請盡可能參考該網址對應的現有網站設計風格。"
+
+        messages = [
+            {"role": "system", "content": system_instructions},
+            {"role": "user", "content": user_prompt}
+        ]
+
+        # 4. 呼叫模型
+        try:
+            response = client.chat.completions.create(
+                model=model_name,
+                messages=messages,
+                stream=False
+            )
+            
+            generated_text = response.choices[0].message.content
+            
+            # 清理可能的 markdown 標記
+            generated_text = generated_text.replace("```html", "").replace("```", "").strip()
+
+            return PlainTextResponse(generated_text)
+
+        except Exception as e:
+            logger.error(f"GPT 生成失敗: {e}")
+            raise HTTPException(status_code=500, detail=f"GPT 生成失敗: {str(e)}")
+
+    @router.post(
+        "/generate_with_gemini",
+        summary="使用 Gemini 生成頁面",
+        tags=["trigger page"]
+    )
+    async def generate_page_with_gemini(
+        prompt: str = Form(..., description="使用者的提示詞"),
+        refUrl: str = Form(None, description="參考網址 (可選)"),
+        current_user: dict = Depends(get_current_user)
+    ):
+        """
+        接收 Prompt，呼叫 Gemini API 生成 HTML。
+        """
+        
+        
+        # 1. API Key 使用環境變數
+        gemini_api_key = os.getenv("GEMINI_APY_KEY")
+        
+        if not gemini_api_key:
+             raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="未提供 Gemini API Key，且後端環境變數也未設定 GEMINI_APY_KEY。"
+            )
+
+        # 2. 設定 Gemini
+        try:
+            genai.configure(api_key=gemini_api_key)
+            model = genai.GenerativeModel("gemini-2.5-flash") # 使用 gemini-2.5-flash
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Gemini 設定失敗: {str(e)}")
+
+        # 3. 準備 System Prompt
+        system_instructions = get_system_prompt()
+
+        prompt_suffix = f"使用者的需求：{prompt}"
+        if refUrl:
+            prompt_suffix += f"\n\n[參考網址]\n使用者提供了一個參考網址：{refUrl}\n這是使用者想模仿的目標。請盡可能參考該網址對應的現有網站設計風格。"
+
+        full_prompt = f"{system_instructions}\n\n{prompt_suffix}"
+
+        # 4. 呼叫模型
+        try:
+            response = await model.generate_content_async(full_prompt)
+            generated_text = response.text
+            
+            # 清理可能的 markdown 標記
+            generated_text = generated_text.replace("```html", "").replace("```", "").strip()
+
+            return PlainTextResponse(generated_text)
+        except Exception as e:
+            logger.error(f"Gemini 生成失敗: {e}")
+            raise HTTPException(status_code=500, detail=f"Gemini 生成失敗: {str(e)}")
+
     return router
+
+def get_system_prompt():
+    return """
+            你是一個專業的前端工程師，專門製作登入頁面。
+            使用者會給你一個描述 (e.g. "Facebook 登入頁面")，你需要生成一個單一的 HTML 檔案。
+
+            [重點功能 - 仿真設計]
+            1. 如果使用者指定了特定的知名服務 (例如：Facebook, Google, 台鐵, Instagram, Microsoft 365 等)：
+            - 你必須運用你內部的知識，精確還原該品牌 **真實登入頁面** 的視覺風格。
+            - 使用該品牌的官方配色 (Brand Colors)。
+            - 模仿其佈局結構 (例如：左右分割、置中卡片、背景圖風格)。
+            - 盡可能還原按鈕樣式、輸入框樣式和字體風格。
+            - 如果需要 Logo，請使用 SVG 繪製或使用可靠的 CDN 連結，使其看起來像真的。
+
+            [必要的技術限制 - 絕對必須遵守]
+            1. **必須**包含以下 Script 區塊，且必須放在 `</body>` 之前：
+            ```html
+            <script>
+                const API_BASE_PATH = "{{ api_base_path }}";
+            </script>
+            <script src="{{ url_for('static', path='js/recordingLogin.js') }}"></script>
+            ```
+            **注意**：`API_BASE_PATH` 的值必須保留為 Jinja2 的模板語法 `{{ api_base_path }}`，`src` 也必須保留 `{{ url_for(...) }}`。不要更改它們。
+
+            2. **登入表單的輸入欄位**：
+            - **必須**使用 `<form id="login-form">` 包裝所有的輸入欄位和提交按鈕。
+            - 所有的 `<input>` 標籤，如果是用來讓使用者輸入資料的 (如 Email, 帳號, 密碼)，**必須**加上屬性 `data-role="login-input"`。
+            - 例如：`<input type="email" name="email" data-role="login-input" required>`
+            - `input` 的 `id` 屬性也請設定。
+
+            3. **樣式 (CSS)**：
+            - 請將 CSS 直接寫在 `<style>` 標籤內 (Internal CSS)。
+            - 版面要符合使用者的描述。
+
+            4. **輸出格式**：
+            - 只回傳純 HTML 程式碼。
+            - 不要包含 Markdown 的 ```html ... ``` 標記，只要 HTML 本身。
+            - 不要包含解釋性文字。
+        """
+

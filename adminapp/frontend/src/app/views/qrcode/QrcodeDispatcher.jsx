@@ -11,7 +11,7 @@ const QrcodeDispatcher = () => {
   // 判斷使用者 email 是否為 admin
   const isAdmin = user?.name === 'admin@acercsi.com';
 
-  return <CreateUrl isAdmin={isAdmin} />;
+  return <CreateUrl user={user} isAdmin={isAdmin} />;
 };
 
 export default QrcodeDispatcher;

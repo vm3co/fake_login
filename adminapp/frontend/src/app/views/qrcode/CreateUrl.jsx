@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useSnackbar } from 'notistack';
 import {
     Box,
@@ -32,9 +32,10 @@ import CloseIcon from '@mui/icons-material/Close';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import DownloadIcon from '@mui/icons-material/Download';
 
 
-const CreateUrl = ({ isAdmin }) => {
+const CreateUrl = ({ user, isAdmin }) => {
     const [selectedOption, setSelectedOption] = useState('');
     const [outputTextUrl, setOutputTextUrl] = useState('');
     const [outputTextQrcode, setOutputTextQrcode] = useState('');
@@ -71,11 +72,14 @@ const CreateUrl = ({ isAdmin }) => {
     const [openAiDialog, setOpenAiDialog] = useState(false);
     const [aiPrompt, setAiPrompt] = useState('');
     const [aiRefUrl, setAiRefUrl] = useState('');
+    const [aiModel, setAiModel] = useState('gemini');
     const [generating, setGenerating] = useState(false);
 
 
     // 刪除確認視窗
     const [deleteConfirm, setDeleteConfirm] = useState(null);
+
+    const abortControllerRef = useRef(null);
 
     const [triggerBaseUrl, setTriggerBaseUrl] = useState('');
     const [directUrlInput, setDirectUrlInput] = useState('');
@@ -87,8 +91,8 @@ const CreateUrl = ({ isAdmin }) => {
         try {
             // 並行請求 config 和 pageOptions
             const [configRes, pagesRes] = await Promise.all([
-                fetch('/api/trigget_page/config'),
-                fetch('/api/trigget_page/get')
+                fetch('/api/trigger_page/config'),
+                fetch('/api/trigger_page/get')
             ]);
 
             if (!pagesRes.ok) {
@@ -242,11 +246,15 @@ const CreateUrl = ({ isAdmin }) => {
 
         // 決定要呼叫哪個 API
         const isEdit = !!editMode;
-        const apiUrl = isEdit ? '/api/trigget_page/update' : '/api/trigget_page/upload';
+        const apiUrl = isEdit ? '/api/trigger_page/update' : '/api/trigger_page/upload';
 
         try {
+            const accessToken = window.localStorage.getItem("accessToken");
             const response = await fetch(apiUrl, {
                 method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`
+                },
                 body: formData,
             });
 
@@ -286,8 +294,12 @@ const CreateUrl = ({ isAdmin }) => {
         formData.append('svgContent', createSvg);
 
         try {
-            const response = await fetch('/api/trigget_page/create_page', {
+            const accessToken = window.localStorage.getItem("accessToken");
+            const response = await fetch('/api/trigger_page/create_page', {
                 method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`
+                },
                 body: formData,
             });
 
@@ -315,7 +327,16 @@ const CreateUrl = ({ isAdmin }) => {
     };
 
     const handleCloseAiDialog = () => {
-        setOpenAiDialog(false);
+        if (generating) {
+            if (window.confirm('AI頁面生成 正在執行中，關閉將會取消生成，確定要關閉嗎？')) {
+                if (abortControllerRef.current) {
+                    abortControllerRef.current.abort();
+                }
+                setOpenAiDialog(false);
+            }
+        } else {
+            setOpenAiDialog(false);
+        }
     };
 
     const handleGenerateWithAi = async () => {
@@ -331,10 +352,26 @@ const CreateUrl = ({ isAdmin }) => {
             formData.append('refUrl', aiRefUrl);
         }
 
+        // 建立新的 AbortController
+        abortControllerRef.current = new AbortController();
+
+        // 決定 API Endpoint
+        let endpoint = '/api/trigger_page/generate_with_gemini';
+        if (aiModel === 'gpt') {
+            endpoint = '/api/trigger_page/generate_with_gpt';
+        } else if (aiModel === 'litellm') {
+            endpoint = '/api/trigger_page/generate_with_litellm';
+        }
+
         try {
-            const response = await fetch('/api/trigget_page/generate_with_ai', {
+            const accessToken = window.localStorage.getItem("accessToken");
+            const response = await fetch(endpoint, {
                 method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`
+                },
                 body: formData,
+                signal: abortControllerRef.current.signal
             });
 
             if (!response.ok) {
@@ -366,12 +403,34 @@ const CreateUrl = ({ isAdmin }) => {
             enqueueSnackbar('AI 生成成功！請確認並儲存頁面。', { variant: 'success' });
 
         } catch (err) {
-            console.error("AI 生成失敗:", err);
-            enqueueSnackbar(err.message, { variant: 'error' });
+            if (err.name === 'AbortError') {
+                console.log('AI生成頁面 已取消');
+                enqueueSnackbar('AI生成頁面 已取消', { variant: 'info' });
+            } else {
+                console.error("AI生成頁面 失敗:", err);
+                enqueueSnackbar(err.message, { variant: 'error' });
+            }
         } finally {
             setGenerating(false);
+            abortControllerRef.current = null;
         }
     };
+
+    // 監聽 beforeunload 以防止使用者在生成中意外離開
+    useEffect(() => {
+        const handleBeforeUnload = (e) => {
+            if (generating) {
+                e.preventDefault();
+                e.returnValue = ''; // Chrome requires returnValue to be set
+            }
+        };
+
+        window.addEventListener('beforeunload', handleBeforeUnload);
+
+        return () => {
+            window.removeEventListener('beforeunload', handleBeforeUnload);
+        };
+    }, [generating]);
 
     // [新增] 刪除處理函式
     const handleOpenDeleteDialog = (option) => {
@@ -389,8 +448,12 @@ const CreateUrl = ({ isAdmin }) => {
         formData.append('pageValue', deleteConfirm.value);
 
         try {
-            const response = await fetch('/api/trigget_page/delete', {
+            const accessToken = window.localStorage.getItem("accessToken");
+            const response = await fetch('/api/trigger_page/delete', {
                 method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`
+                },
                 body: formData,
             });
 
@@ -411,6 +474,40 @@ const CreateUrl = ({ isAdmin }) => {
 
         } catch (err) {
             console.error("刪除失敗:", err);
+            enqueueSnackbar(err.message, { variant: 'error' });
+        }
+    };
+
+    const handleDownloadPage = async (option) => {
+        try {
+            const accessToken = window.localStorage.getItem("accessToken");
+            // Use fetch to get the blob
+            const response = await fetch(`/api/trigger_page/download?pageValue=${option.value}`, {
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`
+                }
+            });
+
+            if (!response.ok) {
+                const result = await response.json();
+                throw new Error(result.detail || '下載失敗');
+            }
+
+            const blob = await response.blob();
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${option.value}.html`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+
+            enqueueSnackbar('下載已開始', { variant: 'success' });
+
+        } catch (err) {
+            console.error("下載失敗:", err);
             enqueueSnackbar(err.message, { variant: 'error' });
         }
     };
@@ -518,24 +615,38 @@ const CreateUrl = ({ isAdmin }) => {
                                                             >
                                                                 預覽
                                                             </Button>
-                                                            {isAdmin && (
-                                                                <>
-                                                                    <IconButton
-                                                                        size="small"
-                                                                        color="primary"
-                                                                        onClick={(e) => { e.stopPropagation(); handleOpenUploadDialog(option); }}
-                                                                    >
-                                                                        <EditIcon fontSize="small" />
-                                                                    </IconButton>
-                                                                    <IconButton
-                                                                        size="small"
-                                                                        color="error"
-                                                                        onClick={(e) => { e.stopPropagation(); handleOpenDeleteDialog(option); }}
-                                                                    >
-                                                                        <DeleteIcon fontSize="small" />
-                                                                    </IconButton>
-                                                                </>
-                                                            )}
+                                                            {(() => {
+                                                                const isSystemPage = option.owner === null;
+                                                                const isOwner = user?.acct_uuid && user.acct_uuid === option.owner;
+                                                                const canEdit = !isSystemPage && (isAdmin || isOwner);
+
+                                                                return canEdit && (
+                                                                    <>
+                                                                        <IconButton
+                                                                            size="small"
+                                                                            color="info"
+                                                                            onClick={(e) => { e.stopPropagation(); handleDownloadPage(option); }}
+                                                                            title="下載原始碼"
+                                                                        >
+                                                                            <DownloadIcon fontSize="small" />
+                                                                        </IconButton>
+                                                                        <IconButton
+                                                                            size="small"
+                                                                            color="primary"
+                                                                            onClick={(e) => { e.stopPropagation(); handleOpenUploadDialog(option); }}
+                                                                        >
+                                                                            <EditIcon fontSize="small" />
+                                                                        </IconButton>
+                                                                        <IconButton
+                                                                            size="small"
+                                                                            color="error"
+                                                                            onClick={(e) => { e.stopPropagation(); handleOpenDeleteDialog(option); }}
+                                                                        >
+                                                                            <DeleteIcon fontSize="small" />
+                                                                        </IconButton>
+                                                                    </>
+                                                                );
+                                                            })()}
                                                         </Stack>
                                                     </Paper>
                                                 ))}
@@ -893,6 +1004,21 @@ const CreateUrl = ({ isAdmin }) => {
                             輸入您想要的頁面描述，AI 將自動為您生成包含社交功能的 HTML 頁面。<br />
                             例如：「一個深色背景的 Instagram 登入頁面」
                         </Alert>
+
+                        <FormControl component="fieldset">
+                            <RadioGroup
+                                row
+                                aria-label="ai-model"
+                                name="ai-model"
+                                value={aiModel}
+                                onChange={(e) => setAiModel(e.target.value)}
+                            >
+                                <FormControlLabel value="gemini" control={<Radio />} label="Gemini (預設)" />
+                                <FormControlLabel value="gpt" control={<Radio />} label="GPT" />
+                                <FormControlLabel value="litellm" control={<Radio />} label="LiteLLM" />
+                            </RadioGroup>
+                        </FormControl>
+
                         <TextField
                             autoFocus
                             required
