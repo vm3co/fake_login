@@ -14,3 +14,4 @@ python-jose
 openpyxl
 google-generativeai
 openai
+redis

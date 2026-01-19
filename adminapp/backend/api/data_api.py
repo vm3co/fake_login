@@ -210,7 +210,6 @@ def get_router(db, db_user):
         1. 讀取今天建立的sendtask清單
         2. 與資料庫sendtask清單做diff
         3. 新增到sendtask資料庫
-        4. 刪除sendtask資料庫的is_active=False
 
         :param request: OrgsRequest, 包含組織列表
         :return: dict, 包含新增和刪除的任務列表
@@ -340,9 +339,9 @@ def get_router(db, db_user):
         if not request.sendtask_uuid:
             raise ValueError("沒有收到 sendtask_uuid")
 
-        where_clauses = []
-        params = []
-        param_idx = 1
+        where_clauses = ["sendtask_uuid = $1"]
+        params = [request.sendtask_uuid]
+        param_idx = 2
 
         # 搜尋文字
         if request.searchText:
@@ -437,7 +436,7 @@ def get_router(db, db_user):
         order_by = f"{sort_map.get(request.sortBy, "plan_time DESC")} {sort.get(request.sort, "DESC")}"
 
         result = await db.get_paginated_db(
-            table_name=request.sendtask_uuid,
+            table_name="send_log_details",
             paginate=request.paginate,
             page=request.page,
             rows_per_page=request.rowsPerPage,
@@ -497,7 +496,9 @@ def get_router(db, db_user):
             # 直接使用你 db_controller.py 中的 get_db 函式
             
             data = await db.get_db(
-                table_name=request.sendtask_uuid
+                table_name="send_log_details",
+                where_column="sendtask_uuid",
+                values=request.sendtask_uuid
             )
 
             if not data:
@@ -613,7 +614,7 @@ def get_router(db, db_user):
         try:
             if request.selected_uuids:
                 all_data = await db.get_db(
-                    table_name=request.sendtask_uuid,
+                    table_name="send_log_details",
                     where_column="uuid",
                     values=request.selected_uuids
                 )

@@ -2,6 +2,8 @@ from pydantic import BaseModel
 from datetime import datetime
 import csv
 import os
+import json
+from app.services.redis_client import RedisClient
 from pathlib import Path
 from typing import Dict, Any
 from fastapi import FastAPI, Request, APIRouter, HTTPException, Depends
@@ -12,6 +14,8 @@ from fastapi.responses import HTMLResponse, Response, RedirectResponse
 from app.repository.db_controller import db
 from app.services.log_manager import Logger
 
+
+redis_client = RedisClient()
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -35,17 +39,9 @@ async def writer_db(url_id, columns_list, new_data):
     table_name = url_id[16:48]
     person_uuid = url_id[48:] + url_id[:16]
 
-    # 先取資料
-    data = await db.get_db(table_name, person_uuid, columns_list)
-    data = data[0]
-    logger.debug(f"data: {data}")
-    # 寫入資料
-    for index, dd in enumerate(data):
-        if data[dd] is None: data[dd] = []
-        data[dd].append(new_data[index])
-    logger.debug(f"data: {data}")
-    condition = {"uuid": person_uuid}
-    await db.update_db(table_name, data, condition)
+    # 使用 Atomic Append 更新，無需先讀再寫
+    append_data = dict(zip(columns_list, new_data))
+    await db.update_array_append(table_name, append_data, {"uuid": person_uuid})
 
 # 設定模板目錄
 templates_dir = BASE_DIR / "templates"
@@ -61,13 +57,23 @@ async def warning_page(request: Request):
     return templates.TemplateResponse("warning.html", {"request": request, "title": "社交工程演練警告"})
 
 
+
 @router.get("/page/{page_name}/{project_id}", response_class=HTMLResponse)
 async def project_detail_dynamic(request: Request, page_name: str, project_id: str, url: str = None):
     
     # 統一先進行紀錄
     request_info = await get_request_info(request)
     now = int(datetime.now().timestamp())
-    columns_list = ["second_access_time", "second_access_src", "second_access_dev"]
+    
+    # 建構 Event Data (JSON)
+    event_data = {
+        "type": "visit",
+        "uuid": project_id,
+        "timestamp": now,
+        "ip": request_info["ip"],
+        "user_agent": request_info["user_agent"]
+    }
+    
     new_data = [now, request_info["ip"], request_info["user_agent"]]
     
     if project_id == "test" or project_id == "99999_99999":
@@ -80,8 +86,12 @@ async def project_detail_dynamic(request: Request, page_name: str, project_id: s
             # 使用 writerow 寫入單行
             writer.writerow(new_data)
     else:   
-        # 注意：這裡原本是用 url (redirect target) 當作 id，現在改回用 project_id
-        await writer_db(project_id, columns_list, new_data)
+        # 寫入 Redis Buffer
+        try:
+            client = await redis_client.get_client()
+            await client.rpush("buffer:trigger_events", json.dumps(event_data))
+        except Exception as e:
+            logger.error(f"Failed to push visit event to Redis: {e}")
 
     # 判斷是 from-url (轉址) 還是 一般頁面 (顯示模板)
     if page_name == "from-url":

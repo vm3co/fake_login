@@ -26,16 +26,16 @@ services:
     build:
       context: ./triggerapp
     container_name: fake-login-trigger-app
-    environment:
-      - LOG_FILE=${LOG_PATH}
-      - TRIGGER_APP_URL=${TRIGGER_APP_URL}
-    # 正式環境：依賴 Dockerfile 內的 COPY 指令，不掛載本地原始碼
-    volumes:
-      # 只掛載templates資料
-      - templates_data:/app/templates
     depends_on:
       postgres-db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - LOG_FILE=${LOG_PATH}
+      - TRIGGER_APP_URL=${TRIGGER_APP_URL}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
     env_file:
       - .env
 
@@ -54,6 +54,8 @@ services:
     depends_on:
       postgres-db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -62,6 +64,23 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - LITELLM_API_KEY=${LITELLM_API_KEY}
       - LITELLM_SERVER_IP=${LITELLM_SERVER_IP}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+
+  # =========================================
+  # 快取服務 (Redis)
+  # =========================================
+  redis:
+    image: redis:alpine
+    container_name: fake-login-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
 
   # =========================================
   # Nginx 反向代理
@@ -86,5 +105,5 @@ services:
 
 volumes:
   pgdata: # 定義這個共用卷
-
+  redis_data:
   templates_data:

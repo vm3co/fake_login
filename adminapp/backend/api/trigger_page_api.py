@@ -112,9 +112,14 @@ def get_router(db: ApplianceDB, db_user: DBUser):
 
         # 查詢所有頁面
         # 我們讓所有登入者都能看到所有頁面 (包括別人的)，但前端會根據 owner_uuid 決定能不能改
-        query = "SELECT page_value, page_label, owner_uuid FROM trigger_pages ORDER BY create_time DESC"
-        rows = await db.execute_query(query)
-        
+        # 查詢所有頁面
+        rows = await db.get_db(
+            "trigger_pages", 
+            select_columns=["page_value", "page_label", "owner_uuid", "create_time"],
+            order_by="create_time DESC"
+        )
+
+
         # 轉換格式以符合前端需求
         data = [
             {"value": row["page_value"], "label": row["page_label"], "owner": row["owner_uuid"]}

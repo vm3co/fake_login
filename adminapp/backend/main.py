@@ -23,6 +23,15 @@ from backend.api.user_api import get_router as user_router
 from backend.api.trigger_page_api import get_router as page_router
 from backend.api import notification_api, job_api
 
+from backend.workers.sync_worker import SyncWorker
+from backend.workers.archiving_worker import ArchivingWorker
+import asyncio
+
+# Global worker instances
+sync_worker = SyncWorker()
+archiving_worker = ArchivingWorker()
+worker_tasks = []
+
 db = ApplianceDB()
 db_user = DBUser(db=db)
 logger = Logger().get_logger()
@@ -206,7 +215,21 @@ async def lifespan(app: FastAPI):
     await db_user.table_initialize()
     logger.info("資料庫初始化完成")
     start_scheduler()  # 啟動 APScheduler
+    
+    # Start workers
+    task1 = asyncio.create_task(sync_worker.start())
+    task2 = asyncio.create_task(archiving_worker.start())
+    worker_tasks.extend([task1, task2])
+    
     yield
+    
+    # Shutdown
+    await sync_worker.stop()
+    await archiving_worker.stop()
+    for task in worker_tasks:
+        task.cancel()
+    await asyncio.gather(*worker_tasks, return_exceptions=True)
+    
     await db.db_close()
 
 app = FastAPI(lifespan=lifespan)

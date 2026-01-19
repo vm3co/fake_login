@@ -134,7 +134,7 @@ class ApplianceDB:
             sql_cmd = f'DELETE FROM "{table_name}"'
             await connection.execute(sql_cmd)
 
-    async def get_db(self, table_name: str, select_columns: list[str] = None, where_column: str = None, values: str | list[str] = None, where_clauses: list[str] = None) -> list[dict]:
+    async def get_db(self, table_name: str, select_columns: list[str] = None, where_column: str = None, values: str | list[str] = None, where_clauses: list[str] = None, order_by: str = None) -> list[dict]:
         """
         查詢資料，支援欄位選擇與條件過濾。
         優先使用 where_clauses。若 where_clauses 為 None，則使用 where_column 和 values 進行 IN 查詢。
@@ -144,6 +144,7 @@ class ApplianceDB:
         :param where_column: 欲篩選條件的欄位名稱（將搭配 `values` 使用）。
         :param values: 欲查詢的值，可為單筆或多筆，將使用 `IN (...)` 條件查詢。
         :param where_clauses: SQL WHERE 條件子句列表 (例如 ["todayunsend = 0", "todayfailed = 0"])，會以 AND 連接。
+        :param order_by: 排序依據 (例如 "create_time DESC")。
         :return: 查詢結果列表，每筆為 dict 格式。
         :raises ValueError: 傳入值與參數組合不合法時拋出錯誤。
         """
@@ -173,8 +174,16 @@ class ApplianceDB:
             where_clause = f' WHERE "{where_column}" IN ({placeholders})'
             bind_values = values
 
+        # Order By 處理 (簡單防護)
+        order_sql = ""
+        if order_by:
+            # 簡單檢查防止過於復雜的注入，僅允許 英數字、底線、空格、逗號
+            if not re.match(r"^[a-zA-Z0-9_, ]+$", order_by):
+                 raise ValueError("Illegal order_by string")
+            order_sql = f" ORDER BY {order_by}"
+
         # 組合 SQL
-        sql_cmd = f'SELECT {col_str} FROM "{table_name}"{where_clause}'
+        sql_cmd = f'SELECT {col_str} FROM "{table_name}"{where_clause}{order_sql}'
 
         async with self.db_pool.acquire() as connection:
             result = await connection.fetch(sql_cmd, *bind_values)
@@ -386,15 +395,4 @@ class ApplianceDB:
         async with self.db_pool.acquire() as connection:
             await connection.execute(sql_cmd)
 
-    async def execute_query(self, query: str, *params) -> list[dict]:
-        """
-        執行一個原始的 SQL 查詢並回傳結果。
 
-        :param query: 要執行的 SQL 查詢字串。
-        :param params: 傳遞給查詢的參數。
-        :return: 查詢結果列表，每筆為 dict 格式。
-        """
-        await self.check_db_connection()
-        async with self.db_pool.acquire() as connection:
-            result = await connection.fetch(query, *params)
-            return [dict(row) for row in result] if result else []

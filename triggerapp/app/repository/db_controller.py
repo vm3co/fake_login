@@ -48,17 +48,48 @@ class ApplianceDB:
             await self.db_close()
             await self.db_init()
 
-    async def get_db(self, table_name: str, person_uuid: str, column_names: list[str] = None) -> list:
+    async def get_db(self, table_name: str, person_uuid: str = None, column_names: list[str] = None, select_columns: list[str] = None, where_column: str = None, values: str | list[str] = None, where_clauses: list[str] = None, order_by: str = None) -> list:
         """
         查詢資料，支援全表查詢、欄位篩選與條件查詢。
+        (為了相容舊介面，保留 person_uuid, column_names，但建議改用新介面參數)
         """
         await self.check_db_connection()
 
+        # 欄位處理
+        if select_columns:
+            col_str = ', '.join(select_columns)
+        else:
+            col_str = '*'
+
+        # 條件處理
+        where_clause = ''
+        bind_values = []
+
+        if where_clauses:
+             where_clause = " WHERE " + " AND ".join(where_clauses)
+        elif where_column and values is not None:
+
+            if not isinstance(values, list):
+                values = [values]
+            if not values:
+                 # 若 values 為空，回傳空結果
+                 return []
+            
+            placeholders = ', '.join(f'${i+1}' for i in range(len(values)))
+            where_clause = f' WHERE "{where_column}" IN ({placeholders})'
+            bind_values = values
+            
+        # Order By 處理
+        order_sql = ""
+        if order_by:
+             if not re.match(r"^[a-zA-Z0-9_, ]+$", order_by):
+                  raise ValueError("Illegal order_by string")
+             order_sql = f" ORDER BY {order_by}"
+
+        sql_cmd = f'SELECT {col_str} FROM "{table_name}"{where_clause}{order_sql}'
+
         async with self.db_pool.acquire() as connection:
-            # 查詢指定欄位 = 值
-            col_str = ", ".join(column_names)
-            sql_cmd = f'SELECT {col_str} FROM "{table_name}" WHERE uuid = $1'
-            result = await connection.fetch(sql_cmd, person_uuid)
+            result = await connection.fetch(sql_cmd, *bind_values)
             return [dict(row) for row in result] if result else []
 
     async def update_db(self, table_name: str, data: dict, condition: dict):
@@ -73,6 +104,41 @@ class ApplianceDB:
                 raise ValueError(f"Operation failed on {table_name}, possibly due to missing matching records.")
             
             return dict(result) if result else None
+
+    async def update_array_append(self, table_name: str, append_data: dict, condition: dict):
+        """
+        將資料 Append 到指定的 Array 欄位中 (Atomic Operation)
+        """
+        await self.check_db_connection()
+        
+        # 簡單驗證欄位名稱
+        for col in append_data.keys():
+            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+                raise ValueError(f"Illegal column name: {col}")
+
+        async with self.db_pool.acquire() as connection:
+            set_clauses = []
+            values = []
+            
+            for i, (col, val) in enumerate(append_data.items()):
+                set_clauses.append(f'"{col}" = array_append(COALESCE("{col}", \'{{}}\'), ${i+1})')
+                values.append(val)
+                
+            condition_clauses = []
+            base_idx = len(values)
+            for i, (col, val) in enumerate(condition.items()):
+                 condition_clauses.append(f'"{col}" = ${base_idx + i + 1}')
+                 values.append(val)
+            
+            set_sql = ", ".join(set_clauses)
+            condition_sql = " AND ".join(condition_clauses)
+            
+            sql_cmd = f'UPDATE "{table_name}" SET {set_sql} WHERE {condition_sql} RETURNING *'
+            
+            result = await connection.fetchrow(sql_cmd, *values)
+            return dict(result) if result else None
+
+
 
 
 db = ApplianceDB()

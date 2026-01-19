@@ -93,14 +93,7 @@ SENDTASKS_COLUMNS = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "pers
                      "pre_test_end_ut", "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", 
                      "test_end_ut", "test_start_ut", "is_pause", "pre_test_enable", "stop_time_new"]
 
-SENDLOG_TABLE_INFO = {"id": "SERIAL PRIMARY KEY", "uuid": "TEXT UNIQUE", "target_email": "TEXT", "template_uuid": "TEXT", 
-                      "second_access_time": "BIGINT[]", "second_access_src": "TEXT[]", "second_access_dev": "TEXT[]", 
-                      "second_input_time": "BIGINT[]", "second_input_src": "TEXT[]", 
-                      "second_input_dev": "TEXT[]", "second_input_info": "TEXT[]",
-                      "person_info": "TEXT", "plan_time": "BIGINT", "send_time": "BIGINT", "send_res": "TEXT", 
-                      "access_time": "BIGINT[]", "access_src": "TEXT[]", "access_dev": "TEXT[]", 
-                      "click_time": "BIGINT[]", "click_src": "TEXT[]", "click_dev": "TEXT[]", 
-                      "file_time": "BIGINT[]", "file_src": "TEXT[]", "file_dev": "TEXT[]"}
+
 
 SENDLOG_COLUMNS = ["uuid", "target_email", "person_info", "template_uuid", "plan_time",
                    "send_time", "send_res", "access_time", "access_src", "access_dev",
@@ -126,7 +119,7 @@ class DBUser:
         # 檢查資料庫連線
         await self.db.check_db_connection()
 
-        table_names = ["accts", "sendtasks", "mtmpl", "sendlog_stats"]
+        table_names = ["accts", "sendtasks", "mtmpl", "sendlog_stats", "send_log_details"]
         
         # 檢查資料表是否為空，如果是空的，則從 SE2 獲取資料並插入到資料表中。
         for table_name in table_names:
@@ -148,6 +141,10 @@ class DBUser:
                     # 開始更新sendlog_stats table
                     sendlog_stats_status = await self.refresh_sendlog_stats(sendtask_uuids)
                     logger.info(f"Updated sendlog_stats with status: {sendlog_stats_status}")
+                    continue
+                elif table_name == "send_log_details":
+                    # 這個表通常由 refresh_sendlog_stats 或 check_sendlog 填充
+                    logger.info(f"Skipping direct initialization for {table_name}, it will be populated via logic.")
                     continue
 
                 if not se2_list:
@@ -340,18 +337,6 @@ class DBUser:
                         await self.db.update_db("sendtasks", task_to_update, {"sendtask_uuid": uuid})
                         logger.info(f"Updated sendtasks table for {uuid}.")
 
-                    # 刪除舊的 sendlog 表
-                    await self.db.drop_table(uuid)
-                    logger.info(f"Dropped old table {uuid}.")
-                    tables_to_create.append(uuid)
-                    
-        # 批次建立資料表
-        for uuid in tables_to_create:
-            await self.db.create_table(uuid, SENDLOG_TABLE_INFO)
-            logger.info(f"Table {uuid} created.")
-        if not tables_to_create:
-            logger.info("All sendlog tables already exist.")  
-
         logger.info("Upserting sendlog tables...")
         # 只處理未被刪除或未出錯的任務
         sendtask_uuids_to_write = [uuid for uuid in uuids_and_create_time.keys() if statuses.get(uuid) not in ["deleted", "error"]]
@@ -361,7 +346,7 @@ class DBUser:
         return statuses  # 返回狀態
 
     async def sendlog_write(self, sendtask_uuid: list) -> dict:
-        """ 
+        """
         更新 sendlog 資料到資料庫
         :param sendtask_uuid: 任務清單的uuid列表
          """
@@ -373,7 +358,11 @@ class DBUser:
             if sendlog:
                 sendlog_status[uuid] = "unchanged"
                 for log in sendlog:
-                    status = await self.db.upsert_db(uuid, log, conflict_keys=["uuid"])
+                    # 注入 sendtask_uuid
+                    log["sendtask_uuid"] = uuid
+                    # 寫入 send_log_details 表
+                    # 注意：我們使用 log 中的 uuid 作為 conflict key (這是每封信的唯一識別碼)
+                    status = await self.db.upsert_db("send_log_details", log, conflict_keys=["uuid"])
                     if status == "changed":
                         sendlog_status[uuid] = "changed"
             else:
@@ -411,7 +400,7 @@ class DBUser:
             old_stats = old_stats_data[0] if old_stats_data else {}
 
             # 2. 計算新的統計數據
-            data = await self.get_sendlog(table_name=uuid, need_id=False)
+            data = await self.get_sendlog(sendtask_uuid=uuid, need_id=False)
             new_stats = calc_stats(data)
 
             # 3. 比較並觸發通知
@@ -432,13 +421,61 @@ class DBUser:
 
         return check_statuses
 
-    async def get_sendlog(self, table_name: str, need_id=True):
+    async def get_sendlog(self, sendtask_uuid: str, need_id=True):
         await self.db.check_db_connection()
-        data = await self.db.get_db(table_name)
-        if not need_id:
-            for dd in data:
+        
+        # 0. 嘗試從 Redis 讀取快取
+        cache_key = f"task:{sendtask_uuid}:details"
+        try:
+            from backend.services.redis_client import RedisClient
+            redis_client = RedisClient()
+            client = await redis_client.get_client()
+            
+            cached_data = await client.get(cache_key)
+            if cached_data:
+                logger.debug(f"Cache Hit for {sendtask_uuid}")
+                return json.loads(cached_data)
+        except Exception as e:
+            logger.warning(f"Redis cache miss/error for {sendtask_uuid}: {e}")
+
+        # 1. DB 查詢 send_log_details
+        data = await self.db.get_db("send_log_details", where_column="sendtask_uuid", values=sendtask_uuid)
+        
+        # 資料沒變，先把 id 拿掉 (如果不需要的話)
+        if not need_id: 
+            # 注意：這裡邏輯跟原版稍微不同，原版是在 return 前 pop。
+            # 但若要寫入 Cache，通常需不需要 id? Dashboard 通常不需要 id，但需要 uuid
+            # 為了保持一致性，先複製一份處理
+            data_to_cache = [d.copy() for d in data] if data else []
+            for dd in data_to_cache:
                 dd.pop("id", None)
-        return data
+            
+            # 使用 data_to_cache 做為快取來源
+            final_data = data_to_cache
+        else:
+            final_data = data
+
+        # 2. 寫回 Redis
+        try:
+            if final_data:
+                # 檢查這任務是否已封存，決定 TTL
+                # 簡單起見，先讀取 sendtasks 狀態。這可能會多一次 DB Query，但為了 TTL 正確值得。
+                # 也可以考慮把 is_archived 放入 Cache Key 或另外存
+                task_rows = await self.db.get_db("sendtasks", select_columns=["is_archived"], where_column="sendtask_uuid", values=sendtask_uuid)
+                is_archived = task_rows[0].get("is_archived", False) if task_rows else False
+                
+                ttl = 3600 if is_archived else 15 * 86400  # 1小時 vs 15天
+                
+                # 序列化含有 datetime/date 的物件需要小心，但這裡 data 來自 asyncpg row (dict)，
+                # 且大部分時間是 BIGINT 或 TEXT，應該可以直接 dumps。
+                # 若有 datetime 物件需自訂 encoder，但在 table_info 看到都是 BIGINT (timestamp)。
+                
+                await client.set(cache_key, json.dumps(final_data), ex=ttl)
+                logger.debug(f"Cache Set for {sendtask_uuid} with TTL {ttl}")
+        except Exception as e:
+             logger.warning(f"Failed to set Redis cache for {sendtask_uuid}: {e}")
+
+        return final_data
 
 ## user相關操作
     async def user_exists(self, username: str) -> bool:
@@ -479,24 +516,38 @@ class DBUser:
         從 'accts' 獲取所有帳戶，並檢查他們在 'users' 中的註冊狀態。
         """
         await self.db.check_db_connection()
-        query = """
-            SELECT
-                a.acct_uuid,
-                a.acct_id,
-                a.acct_full_name,
-                a.acct_email,
-                a.is_active,
-                a.orgs,
-                CASE WHEN u.acct_uuid IS NOT NULL THEN TRUE ELSE FALSE END AS is_registered
-            FROM
-                accts a
-            LEFT JOIN
-                users u ON a.acct_uuid = u.acct_uuid
-            ORDER BY
-                a.acct_full_name;
-        """
-        users = await self.db.execute_query(query)
-        return users
+        # Fetch all accounts
+        accts = await self.db.get_db(
+            table_name="accts", 
+            select_columns=["acct_uuid", "acct_id", "acct_full_name", "acct_email", "is_active", "orgs"],
+            order_by="acct_full_name"
+        )
+        
+        # Fetch all registered user uuids
+        users = await self.db.get_db(
+            table_name="users",
+            select_columns=["acct_uuid"]
+        )
+        registered_uuids = {u["acct_uuid"] for u in users if u.get("acct_uuid")}
+        
+        # Merge and transform
+        result = []
+        for acct in accts:
+            acct_uuid = acct.get("acct_uuid")
+            row = {
+                "acct_uuid": acct_uuid,
+                "acct_id": acct.get("acct_id"),
+                "acct_full_name": acct.get("acct_full_name"),
+                "acct_email": acct.get("acct_email"),
+                "is_active": acct.get("is_active"),
+                "orgs": acct.get("orgs"),
+                "is_registered": acct_uuid in registered_uuids
+            }
+            result.append(row)
+            
+
+        
+        return result
     
 ## customer 相關操作
     async def customer_exists(self, customer_name: str) -> bool:
@@ -647,9 +698,14 @@ class DBUser:
         """
         await self.db.check_db_connection()
         try:
-            query = f'SELECT * FROM login_logs ORDER BY create_time DESC LIMIT {limit}'
-            logs = await self.db.execute_query(query)
-            return logs
+            result = await self.db.get_paginated_db(
+                table_name="login_logs",
+                paginate=True,
+                page=1,
+                rows_per_page=limit,
+                order_by="create_time DESC"
+            )
+            return result.get("data", [])
         except Exception as e:
             logger.error(f"Error fetching login logs: {str(e)}")
             return []

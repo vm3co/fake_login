@@ -141,6 +141,34 @@ const formatDateTime = (timestamp) => {
   return date.toLocaleString('zh-TW');
 };
 
+// 格式化輸入資訊 (嘗試解析 JSON)
+const formatInputInfo = (info) => {
+  if (!info) return '-';
+  try {
+    // 嘗試解析 JSON
+    // 注意：有時候 info 可能已經是 Object (如果 axios 自動解析了)，
+    // 但根據後端回傳通常是 array of strings (because second_input_info is TEXT[] in DB)
+    // 且如果是 JSON string, 需要 JSON.parse
+
+    let parsed = info;
+    if (typeof info === 'string') {
+      // 檢查是否像 JSON
+      if (info.trim().startsWith('{') || info.trim().startsWith('[')) {
+        parsed = JSON.parse(info);
+      }
+    }
+
+    if (typeof parsed === 'object' && parsed !== null) {
+      // 如果是物件，格式化為 "key: value"
+      return Object.entries(parsed).map(([key, value]) => `${key}: ${value}`).join(', ');
+    }
+
+    return info; // 回傳原始字串
+  } catch (e) {
+    return info; // 解析失敗，回傳原始字串
+  }
+};
+
 export default function TaskDetail({ task, open, onClose }) {
   const [taskData, setTaskData] = useState(null);
   const [mailTemplates, setMailTemplates] = useState([]);
@@ -821,7 +849,10 @@ export default function TaskDetail({ task, open, onClose }) {
                                 {log.second_input_dev}
                               </Typography>
                               <Typography>
-                                {log.second_input_info}
+                                {Array.isArray(log.second_input_info)
+                                  ? log.second_input_info.map(info => formatInputInfo(info)).join('; ')
+                                  : formatInputInfo(log.second_input_info)
+                                }
                               </Typography>
                             </TableCell>
                           </TableRow>

@@ -14,8 +14,48 @@ CREATE TABLE IF NOT EXISTS sendtasks (
     stop_time_new BIGINT,        -- 延長停止寄送時間
     is_pause BOOLEAN, -- 是否暫停
     pre_test_enable BOOLEAN, -- 是否有前測
-    is_active BOOLEAN DEFAULT TRUE 
+    is_archived BOOLEAN DEFAULT FALSE -- 用於標記該任務是否已超過 14 天
 );
+
+-- send_log_details (取代動態 Table)
+CREATE TABLE IF NOT EXISTS send_log_details (
+    id BIGSERIAL PRIMARY KEY,
+    uuid TEXT UNIQUE NOT NULL,                -- 受測者唯一識別碼 (對應主系統的 uuid)
+    sendtask_uuid VARCHAR(36) NOT NULL,-- 關聯回任務主表
+    
+    -- 主系統同步過來的基本資料
+    target_email TEXT,
+    person_info TEXT,
+    template_uuid TEXT,
+    plan_time BIGINT,
+    send_time BIGINT,
+    send_res TEXT,
+    
+    -- 主系統同步過來的觸發紀錄
+    access_time BIGINT[],
+    access_src TEXT[],
+    access_dev TEXT[],
+    click_time BIGINT[],
+    click_src TEXT[],
+    click_dev TEXT[],
+    file_time BIGINT[],
+    file_src TEXT[],
+    file_dev TEXT[],
+
+    -- Dashboard 系統獨有的觸發紀錄 (偽裝網頁)
+    second_access_time BIGINT[],
+    second_access_src TEXT[],
+    second_access_dev TEXT[],
+    second_input_time BIGINT[],
+    second_input_src TEXT[],
+    second_input_dev TEXT[],
+    second_input_info TEXT[],  -- 建議存 JSON 字串或 TEXT Array
+
+    -- 索引優化
+    CONSTRAINT fk_sendtask FOREIGN KEY(sendtask_uuid) REFERENCES sendtasks(sendtask_uuid) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS idx_details_sendtask_uuid ON send_log_details(sendtask_uuid);
+CREATE INDEX IF NOT EXISTS idx_details_uuid ON send_log_details(uuid);
 
 -- sendlog_stats 
 CREATE TABLE IF NOT EXISTS sendlog_stats (
