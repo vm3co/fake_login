@@ -270,25 +270,47 @@ class DBUser:
     async def check_sendlog(self, uuids_and_create_time: dict):
         """
         檢查 sendlog table 是否存在於資料庫中，且建立時間正確
-        不存在便新建，並存入資料
-        建立時間不符合則更新sendlog_stats，並重新建立table
-        存在則更新資料
         :param uuids_and_create_time: sendtask 的 UUID，對應建立時間的字典
         """
         await self.db.check_db_connection()
         logger.info("Checking sendlog tables...")
         
         statuses = {}
+        # 0. 先過濾掉已封存的任務 (Safety Check)
+        # 雖然外部通常已過濾，但為了安全起見再次確認
+        # 查詢所有傳入的 UUID 中，有哪些已經是 is_archived = TRUE
+        target_uuids = list(uuids_and_create_time.keys())
+        if not target_uuids:
+             return {}
+        
+        archived_tasks = await self.db.get_db(
+            "sendtasks", 
+            select_columns=["sendtask_uuid"], 
+            where_column="sendtask_uuid", 
+            values=target_uuids,
+            where_clauses=["is_archived = TRUE"]
+        )
+        archived_uuids = {t["sendtask_uuid"] for t in archived_tasks}
+        
+        # 只保留未封存的任務
+        active_uuids_and_time = {
+            u: t for u, t in uuids_and_create_time.items() 
+            if u not in archived_uuids
+        }
+        
+        if len(active_uuids_and_time) < len(uuids_and_create_time):
+             logger.info(f"Skipped {len(uuids_and_create_time) - len(active_uuids_and_time)} archived tasks in check_sendlog.")
+
         # 批次檢查所有資料表是否存在，且建立時間正確
         tables_to_create = []
-        for uuid, create_ut in uuids_and_create_time.items():
+        for uuid, create_ut in active_uuids_and_time.items():
             if not await self.db.table_exists(uuid):
                 tables_to_create.append(uuid)
             else:
                 data = await get_se2_data.get_sendtask(uuid)
                 if data and data.get("error", {}).get("code") == 404:
                     logger.warning(f"Task {uuid} not found on SE2 (404). Deleting local data.")
-                    # 該任務在遠端已不存在，刪除本地所有相關資料
+                    # 該任務在主系統已不存在，刪除本地所有相關資料
                     await self.db.delete_db("sendtasks", {"sendtask_uuid": uuid})
                     logger.info(f"Deleted task {uuid} from 'sendtasks' table.")
                     await self.db.delete_db("sendlog_stats", {"sendtask_uuid": uuid})
@@ -316,7 +338,7 @@ class DBUser:
                     
                     # 獲取新任務資料並更新 sendtasks 表
         tables_to_create = []
-        for uuid, create_ut in uuids_and_create_time.items():
+        for uuid, create_ut in active_uuids_and_time.items():
             if not await self.db.table_exists(uuid):
                 tables_to_create.append(uuid)
             else:
@@ -338,8 +360,9 @@ class DBUser:
                         logger.info(f"Updated sendtasks table for {uuid}.")
 
         logger.info("Upserting sendlog tables...")
+        logger.info("Upserting sendlog tables...")
         # 只處理未被刪除或未出錯的任務
-        sendtask_uuids_to_write = [uuid for uuid in uuids_and_create_time.keys() if statuses.get(uuid) not in ["deleted", "error"]]
+        sendtask_uuids_to_write = [uuid for uuid in active_uuids_and_time.keys() if statuses.get(uuid) not in ["deleted", "error"]]
         write_statuses = await self.sendlog_write(sendtask_uuids_to_write)
         statuses.update(write_statuses)
         logger.info(f"Sendlog tables upserted with statuses: {statuses}")

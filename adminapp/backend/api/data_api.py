@@ -232,12 +232,13 @@ def get_router(db, db_user):
                 conflict_keys=["sendtask_uuid"])
             refresh_list.append(task["sendtask_uuid"])
 
-        # sendlog_stats_status = await db_user.refresh_sendlog_stats(refresh_list)
-        # background_tasks.add_task(db_user.refresh_sendlog_stats, refresh_list)
+        sendlog_stats_status = await db_user.refresh_sendlog_stats(refresh_list)
+
+        # Send notification in background
         username = current_user.get("username", "unknown")
         background_tasks.add_task(refresh_and_notify, refresh_list, username)
 
-        return {"status": "success", "message": "已開始刷新任務統計資料 (背景執行中)", "data": {}}
+        return {"status": "success", "message": "刷新完成", "data": sendlog_stats_status}
 
     class CustomerGetSendtasksRequest(BaseModel):
         sendtask_uuids: list[str] = []
