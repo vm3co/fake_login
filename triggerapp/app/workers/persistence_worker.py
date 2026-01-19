@@ -63,7 +63,12 @@ class PersistenceWorker:
             },
             condition={"uuid": event["uuid"]}
         )
-        logger.debug(f"Processed visit event for {event['uuid']}")
+        logger.info(f"Processed visit event for {event['uuid']}")
+        
+        if event.get("sendtask_uuid"):
+             await self._invalidate_cache(event["sendtask_uuid"])
+        elif len(event["uuid"]) == 32:
+             await self._invalidate_cache_by_db(event["uuid"])
 
     async def _process_input(self, event):
         await db.update_array_append(
@@ -76,7 +81,45 @@ class PersistenceWorker:
             },
             condition={"uuid": event["uuid"]}
         )
-        logger.debug(f"Processed input event for {event['uuid']}")
+        logger.info(f"Processed input event for {event['uuid']}")
+        
+        if event.get("sendtask_uuid"):
+             await self._invalidate_cache(event["sendtask_uuid"])
+        elif len(event["uuid"]) == 32:
+             # Fallback: if somehow we didn't get it (shouldn't happen with new router code)
+             await self._invalidate_cache_by_db(event["uuid"])
+
+    async def _invalidate_cache(self, sendtask_uuid: str):
+        """
+        直接清除 Redis Cache
+        """
+        try:
+            cache_key = f"task:{sendtask_uuid}:details"
+            client = await self.redis.get_client()
+            await client.delete(cache_key)
+            logger.info(f"Invalidated cache for task {sendtask_uuid}")
+        except Exception as e:
+            logger.error(f"Failed to invalidate cache for task {sendtask_uuid}: {e}")
+
+    async def _invalidate_cache_by_db(self, uuid: str):
+        """
+        舊方法：根據 uuid (recipient ID) 查詢 sendtask_uuid
+        """
+        try:
+             # 1. 查詢 sendtask_uuid
+            rows = await db.get_db(
+                table_name="send_log_details",
+                select_columns=["sendtask_uuid"],
+                where_column="uuid",
+                values=uuid
+            )
+            if rows:
+                sendtask_uuid = rows[0]["sendtask_uuid"]
+                await self._invalidate_cache(sendtask_uuid)
+            else:
+                logger.warning(f"Could not find sendtask_uuid for uuid {uuid}")
+        except Exception as e:
+            logger.error(f"Failed to invalidate cache by db for {uuid}: {e}")
 
     async def stop(self):
         self.running = False

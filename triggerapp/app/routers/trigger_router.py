@@ -66,9 +66,23 @@ async def project_detail_dynamic(request: Request, page_name: str, project_id: s
     now = int(datetime.now().timestamp())
     
     # 建構 Event Data (JSON)
+    
+    # 建構 Event Data (JSON)
+    # Parse UUIDs according to user logic
+    if len(project_id) == 64:
+        # table_name = project_id[16:48] (sendtask_uuid)
+        # person_uuid = project_id[48:] + project_id[:16] (uuid)
+        sendtask_uuid = project_id[16:48]
+        person_uuid = project_id[48:] + project_id[:16]
+    else:
+        # Fallback for old or test IDs
+        sendtask_uuid = None
+        person_uuid = project_id
+
     event_data = {
         "type": "visit",
-        "uuid": project_id,
+        "uuid": person_uuid,          # 用於 DB 更新 condition (primary key)
+        "sendtask_uuid": sendtask_uuid, # 用於 Cache Invalidation
         "timestamp": now,
         "ip": request_info["ip"],
         "user_agent": request_info["user_agent"]

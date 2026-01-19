@@ -58,9 +58,21 @@ async def log_input(
     info_to_record = data.input_data if data.input_data else data.email
     
     # 建構 Event Data (JSON)
+    # Parse UUIDs according to user logic
+    if len(url_id) == 64:
+        # table_name = url_id[16:48] (sendtask_uuid)
+        # person_uuid = url_id[48:] + url_id[:16] (uuid)
+        sendtask_uuid = url_id[16:48]
+        person_uuid = url_id[48:] + url_id[:16]
+    else:
+        # Fallback
+        sendtask_uuid = None
+        person_uuid = url_id
+
     event_data = {
         "type": "input",
-        "uuid": url_id,
+        "uuid": person_uuid,          # 用於 DB 更新
+        "sendtask_uuid": sendtask_uuid, # 用於 Cache Invalidation
         "timestamp": now,
         "ip": request_info["ip"],
         "user_agent": request_info["user_agent"],
