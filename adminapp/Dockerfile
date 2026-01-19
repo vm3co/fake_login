@@ -22,7 +22,8 @@ COPY . .
 # 6. 安全性優化：建立並切換到非 root 使用者 (選用，但強烈建議)
 # 預設 Docker 用 root 跑，若被駭客攻破可能會影響 Host 系統
 # 建立一個名為 'appuser' 的使用者
-RUN adduser --disabled-password --no-create-home appuser
+RUN adduser --disabled-password --no-create-home appuser \
+    && chown -R appuser:appuser /app
 USER appuser
 
 # 7. 開放 port
