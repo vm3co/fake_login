@@ -38,6 +38,8 @@ services:
       - REDIS_PORT=6379
     env_file:
       - .env
+    volumes:
+      - ./triggerapp/app/templates:/app/app/templates
 
   # =========================================
   # 管理後台 (Admin App)
@@ -49,8 +51,8 @@ services:
     container_name: fake-login-admin-app
     # 正式環境：依賴 Dockerfile 內的 COPY 指令
     volumes:
-      # 只掛載templates資料
-      - templates_data:/app/uploads_for_trigger_app_templates
+      # 掛載本地 triggerapp templates，讓兩邊共享
+      - ./triggerapp/app/templates:/app/uploads_for_trigger_app_templates
     depends_on:
       postgres-db:
         condition: service_healthy

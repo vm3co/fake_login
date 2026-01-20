@@ -400,6 +400,10 @@ class DBUser:
         :return: sendlog_stats 的更新狀態
         """
         await self.db.check_db_connection()
+        if uuids is not None and len(uuids) == 0:
+            logger.info("Empty UUIDs list provided to refresh_sendlog_stats. Skipping.")
+            return {}
+
         if uuids is None:
             logger.info("Fetching all sendtask uuids for refresh...")
             sendtask_data = await self.db.get_db("sendtasks", select_columns=["sendtask_uuid", "sendtask_create_ut", "sendtask_id"])
