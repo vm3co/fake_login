@@ -427,7 +427,7 @@ class DBUser:
             old_stats = old_stats_data[0] if old_stats_data else {}
 
             # 2. 計算新的統計數據
-            data = await self.get_sendlog(sendtask_uuid=uuid, need_id=False)
+            data = await self.get_sendlog(sendtask_uuid=uuid, need_id=False, use_cache=False)
             new_stats = calc_stats(data)
 
             # 3. 比較並觸發通知
@@ -448,22 +448,31 @@ class DBUser:
 
         return check_statuses
 
-    async def get_sendlog(self, sendtask_uuid: str, need_id=True):
+    async def get_sendlog(self, sendtask_uuid: str, need_id=True, use_cache=True):
         await self.db.check_db_connection()
         
         # 0. 嘗試從 Redis 讀取快取
         cache_key = f"task:{sendtask_uuid}:details"
-        try:
-            from backend.services.redis_client import RedisClient
-            redis_client = RedisClient()
-            client = await redis_client.get_client()
-            
-            cached_data = await client.get(cache_key)
-            if cached_data:
-                logger.debug(f"Cache Hit for {sendtask_uuid}")
-                return json.loads(cached_data)
-        except Exception as e:
-            logger.warning(f"Redis cache miss/error for {sendtask_uuid}: {e}")
+        if use_cache:
+            try:
+                from backend.services.redis_client import RedisClient
+                redis_client = RedisClient()
+                client = await redis_client.get_client()
+                
+                cached_data = await client.get(cache_key)
+                if cached_data:
+                    logger.debug(f"Cache Hit for {sendtask_uuid}")
+                    return json.loads(cached_data)
+            except Exception as e:
+                logger.warning(f"Redis cache miss/error for {sendtask_uuid}: {e}")
+        else:
+            # 如果不使用快取，還是需要 client 來寫入
+            try:
+                from backend.services.redis_client import RedisClient
+                redis_client = RedisClient()
+                client = await redis_client.get_client()
+            except Exception as e:
+                logger.warning(f"Failed to initialize Redis client: {e}")
 
         # 1. DB 查詢 send_log_details
         data = await self.db.get_db("send_log_details", where_column="sendtask_uuid", values=sendtask_uuid)
@@ -491,7 +500,7 @@ class DBUser:
                 task_rows = await self.db.get_db("sendtasks", select_columns=["is_archived"], where_column="sendtask_uuid", values=sendtask_uuid)
                 is_archived = task_rows[0].get("is_archived", False) if task_rows else False
                 
-                ttl = 3600 if is_archived else 15 * 86400  # 1小時 vs 15天
+                ttl = 3600 if is_archived else 86400  # 1小時 vs 1天 (Active)
                 
                 # 序列化含有 datetime/date 的物件需要小心，但這裡 data 來自 asyncpg row (dict)，
                 # 且大部分時間是 BIGINT 或 TEXT，應該可以直接 dumps。

@@ -169,6 +169,24 @@ const formatInputInfo = (info) => {
   }
 };
 
+// 顯示 Log 資訊的共用元件
+const LogInfo = ({ time, src, dev }) => {
+  if (!time) return '-';
+  return (
+    <Box>
+      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+        {formatDateTime(time)}
+      </Typography>
+      <Typography variant="body2">
+        {src}
+      </Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', lineHeight: 1.2, mt: 0.5 }}>
+        {dev}
+      </Typography>
+    </Box>
+  );
+};
+
 export default function TaskDetail({ task, open, onClose }) {
   const [taskData, setTaskData] = useState(null);
   const [mailTemplates, setMailTemplates] = useState([]);
@@ -795,65 +813,56 @@ export default function TaskDetail({ task, open, onClose }) {
                             <TableCell>{formatDateTime(log.plan_time)}</TableCell>
                             <TableCell>{formatDateTime(log.send_time)}</TableCell>
                             <TableCell>
-                              <Typography>
-                                <strong>{formatDateTime(log.access_time)}</strong>
-                              </Typography>
-                              <Typography>
-                                {log.access_src}
-                              </Typography>
-                              <Typography>
-                                {log.access_dev}
-                              </Typography>
+                              <LogInfo
+                                time={log.access_time}
+                                src={log.access_src}
+                                dev={log.access_dev}
+                              />
                             </TableCell>
                             <TableCell>
-                              <Typography>
-                                <strong>{formatDateTime(log.click_time)}</strong>
-                              </Typography>
-                              <Typography>
-                                {log.click_src}
-                              </Typography>
-                              <Typography>
-                                {log.click_dev}
-                              </Typography>
+                              <LogInfo
+                                time={log.click_time}
+                                src={log.click_src}
+                                dev={log.click_dev}
+                              />
                             </TableCell>
                             <TableCell>
-                              <Typography>
-                                <strong>{formatDateTime(log.file_time)}</strong>
-                              </Typography>
-                              <Typography>
-                                {log.file_src}
-                              </Typography>
-                              <Typography>
-                                {log.file_dev}
-                              </Typography>
+                              <LogInfo
+                                time={log.file_time}
+                                src={log.file_src}
+                                dev={log.file_dev}
+                              />
                             </TableCell>
                             <TableCell>
-                              <Typography>
-                                <strong>{formatDateTime(log.second_access_time)}</strong>
-                              </Typography>
-                              <Typography>
-                                {log.second_access_src}
-                              </Typography>
-                              <Typography>
-                                {log.second_access_dev}
-                              </Typography>
+                              <LogInfo
+                                time={log.second_access_time}
+                                src={log.second_access_src}
+                                dev={log.second_access_dev}
+                              />
                             </TableCell>
                             <TableCell>
-                              <Typography>
-                                <strong>{formatDateTime(log.second_input_time)}</strong>
-                              </Typography>
-                              <Typography>
-                                {log.second_input_src}
-                              </Typography>
-                              <Typography>
-                                {log.second_input_dev}
-                              </Typography>
-                              <Typography>
-                                {Array.isArray(log.second_input_info)
-                                  ? log.second_input_info.map(info => formatInputInfo(info)).join('; ')
-                                  : formatInputInfo(log.second_input_info)
-                                }
-                              </Typography>
+                              <LogInfo
+                                time={log.second_input_time}
+                                src={log.second_input_src}
+                                dev={log.second_input_dev}
+                              />
+
+                              {(log.second_input_info && (Array.isArray(log.second_input_info) ? log.second_input_info.length > 0 : true)) && (
+                                <Box sx={{
+                                  mt: 1,
+                                  p: 1,
+                                  backgroundColor: '#e3f2fd',
+                                  borderRadius: '4px',
+                                  border: '1px solid #90caf9'
+                                }}>
+                                  <Typography variant="body2" sx={{ wordBreak: 'break-word', color: '#1565c0', fontWeight: 500 }}>
+                                    {Array.isArray(log.second_input_info)
+                                      ? log.second_input_info.map(info => formatInputInfo(info)).join('; ')
+                                      : formatInputInfo(log.second_input_info)
+                                    }
+                                  </Typography>
+                                </Box>
+                              )}
                             </TableCell>
                           </TableRow>
                         );

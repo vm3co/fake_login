@@ -214,6 +214,24 @@ async def lifespan(app: FastAPI):
     await refresh_token_job()   # 測試初始化 token
     await db_user.table_initialize()
     logger.info("資料庫初始化完成")
+
+    # Cache Warming logic
+    try:
+        logger.info("Starting Cache Warming...")
+        # Fetch active tasks (is_archived is False or NULL)
+        active_tasks = await db.get_db(
+            "sendtasks", 
+            select_columns=["sendtask_uuid"], 
+            where_clauses=["(is_archived IS NOT TRUE)"]
+        )
+        active_uuids = [t["sendtask_uuid"] for t in active_tasks]
+        if active_uuids:
+             await db_user.refresh_sendlog_stats(active_uuids)
+             logger.info(f"Cache Warming completed for {len(active_uuids)} active tasks.")
+        else:
+             logger.info("No active tasks found for Cache Warming.")
+    except Exception as e:
+        logger.error(f"Cache Warming failed: {e}")
     start_scheduler()  # 啟動 APScheduler
     
     # Start workers
