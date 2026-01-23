@@ -22,23 +22,13 @@ class SyncWorker:
         logger.info("SyncWorker started.")
         while self.running:
             try:
-                # 這裡可以實作更複雜的同步邏輯，例如每10分鐘檢查所有 Active Task
-                # 簡單起見，我們調用 refresh_sendlog_stats，它內部會呼叫 check_sendlog -> 觸發同步
-                
-                # 1. 獲取所有 active tasks
+                # 獲取所有 active tasks
                 active_tasks = await self.db_user.db.get_db("sendtasks", select_columns=["sendtask_uuid"], where_clauses=["is_archived = FALSE"])
                 uuids = [t["sendtask_uuid"] for t in active_tasks]
                 
                 if uuids:
                     logger.info(f"SyncWorker checking {len(uuids)} active tasks...")
                     await self.db_user.refresh_sendlog_stats(uuids=uuids)
-                    
-                    # 2. 刷新快取 (Optional, refresh_sendlog_stats 更新了 DB, 但 Cache 可能還是舊的)
-                    # 可以在 check_sendlog 更新 DB 後順便刪除 Cache，或者在這裡強制刷新
-                    # 簡單作法：刪除 Cache，讓下一次讀取 Lazy Load
-                    client = await self.redis.get_client()
-                    for uuid in uuids:
-                         await client.delete(f"task:{uuid}:details")
                 
                 await asyncio.sleep(self.check_interval)
             except Exception as e:

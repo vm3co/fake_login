@@ -14,10 +14,7 @@ import PowerSettingsNew from "@mui/icons-material/PowerSettingsNew";
 
 import useAuth from "app/hooks/useAuth";
 import useSettings from "app/hooks/useSettings";
-import { useCheckTasks } from "app/hooks/useCheckTasks";
-import { useCheckTodayCreateTasks } from "app/hooks/useCheckTodayCreateTasks";
 import { useJob } from "app/contexts/JobContext";
-import { SendtaskListContext } from "app/contexts/SendtaskListContext";
 import { NotificationProvider } from "app/contexts/NotificationContext";
 import NotificationBar from "app/components/NotificationBar/NotificationBar";
 
@@ -89,12 +86,10 @@ const Layout1Topbar = () => {
   const { logout, user } = useAuth();
   const isMdScreen = useMediaQuery(theme.breakpoints.down("md"));
 
-  const { refresh, isCheckingSends, setIsCheckingSends } = useContext(SendtaskListContext);
-  const { fetchCheckTasks } = useCheckTasks({ refresh, setIsCheckingSends });
-  const { fetchCheckTodayCreateTasks } = useCheckTodayCreateTasks({ refresh, setIsCheckingSends });
-  const { startJob } = useJob();
-  const { controllerRef, createController } = useAbortOnUnmount();
+  const { startJob, currentJob } = useJob();
 
+  // 檢查是否有正在運行的任務 (為了禁用按鈕)
+  const isJobRunning = currentJob && ["running", "pending"].includes(currentJob.status);
 
   const updateSidebarMode = (sidebarSettings) => {
     updateSettings({ layout1Settings: { leftSidebar: { ...sidebarSettings } } });
@@ -111,12 +106,21 @@ const Layout1Topbar = () => {
     updateSidebarMode({ mode });
   };
 
-  const fetchUpdataMtmpl = async () => {
-    // 彈出確認視窗
-    if (!window.confirm("確定要執行郵件樣板更新嗎？")) {
-      return;
-    }
-    await startJob("update_mtmpl");
+  const handleUpdateMtmpl = async () => {
+    if (!window.confirm("確定要執行郵件樣板更新嗎？")) return;
+    startJob("update_mtmpl");
+  };
+
+  const handleCheckTodayCreateTasks = async () => {
+    if (!window.confirm("確定要執行檢查今日建立任務嗎？")) return;
+    // 傳入 user.orgs 以確保後端能正確過濾
+    startJob("refresh_today_create_task", { orgs: user.orgs });
+  };
+
+  const handleCheckTasks = async () => {
+    if (!window.confirm("確定要執行任務列表更新嗎？")) return;
+    // 傳入 user.orgs 以確保後端能正確過濾
+    startJob("check_sendtasks", { orgs: user.orgs });
   };
 
 
@@ -133,36 +137,14 @@ const Layout1Topbar = () => {
               社交工程管理系統
             </Typography>
           </Box>
-
-
-          {/* <IconBox>
-            <StyledIconButton>
-              <MailOutline />
-            </StyledIconButton>
-
-            <StyledIconButton>
-              <WebAsset />
-            </StyledIconButton>
-
-            <StyledIconButton>
-              <StarOutline />
-            </StyledIconButton>
-          </IconBox> */}
         </Box>
 
         <Box display="flex" alignItems="center">
-          {isCheckingSends && (
-            <Span sx={{ color: "blue", marginRight: 2, whiteSpace: "nowrap" }}>
-              任務列表更新中...
-            </Span>
-          )}
-          {/* <MatxSearchBox /> */}
+          {/* 使用 JobContext 的全域通知，這邊不再需要額外的 Span */}
 
           <NotificationProvider>
             <NotificationBar />
           </NotificationProvider>
-
-          {/* <ShoppingCart /> */}
 
           <MatxMenu
             menuButton={
@@ -170,18 +152,16 @@ const Layout1Topbar = () => {
                 <Span>
                   Hi <strong>{user.name}</strong>
                 </Span>
-
-                {/* <Avatar src={user.avatar} sx={{ cursor: "pointer" }} /> */}
               </UserMenu>
             }>
             <StyledItem
-              onClick={isCheckingSends ? undefined : fetchCheckTodayCreateTasks}
-              disabled={isCheckingSends}
+              onClick={isJobRunning ? undefined : handleCheckTodayCreateTasks}
+              disabled={isJobRunning}
               sx={{
-                opacity: isCheckingSends ? 0.5 : 1,
-                cursor: isCheckingSends ? 'not-allowed' : 'pointer',
+                opacity: isJobRunning ? 0.5 : 1,
+                cursor: isJobRunning ? 'not-allowed' : 'pointer',
                 '&:hover': {
-                  backgroundColor: isCheckingSends ? 'transparent' : 'action.hover'
+                  backgroundColor: isJobRunning ? 'transparent' : 'action.hover'
                 }
               }}
             >
@@ -190,13 +170,13 @@ const Layout1Topbar = () => {
             </StyledItem>
 
             <StyledItem
-              onClick={isCheckingSends ? undefined : fetchUpdataMtmpl}
-              disabled={isCheckingSends}
+              onClick={isJobRunning ? undefined : handleUpdateMtmpl}
+              disabled={isJobRunning}
               sx={{
-                opacity: isCheckingSends ? 0.5 : 1,
-                cursor: isCheckingSends ? 'not-allowed' : 'pointer',
+                opacity: isJobRunning ? 0.5 : 1,
+                cursor: isJobRunning ? 'not-allowed' : 'pointer',
                 '&:hover': {
-                  backgroundColor: isCheckingSends ? 'transparent' : 'action.hover'
+                  backgroundColor: isJobRunning ? 'transparent' : 'action.hover'
                 }
               }}
             >
@@ -205,31 +185,19 @@ const Layout1Topbar = () => {
             </StyledItem>
 
             <StyledItem
-              onClick={isCheckingSends ? undefined : fetchCheckTasks}
-              disabled={isCheckingSends}
+              onClick={isJobRunning ? undefined : handleCheckTasks}
+              disabled={isJobRunning}
               sx={{
-                opacity: isCheckingSends ? 0.5 : 1,
-                cursor: isCheckingSends ? 'not-allowed' : 'pointer',
+                opacity: isJobRunning ? 0.5 : 1,
+                cursor: isJobRunning ? 'not-allowed' : 'pointer',
                 '&:hover': {
-                  backgroundColor: isCheckingSends ? 'transparent' : 'action.hover'
+                  backgroundColor: isJobRunning ? 'transparent' : 'action.hover'
                 }
               }}
             >
               <AssignmentTurnedIn />
               <Span sx={{ marginInlineStart: 1 }}>更新任務列表</Span>
             </StyledItem>
-
-            {/* <StyledItem>
-              <Link to="/page-layouts/user-profile">
-                <Person />
-                <Span sx={{ marginInlineStart: 1 }}>Profile</Span>
-              </Link>
-            </StyledItem>
-
-            <StyledItem>
-              <Settings />
-              <Span sx={{ marginInlineStart: 1 }}>Settings</Span>
-            </StyledItem> */}
 
             <StyledItem onClick={logout}>
               <PowerSettingsNew />

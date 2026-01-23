@@ -37,6 +37,7 @@ import {
   Download,
   Search,
   ExpandMore as ExpandMoreIcon,
+  Delete,
 } from '@mui/icons-material';
 
 const MainContainer = styled(Box)(() => ({
@@ -102,7 +103,7 @@ const StyledTable = styled(Table)(() => ({
           borderRight: "none", // 最後一欄不需要右邊框線
         },
         // 特定欄位寬度設定
-        "&:nth-of-type(1)": { width: "40px" }, // NO
+        "&:nth-of-type(1)": { width: "50px" }, // NO
         "&:nth-of-type(2)": { width: "60px" }, // 類型
         "&:nth-of-type(3)": { width: "60px" }, // 信箱
         "&:nth-of-type(4)": { width: "60px" }, // 信件主旨
@@ -389,6 +390,32 @@ export default function TaskDetail({ task, open, onClose }) {
       }
     } finally {
       setDownloading(false);
+    }
+  };
+
+  const handleDeleteTriggerData = async (uuid, sendtask_uuid) => {
+    if (!uuid || !sendtask_uuid) return;
+    if (!window.confirm("確定要刪除這位受測者的所有觸發紀錄嗎？此動作無法復原。")) return;
+
+    try {
+      setLoading(true);
+      const response = await axios.post("/api/clear_trigger_data", {
+        uuid: uuid,
+        sendtask_uuid: sendtask_uuid
+      });
+
+      if (response.data.status === "success") {
+        alert("已清除觸發紀錄");
+        // 重新整理資料
+        fetchTaskLogs();
+      } else {
+        alert(response.data.message || "清除失敗");
+      }
+    } catch (e) {
+      console.error(e);
+      alert("清除失敗: " + (e.response?.data?.message || e.message));
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -762,6 +789,7 @@ export default function TaskDetail({ task, open, onClose }) {
                         <TableCell>附件開啟資訊</TableCell>
                         <TableCell>連結點擊資訊</TableCell>
                         <TableCell>表格輸入資訊</TableCell>
+                        {/* <TableCell>操作</TableCell> */}
                       </TableRow>
                     </TableHead>
                     <TableBody>
@@ -774,18 +802,22 @@ export default function TaskDetail({ task, open, onClose }) {
                         return (
                           <TableRow key={log.id || index}>
                             <TableCell>
-                              <Box>
-                                {/* <Checkbox
-                                          checked={selectedUuids.includes(log.uuid)}
-                                          onChange={e => {
-                                              if (e.target.checked) {
-                                              setSelectedUuids([...selectedUuids, log.uuid]);
-                                              } else {
-                                              setSelectedUuids(selectedUuids.filter(uuid => uuid !== log.uuid));
-                                              }
-                                          }}
-                                          /> */}
+                              <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5 }}>
                                 {globalIndex}
+                                <Button
+                                  variant="outlined"
+                                  color="error"
+                                  size="small"
+                                  onClick={() => handleDeleteTriggerData(log.uuid, log.sendtask_uuid)}
+                                  sx={{
+                                    fontSize: '0.7rem',
+                                    padding: '1px 4px',
+                                    minWidth: 'auto',
+                                    height: '22px'
+                                  }}
+                                >
+                                  重置
+                                </Button>
                               </Box>
                             </TableCell>
                             <TableCell>

@@ -602,6 +602,18 @@ def get_router(db, db_user):
         sortBy: str = "plan_time"
         paginate: bool = False
 
+    class ClearTriggerRequest(BaseModel):
+        uuid: str
+        sendtask_uuid: str
+
+    @router.post("/clear_trigger_data")
+    async def clear_trigger_data(request: ClearTriggerRequest):
+        try:
+            await db_user.clear_trigger_data(request.uuid, request.sendtask_uuid)
+            return {"status": "success", "message": "已清除觸發紀錄"}
+        except Exception as e:
+            return {"status": "error", "message": f"清除失敗: {str(e)}"}
+
     @router.post(
         "/download_se2_sendlog_xlsx",
         tags=["data"]

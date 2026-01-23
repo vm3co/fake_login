@@ -64,7 +64,11 @@ def calc_stats(stats: List[Dict[str, Any]]) -> Dict[str, Any]:
     all_latest_plan_time = max(t["plan_time"] for t in stats) if stats else 0
 
     # 統計觸發人數
-    totalTriggered = [t for t in stats if t.get("access_src", []) and len(t.get("access_src", [])) > 0]
+    trigger_fields = ["access_src", "click_src", "file_src", "second_access_src", "second_input_src"]
+    totalTriggered = [
+        t for t in stats 
+        if any((t.get(field) and len(t.get(field)) > 0) for field in trigger_fields)
+    ]
 
 
     return {
@@ -585,6 +589,44 @@ class DBUser:
         
         return result
     
+
+    async def clear_trigger_data(self, uuid: str, sendtask_uuid: str):
+        """
+        清除指定受測者(uuid)的所有觸發紀錄 (包含主系統與 Dashboard)
+        並清除 Redis 快取
+        """
+        await self.db.check_db_connection()
+        
+        # 1. 定義要清空的欄位
+        update_data = {
+            "second_access_time": None, "second_access_src": None, "second_access_dev": None,
+            "second_input_time": None, "second_input_src": None, "second_input_dev": None, "second_input_info": None
+        }
+        
+        # 2. 更新資料庫
+        # 注意: update_db 需要 condition={"uuid": uuid}
+        # 為了安全起見，也可以只用 uuid，因為 uuid 應該是唯一的
+        try:
+            await self.db.update_db("send_log_details", update_data, condition={"uuid": uuid})
+            logger.info(f"Cleared trigger data for uuid: {uuid}")
+        except Exception as e:
+            logger.error(f"Failed to clear trigger data in DB for {uuid}: {e}")
+            raise e
+
+        # 3. 清除 Redis 快取
+        if sendtask_uuid:
+            try:
+                cache_key = f"task:{sendtask_uuid}:details"
+                from backend.services.redis_client import RedisClient
+                redis_client = RedisClient()
+                client = await redis_client.get_client()
+                await client.delete(cache_key)
+                logger.info(f"Invalidated Redis cache for task {sendtask_uuid} after clearing trigger data")
+            except Exception as e:
+                logger.warning(f"Failed to invalidate Redis cache for {sendtask_uuid}: {e}")
+
+        return True
+
 ## customer 相關操作
     async def customer_exists(self, customer_name: str) -> bool:
         """

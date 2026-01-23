@@ -94,20 +94,60 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
             await job_manager.start_job(username, "檢查今日建立任務", task_func)
 
         elif job_type == "update_mtmpl":
-            # Logic from update_mtmpl (assuming it exists in db_user or similar, 
-            # but based on previous code it seemed to be a direct API call. 
-            # I need to find where update_mtmpl logic is. 
-            # Wait, I don't see update_mtmpl in db_user.py from previous views.
-            # I should check where it was implemented. 
-            # Ah, I haven't seen update_mtmpl implementation yet. 
-            # Let's assume for now I can implement it or call it.
-            # If it's not in db_user, I might need to implement it here or find it.
-            # Re-checking Layout1Topbar.jsx, it calls /api/update_mtmpl.
-            # I should check main.py or data_api.py for that endpoint.
-            
-            # Let's defer exact implementation of this one until I find the code.
-            # For now, I'll put a placeholder or try to find it.
-            pass
+            # Logic from update_mtmpl
+            async def task_func():
+                # 1. 從 SE2 獲取最新資料
+                se2_mtmpl_list = await db_user.get_se2_mtmpl()
+                if se2_mtmpl_list is None:
+                    # 改為拋出例外或回傳錯誤訊息，讓 Job Manager 捕捉
+                    raise Exception("從 SE2 獲取郵件樣板失敗")
+
+                # 2. 從本地資料庫獲取現有資料
+                local_mtmpl_list = await db.get_db("mtmpl")
+
+                # 3. 準備比對用的集合 (使用 mtmpl_uuid 作為唯一鍵)
+                se2_uuids = {item['mtmpl_uuid']: item for item in se2_mtmpl_list}
+                local_uuids = {item['mtmpl_uuid']: item for item in local_mtmpl_list}
+
+                # 4. 找出差異
+                added_uuids = set(se2_uuids.keys()) - set(local_uuids.keys())
+                removed_uuids = set(local_uuids.keys()) - set(se2_uuids.keys())
+
+                added_list = [se2_uuids[uuid] for uuid in added_uuids]
+                removed_list = [local_uuids[uuid] for uuid in removed_uuids]
+
+                # 5. 執行更新
+                # 新增樣板
+                if added_list:
+                    for item in added_list:
+                        await db.insert_db("mtmpl", item)
+                    logger.info(f"Added {len(added_list)} new mail templates.")
+
+                # 刪除樣板
+                if removed_list:
+                    for item in removed_list:
+                        await db.delete_db("mtmpl", {"mtmpl_uuid": item["mtmpl_uuid"]})
+                    logger.info(f"Removed {len(removed_list)} old mail templates.")
+
+                # Add notification
+                details_msg = f"新增: {len(added_list)} 筆\n刪除: {len(removed_list)} 筆"
+                await db.insert_db("notifications", {
+                    "username": username,
+                    "title": "更新郵件樣板完成",
+                    "subtitle": f"同步完成",
+                    "heading": "系統通知",
+                    "path": "send_list",
+                    "icon_name": "list_alt",
+                    "icon_color": "info",
+                    "details": details_msg
+                })
+
+                return {
+                    "added": len(added_list),
+                    "removed": len(removed_list)
+                }
+
+            await job_manager.start_job(username, "更新郵件樣板列表", task_func)
 
         elif job_type == "check_sendtasks":
             # Logic from check_sendtasks
