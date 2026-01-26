@@ -199,6 +199,14 @@ def start_scheduler():
         minute=0,
         id='refresh_sendlog_stats'
     )
+    # 每天凌晨 2:00 執行 archiving_worker
+    scheduler.add_job(
+        archiving_worker.start,
+        'cron',
+        hour=2,
+        minute=0,
+        id='archiving_job'
+    )
     scheduler.start()
     logger.info("APScheduler 啟動")
     logger.info("refresh_token_job 已排程在每 10 分鐘執行")
@@ -206,6 +214,7 @@ def start_scheduler():
     logger.info("refresh_notyet_today_tasks_job 已排程在每 30 分鐘執行")
     logger.info("check_sendtasks_job 已排程在每日 00:50 執行")
     logger.info("refresh_sendlog_stats_job 已排程在每日 01:00 執行")
+    logger.info("archiving_job 已排程在每日 02:00 執行")
 
 # 引入資料庫
 @asynccontextmanager
@@ -233,17 +242,15 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Cache Warming failed: {e}")
     start_scheduler()  # 啟動 APScheduler
-    
+
     # Start workers
-    task1 = asyncio.create_task(sync_worker.start())
-    task2 = asyncio.create_task(archiving_worker.start())
-    worker_tasks.extend([task1, task2])
+    sync_worker_work = asyncio.create_task(sync_worker.start())
+    worker_tasks.extend([sync_worker_work])
     
     yield
     
     # Shutdown
-    await sync_worker.stop()
-    await archiving_worker.stop()
+    await sync_worker_work.stop()
     for task in worker_tasks:
         task.cancel()
     await asyncio.gather(*worker_tasks, return_exceptions=True)

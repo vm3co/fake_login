@@ -10,23 +10,15 @@ class ArchivingWorker:
     def __init__(self):
         self.db_user = DBUser()
         self.redis = RedisClient()
-        self.running = False
-        # 每天檢查一次
-        self.check_interval = 86400 
-
     async def start(self):
-        self.running = True
-        logger.info("ArchivingWorker started.")
-        await asyncio.sleep(10) # 啟動後等待一下再跑
-
-        while self.running:
-            try:
-                logger.info("ArchivingWorker running archiving job...")
-                await self.archive_old_tasks()
-                await asyncio.sleep(self.check_interval)
-            except Exception as e:
-                logger.error(f"ArchivingWorker error: {e}")
-                await asyncio.sleep(3600)
+        """
+        手動觸發封存檢查 (供排程器呼叫)
+        """
+        logger.info("ArchivingWorker job triggered.")
+        try:
+             await self.archive_old_tasks()
+        except Exception as e:
+             logger.error(f"ArchivingWorker error: {e}")
 
     async def archive_old_tasks(self):
         """
@@ -36,14 +28,22 @@ class ArchivingWorker:
         # 14天 = 14 * 24 * 60 * 60
         threshold_time = now - (14 * 86400)
         
-        # 找出 create_time 早於 threshold 且尚未封存的任務
-        # sendtask_create_ut 是 timestamp (seconds or milliseconds? 根據 table_info 是 BIGINT, 假設 seconds)
-        # 需確認 sendtask_create_ut 單位。假設是 seconds。
+        # 找出 test_end_ut, stop_time_new, pre_test_end_ut 早於 threshold 且尚未封存的任務
+        # 1. test_end_ut < threshold
+        # 2. stop_time_new < threshold (or NULL)
+        # 3. pre_test_end_ut < threshold (or NULL)
         
+        where_clauses = [
+            f"test_end_ut < {threshold_time}",
+            f"(stop_time_new < {threshold_time} OR stop_time_new IS NULL)",
+            f"(pre_test_end_ut < {threshold_time} OR pre_test_end_ut IS NULL)",
+            "is_archived = FALSE"
+        ]
+
         candidates = await self.db_user.db.get_db(
             "sendtasks", 
             select_columns=["sendtask_uuid"], 
-            where_clauses=[f"sendtask_create_ut < {threshold_time}", "is_archived = FALSE"]
+            where_clauses=where_clauses
         )
         
         if not candidates:
@@ -64,6 +64,3 @@ class ArchivingWorker:
             
         logger.info(f"Archived {len(candidates)} tasks.")
 
-    async def stop(self):
-        self.running = False
-        logger.info("ArchivingWorker stopping...")
