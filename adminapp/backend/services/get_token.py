@@ -59,7 +59,7 @@ class getToken:
         """ 
         刷新 token 的方法
         """
-        logger.info("Refreshing token...")
+        # logger.info("Refreshing token...")
         # 獲取當前的 cookie
         cookie = self.get()
         if cookie:

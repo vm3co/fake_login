@@ -53,6 +53,8 @@ services:
     volumes:
       # 掛載本地 triggerapp templates，讓兩邊共享
       - ./triggerapp/app/templates:/app/uploads_for_trigger_app_templates
+      # 掛載token跟cert的資料夾
+      - ./adminapp/backend/certs:/app/backend/certs
     depends_on:
       postgres-db:
         condition: service_healthy
