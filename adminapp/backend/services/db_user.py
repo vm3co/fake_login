@@ -315,16 +315,12 @@ class DBUser:
                 if data and data.get("error", {}).get("code") == 404:
                     logger.warning(f"Task {uuid} not found on SE2 (404). Deleting local data.")
                     # 該任務在主系統已不存在，刪除本地所有相關資料
-                    await self.db.delete_db("sendtasks", {"sendtask_uuid": uuid})
-                    logger.info(f"Deleted task {uuid} from 'sendtasks' table.")
-                    await self.db.delete_db("sendlog_stats", {"sendtask_uuid": uuid})
-                    logger.info(f"Deleted stats for task {uuid} from 'sendlog_stats' table.")
-                    if await self.db.table_exists(uuid):
-                        await self.db.drop_table(uuid)
-                        logger.info(f"Dropped sendlog table '{uuid}'.")
+                    # sendtasks刪除資料
+                    await self.db.delete_db(table_name="sendtasks", condition={"sendtask_uuid": uuid})
+                    # sendlog_stats 刪除資料
+                    await self.db.delete_db(table_name="sendlog_stats", condition={"sendtask_uuid": uuid})
                     statuses[uuid] = "deleted"
-                    message = f"🗑️ *任務已刪除*\n任務 `{escape_markdown_v2(uuid)}` 在遠端系統上找不到，本地資料已同步刪除。"
-                    await send_telegram_notification(message)
+
                     continue # 繼續處理下一個 uuid
                 
                 if data is None:

@@ -183,16 +183,21 @@ def get_router(db, db_user):
                         refresh_list.append(task["sendtask_uuid"])
                 sendlog_stats_status = await db_user.refresh_sendlog_stats(refresh_list)
 
-            # 刪除
+            # 處理移除或封存
             for item in removed_list:
                 uuid = item["sendtask_uuid"]
-                # sendtasks刪除資料
-                await db.delete_db(table_name="sendtasks", condition={"sendtask_uuid": uuid})
-                # sendlog_stats 刪除資料
-                await db.delete_db(table_name="sendlog_stats", condition={"sendtask_uuid": uuid})
-                # 刪除table
-                await db.drop_table(table_name=uuid)
-
+                
+                # 智慧檢查: 確認是否真的已刪除 (404)
+                data = await get_se2_data.get_sendtask(uuid)
+                
+                if data and data.get("error", {}).get("code") == 404:
+                    # sendtasks刪除資料
+                    await db.delete_db(table_name="sendtasks", condition={"sendtask_uuid": uuid})
+                    # sendlog_stats 刪除資料
+                    await db.delete_db(table_name="sendlog_stats", condition={"sendtask_uuid": uuid})
+                else:
+                    # 僅封存，不刪除
+                    await db.update_db("sendtasks", {"is_archived": True}, {"sendtask_uuid": uuid})
 
             data = {"added": added_list, "removed": removed_list, "sendlog_stats_status": sendlog_stats_status}
             return {"status": "success", "data": data}

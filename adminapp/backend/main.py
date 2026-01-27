@@ -145,15 +145,26 @@ async def check_sendtasks_job():
         if removed_list:
             for item in removed_list:
                 uuid = item["sendtask_uuid"]
-                # sendtasks刪除資料
-                await db.delete_db(table_name="sendtasks", condition={"sendtask_uuid": uuid})
-                # sendlog_stats 刪除資料
-                await db.delete_db(table_name="sendlog_stats", condition={"sendtask_uuid": uuid})
-                # 刪除table
-                await db.drop_table(table_name=uuid)
-            logger.info(f"刪除了 {len(removed_list)} 個任務")
+                
+                # 智慧檢查: 確認是否真的已刪除 (404)
+                data = await get_se2_data.get_sendtask(uuid)
+                del_count = 0
+                archive_count = 0
+                
+                if data and data.get("error", {}).get("code") == 404:
+                    # sendtasks刪除資料
+                    await db.delete_db(table_name="sendtasks", condition={"sendtask_uuid": uuid})
+                    # sendlog_stats 刪除資料
+                    await db.delete_db(table_name="sendlog_stats", condition={"sendtask_uuid": uuid})
+                    del_count += 1
+                else:
+                    # 僅封存
+                    await db.update_db("sendtasks", {"is_archived": True}, {"sendtask_uuid": uuid})
+                    archive_count += 1
+            
+            logger.info(f"刪除 {del_count} 個任務，封存 {archive_count} 個任務")
 
-        logger.info(f"check_sendtasks_job 完成 - 新增: {len(added_list)}, 刪除: {len(removed_list)}")
+        logger.info(f"check_sendtasks_job 完成 - 新增: {len(added_list)}, 刪除: {del_count}, 封存: {archive_count}")
 
     except Exception as e:
         logger.error(f"check_sendtasks_job 執行失敗: {str(e)}")

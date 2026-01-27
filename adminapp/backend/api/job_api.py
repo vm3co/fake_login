@@ -210,22 +210,38 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                     await db_user.refresh_sendlog_stats(refresh_list)
                 
                 if removed_list:
+                    from backend.services.getSe2data import get_se2_data
+                    
                     for item in removed_list:
                         uuid = item["sendtask_uuid"]
-                        await db.delete_db("sendtasks", condition={"sendtask_uuid": uuid})
-                        await db.delete_db("sendlog_stats", condition={"sendtask_uuid": uuid})
-                        await db.drop_table(table_name=uuid)
+                        del_count = 0
+                        archive_count = 0
+                        
+                        # 智慧檢查: 確認是否真的已刪除 (404)
+                        data = await get_se2_data.get_sendtask(uuid)
+                        
+                        if data and data.get("error", {}).get("code") == 404:
+                            # sendtasks刪除資料
+                            await db.delete_db(table_name="sendtasks", condition={"sendtask_uuid": uuid})
+                            # sendlog_stats 刪除資料
+                            await db.delete_db(table_name="sendlog_stats", condition={"sendtask_uuid": uuid})
+                            del_count += 1
+                        else:
+                            # 僅封存
+                            await db.update_db("sendtasks", {"is_archived": True}, {"sendtask_uuid": uuid})
+                            archive_count += 1
                 
                 details_msg = ""
                 if added_list:
                     details_msg += "新增任務:\n" + "\n".join([t.get("sendtask_id", "Unknown") for t in added_list]) + "\n"
                 if removed_list:
-                    details_msg += "移除任務:\n" + "\n".join([t.get("sendtask_id", "Unknown") for t in removed_list])
+                    details_msg += "刪除任務:\n" + "\n".join([t.get("sendtask_id", "Unknown") for t in removed_list]) + "\n"
+                    details_msg += "封存任務:\n" + "\n".join([t.get("sendtask_id", "Unknown") for t in removed_list])
 
                 await db.insert_db("notifications", {
                     "username": username,
                     "title": "任務列表更新完成",
-                    "subtitle": f"新增 {len(added_list)} 筆，移除 {len(removed_list)} 筆",
+                    "subtitle": f"新增 {len(added_list)} 筆，刪除 {del_count} 筆，封存 {archive_count} 筆",
                     "heading": "系統通知",
                     "path": "send_list",
                     "icon_name": "sync",
