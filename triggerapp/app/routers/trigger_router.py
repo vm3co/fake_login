@@ -27,7 +27,11 @@ async def get_request_info(request: Request) -> Dict[str, Any]:
     """
     從請求標頭中提取 IP 和 User-Agent。
     """
-    ip = request.headers.get("x-forwarded-for", request.client.host)
+    x_forwarded_for = request.headers.get("x-forwarded-for")
+    if x_forwarded_for:
+        ip = x_forwarded_for.split(",")[0].strip()
+    else:
+        ip = request.client.host
     user_agent = request.headers.get("User-Agent", "Unknown")  # 取得 User-Agent
     return {"ip": ip, "user_agent": user_agent}
 
