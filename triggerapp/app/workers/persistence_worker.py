@@ -46,6 +46,8 @@ class PersistenceWorker:
         try:
             if event_type == "visit":
                 await self._process_visit(event)
+            elif event_type == "qr_visit":
+                await self._process_qr_visit(event)
             elif event_type == "input":
                 await self._process_input(event)
             else:
@@ -64,6 +66,23 @@ class PersistenceWorker:
             condition={"uuid": event["uuid"]}
         )
         logger.info(f"Processed visit event for {event['uuid']}")
+        
+        if event.get("sendtask_uuid"):
+             await self._invalidate_cache(event["sendtask_uuid"])
+        elif len(event["uuid"]) == 32:
+             await self._invalidate_cache_by_db(event["uuid"])
+
+    async def _process_qr_visit(self, event):
+        await db.update_array_append(
+            table_name="send_log_details",
+            append_data={
+                "second_qrcode_time": event["timestamp"],
+                "second_qrcode_src": event["ip"],
+                "second_qrcode_dev": event["user_agent"]
+            },
+            condition={"uuid": event["uuid"]}
+        )
+        logger.info(f"Processed qr_visit event for {event['uuid']}")
         
         if event.get("sendtask_uuid"):
              await self._invalidate_cache(event["sendtask_uuid"])

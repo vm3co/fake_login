@@ -11,6 +11,8 @@ import {
   // IconButton,
   TablePagination,
   LinearProgress,
+  IconButton,
+  Tooltip,
 } from "@mui/material";
 import SimpleCard from "app/components/SimpleCard";
 // import { H3 } from "app/components/Typography";
@@ -27,12 +29,14 @@ import MenuItem from "@mui/material/MenuItem";
 import TextField from "@mui/material/TextField";
 import Checkbox from "@mui/material/Checkbox";
 import DownloadIcon from "@mui/icons-material/Download";
+import DeleteIcon from "@mui/icons-material/Delete";
 
 import { SendtaskListContext } from "app/contexts/SendtaskListContext";
 import formatDate from "app/utils/formatDate";
 // import { useCheckSends } from "app/hooks/useCheckSends";
 import { useJob } from "app/contexts/JobContext";
 import TaskDetail from './TaskDetail_new';
+import axios from "axios";
 
 
 // STYLED COMPONENT
@@ -65,7 +69,7 @@ const StyledTable = styled(Table)(() => ({
         "&:nth-of-type(10)": { width: "80px" }, // 第一封寄出預計日期
         "&:nth-of-type(11)": { width: "80px" }, // 最後一封寄出預計日期
         "&:nth-of-type(12)": { width: "40px" }, // 是否暫停
-        "&:nth-of-type(13)": { width: "50px" }, // 更新
+        "&:nth-of-type(13)": { width: "90px" }, // 更新/刪除
       }
     }
   },
@@ -268,6 +272,21 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
         ...adminControls // 傳入所有權限旗標
       }
     });
+  };
+
+  const handleDeleteTask = async (uuid) => {
+    if (window.confirm("是否確認要刪除任務?刪除後qrcode及假網頁觸發紀錄將會消失，其餘紀錄需重新向主系統更新取得")) {
+      try {
+        const response = await axios.post("/api/delete_sendtask", { uuid });
+        if (response.data.status === "success") {
+          enqueueSnackbar("任務已刪除", { variant: "success" });
+          refresh(); // 重新載入任務列表
+        }
+      } catch (error) {
+        console.error("Failed to delete task:", error);
+        enqueueSnackbar("刪除任務失敗: " + error.message, { variant: "error" });
+      }
+    }
   };
 
   if (loading)
@@ -481,7 +500,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
                   是否<br />暫停 {sortBy === "is_paused" && (sortOrder === "asc" ? "▲" : "▼")}
                 </TableCell>
                 <TableCell>
-                  更新
+                  更新/刪除
                 </TableCell>
               </TableRow>
             </TableHead>
@@ -565,22 +584,33 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
                       )}
                     </TableCell>
                     <TableCell align="center">
-                      <Button
-                        variant="outlined"
-                        size="small"
-                        onClick={() => {
-                          if (window.confirm("確定要執行寄送狀態更新嗎？")) {
-                            startJob("refresh_sendlog_stats", { uuids: [row.sendtask_uuid] });
-                          }
-                        }}
-                        disabled={isCheckingSends}
-                        sx={{
-                          minWidth: 'auto',
-                          padding: '4px 8px'
-                        }}
-                      >
-                        更新
-                      </Button>
+                      <Stack direction="row" spacing={1} justifyContent="center">
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={() => {
+                            if (window.confirm("確定要執行寄送狀態更新嗎？")) {
+                              startJob("refresh_sendlog_stats", { uuids: [row.sendtask_uuid] });
+                            }
+                          }}
+                          disabled={isCheckingSends}
+                          sx={{
+                            minWidth: 'auto',
+                            padding: '4px 8px'
+                          }}
+                        >
+                          更新
+                        </Button>
+                        <Tooltip title="刪除任務">
+                          <IconButton
+                            color="error"
+                            size="small"
+                            onClick={() => handleDeleteTask(row.sendtask_uuid)}
+                          >
+                            <DeleteIcon />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
                     </TableCell>
                   </TableRow>
                 );

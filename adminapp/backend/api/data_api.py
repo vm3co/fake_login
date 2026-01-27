@@ -456,6 +456,7 @@ def get_router(db, db_user):
                             "click_time", "click_src", "click_dev", 
                             "file_time", "file_src", "file_dev",
                             "second_access_time", "second_access_src", "second_access_dev", 
+                            "second_qrcode_time", "second_qrcode_src", "second_qrcode_dev",
                             "second_input_time", "second_input_src", 
                             "second_input_dev", "second_input_info"]
         for data in result["data"]:
@@ -547,9 +548,12 @@ def get_router(db, db_user):
                 'plan_time': '預計寄送時間',
                 'send_time': '實際寄送時間',
                 'send_res': '寄送結果',
-                'second_access_time': '連結點擊時間',
-                'second_access_src': '連結點擊IP', 
-                'second_access_dev': '連結點擊資訊', 
+                'second_access_time': 'url連線時間',
+                'second_access_src': 'url連線IP', 
+                'second_access_dev': 'url連線資訊', 
+                'second_qrcode_time': 'QR Code 掃描時間',
+                'second_qrcode_src': 'QR Code 掃描IP',
+                'second_qrcode_dev': 'QR Code 掃描資訊',
                 'second_input_time': '表單填寫時間', 
                 'second_input_src': '表單填寫IP', 
                 'second_input_dev': '表單填寫資訊', 
@@ -943,6 +947,29 @@ def get_router(db, db_user):
             return {"status": "success", "message": del_customer_names}
         except Exception as e:
             return {"status": "error", "message": str(e)}
+
+    class DeleteSendtaskRequest(BaseModel):
+        uuid: str
+
+    @router.post(
+        "/delete_sendtask",
+        tags=["data"]
+        )
+    async def delete_sendtask(request: DeleteSendtaskRequest, current_user: dict = Depends(get_current_user)):
+        """
+        刪除任務及其相關紀錄
+        """
+        uuid = request.uuid
+        try:
+            # 刪除 sendtasks 資料
+            await db.delete_db(table_name="sendtasks", condition={"sendtask_uuid": uuid})
+            # 刪除 sendlog_stats 資料
+            await db.delete_db(table_name="sendlog_stats", condition={"sendtask_uuid": uuid})
+            
+            return {"status": "success", "message": "任務已刪除"}
+        except Exception as e:
+            logger.error(f"Failed to delete sendtask {uuid}: {e}")
+            raise HTTPException(status_code=500, detail=str(e))
 
     class UpdateCustomerPasswordRequest(BaseModel):
         customer_name: str = ""

@@ -64,7 +64,7 @@ def calc_stats(stats: List[Dict[str, Any]]) -> Dict[str, Any]:
     all_latest_plan_time = max(t["plan_time"] for t in stats) if stats else 0
 
     # 統計觸發人數
-    trigger_fields = ["access_src", "click_src", "file_src", "second_access_src", "second_input_src"]
+    trigger_fields = ["access_src", "click_src", "file_src", "second_access_src", "second_input_src", "second_qrcode_src"]
     totalTriggered = [
         t for t in stats 
         if any((t.get(field) and len(t.get(field)) > 0) for field in trigger_fields)
@@ -596,7 +596,8 @@ class DBUser:
         # 1. 定義要清空的欄位
         update_data = {
             "second_access_time": None, "second_access_src": None, "second_access_dev": None,
-            "second_input_time": None, "second_input_src": None, "second_input_dev": None, "second_input_info": None
+            "second_input_time": None, "second_input_src": None, "second_input_dev": None, "second_input_info": None,
+            "second_qrcode_time": None, "second_qrcode_src": None, "second_qrcode_dev": None
         }
         
         # 2. 更新資料庫

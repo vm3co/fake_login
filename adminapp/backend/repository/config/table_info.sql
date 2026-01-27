@@ -43,13 +43,17 @@ CREATE TABLE IF NOT EXISTS send_log_details (
     file_dev TEXT[],
 
     -- Dashboard 系統獨有的觸發紀錄 (偽裝網頁)
-    second_access_time BIGINT[],
+    second_access_time BIGINT[],     -- 網頁開啟紀錄
     second_access_src TEXT[],
     second_access_dev TEXT[],
-    second_input_time BIGINT[],
+    second_qrcode_time BIGINT[],      -- QR Code 開啟紀錄
+    second_qrcode_src TEXT[],
+    second_qrcode_dev TEXT[],
+    second_input_time BIGINT[],       -- 輸入紀錄
     second_input_src TEXT[],
     second_input_dev TEXT[],
     second_input_info TEXT[],  -- 建議存 JSON 字串或 TEXT Array
+
 
     -- 索引優化
     CONSTRAINT fk_sendtask FOREIGN KEY(sendtask_uuid) REFERENCES sendtasks(sendtask_uuid) ON DELETE CASCADE

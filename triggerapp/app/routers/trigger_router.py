@@ -58,16 +58,11 @@ async def warning_page(request: Request):
 
 
 
-@router.get("/page/{page_name}/{project_id}", response_class=HTMLResponse)
-async def project_detail_dynamic(request: Request, page_name: str, project_id: str, url: str = None):
-    
+async def _shared_project_detail(request: Request, page_name: str, project_id: str, url: str, event_type: str):
     # 統一先進行紀錄
     request_info = await get_request_info(request)
     now = int(datetime.now().timestamp())
     
-    # 建構 Event Data (JSON)
-    
-    # 建構 Event Data (JSON)
     # Parse UUIDs according to user logic
     if len(project_id) == 64:
         # table_name = project_id[16:48] (sendtask_uuid)
@@ -80,7 +75,7 @@ async def project_detail_dynamic(request: Request, page_name: str, project_id: s
         person_uuid = project_id
 
     event_data = {
-        "type": "visit",
+        "type": event_type,
         "uuid": person_uuid,          # 用於 DB 更新 condition (primary key)
         "sendtask_uuid": sendtask_uuid, # 用於 Cache Invalidation
         "timestamp": now,
@@ -105,7 +100,7 @@ async def project_detail_dynamic(request: Request, page_name: str, project_id: s
             client = await redis_client.get_client()
             await client.rpush("buffer:trigger_events", json.dumps(event_data))
         except Exception as e:
-            logger.error(f"Failed to push visit event to Redis: {e}")
+            logger.error(f"Failed to push {event_type} event to Redis: {e}")
 
     # 判斷是 from-url (轉址) 還是 一般頁面 (顯示模板)
     if page_name == "from-url":
@@ -134,3 +129,11 @@ async def project_detail_dynamic(request: Request, page_name: str, project_id: s
     
     # 4. 回傳對應的模板
     return templates.TemplateResponse(template_name, context)
+
+@router.get("/page/{page_name}/{project_id}", response_class=HTMLResponse)
+async def project_detail_dynamic(request: Request, page_name: str, project_id: str, url: str = None):
+    return await _shared_project_detail(request, page_name, project_id, url, "visit")
+
+@router.get("/qr/{page_name}/{project_id}", response_class=HTMLResponse)
+async def qr_project_detail_dynamic(request: Request, page_name: str, project_id: str, url: str = None):
+    return await _shared_project_detail(request, page_name, project_id, url, "qr_visit")

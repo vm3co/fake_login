@@ -112,8 +112,9 @@ const StyledTable = styled(Table)(() => ({
         "&:nth-of-type(7)": { width: "140px" }, // 郵件讀取資訊
         "&:nth-of-type(8)": { width: "140px" }, // 按鈕點擊資訊
         "&:nth-of-type(9)": { width: "140px" }, // 附件開啟資訊
-        "&:nth-of-type(10)": { width: "140px" }, // 連結點擊orQrcode資訊
-        "&:nth-of-type(11)": { width: "140px" }, // 表格輸入資訊
+        "&:nth-of-type(10)": { width: "140px" }, // url連線資訊
+        "&:nth-of-type(11)": { width: "140px" }, // QR Code 資訊
+        "&:nth-of-type(12)": { width: "140px" }, // 表格輸入資訊
       }
     }
   },
@@ -787,7 +788,8 @@ export default function TaskDetail({ task, open, onClose }) {
                         <TableCell>郵件讀取資訊</TableCell>
                         <TableCell>按鈕點擊資訊</TableCell>
                         <TableCell>附件開啟資訊</TableCell>
-                        <TableCell>連結點擊資訊</TableCell>
+                        <TableCell>url連線資訊</TableCell>
+                        <TableCell>QR Code 掃描資訊</TableCell>
                         <TableCell>表格輸入資訊</TableCell>
                         {/* <TableCell>操作</TableCell> */}
                       </TableRow>
@@ -870,6 +872,13 @@ export default function TaskDetail({ task, open, onClose }) {
                                 time={log.second_access_time}
                                 src={log.second_access_src}
                                 dev={log.second_access_dev}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <LogInfo
+                                time={log.second_qrcode_time}
+                                src={log.second_qrcode_src}
+                                dev={log.second_qrcode_dev}
                               />
                             </TableCell>
                             <TableCell>

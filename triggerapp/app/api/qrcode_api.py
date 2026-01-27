@@ -12,12 +12,12 @@ router = APIRouter()
 '''組合qrcode網址'''
 def creat_qrcode_url(base_url: str, logintype: str, uuid: str):
     # base_url 範例: "https://selink.20231202.xyz" (正式) 或 "http://localhost/trigger" (本地)
-    # 我們希望組合出像 "https://.../page/test/some-uuid" 的網址
+    # 我們希望組合出像 "https://.../qr/20231202/some-uuid" 的網址
     # 注意: urljoin 的行為與 path 有關，建議 base_url 結尾補上 / 
     if not base_url.endswith("/"):
         base_url += "/"
     
-    input_page_url = urljoin(base_url, "page/")
+    input_page_url = urljoin(base_url, "qr/")
     reurl = urljoin(input_page_url, logintype) + "/"
     # query_string = urlencode({QUERY_STRINGS: urljoin(reurl, uuid)})
     # url = urljoin(HOST_URL, uuid) + "?" + query_string
