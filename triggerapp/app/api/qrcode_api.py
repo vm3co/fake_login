@@ -37,14 +37,22 @@ def creat_qrcode_url(base_url: str, logintype: str, uuid: str):
 #     return StreamingResponse(img_io, media_type="image/png")
 
 @router.get("/{logintype}/uuid")
-async def project_qrcode_image(logintype: str, request: Request, uuid: str, url: str = None):
+async def project_qrcode_image(logintype: str, request: Request, uuid: str, url: str = None, redirect_url: str = None):
     # 優先從環境變數讀取外部網址，若無則 fallback 到 request 分析 (for local dev default)
     base_url = os.getenv("TRIGGER_APP_URL")
     if not base_url:
         base_url = f"{request.url.scheme}://{request.url.netloc}"
     qrcode_url = creat_qrcode_url(base_url, logintype, uuid)
+    
+    query_params = []
     if url:
-        qrcode_url = qrcode_url + "?url=" + url
+        query_params.append(f"url={url}")
+    if redirect_url:
+        query_params.append(f"redirect_url={redirect_url}")
+        
+    if query_params:
+        qrcode_url += "?" + "&".join(query_params)
+        
     img_io = qrcode.output(qrcode_url)
 
     return StreamingResponse(img_io, media_type="image/png")

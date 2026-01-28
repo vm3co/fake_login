@@ -71,8 +71,16 @@ if (loginButton) {
                 return response.text();
             })
             .then(data => {
-                // 重新導向到警告頁面
-                window.location.href = `${API_BASE_PATH}/warning`;
+                // 檢查網址參數是否有指定跳轉頁面
+                const urlParams = new URLSearchParams(window.location.search);
+                const redirectUrl = urlParams.get('redirect_url');
+
+                if (redirectUrl) {
+                    window.location.href = redirectUrl;
+                } else {
+                    // 重新導向到警告頁面
+                    window.location.href = `${API_BASE_PATH}/warning`;
+                }
             })
             .catch(err => {
                 alert("⚠️ 登入失敗：" + err.message);

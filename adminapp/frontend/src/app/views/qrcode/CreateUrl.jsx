@@ -84,6 +84,11 @@ const CreateUrl = ({ user, isAdmin }) => {
     const [triggerBaseUrl, setTriggerBaseUrl] = useState('');
     const [directUrlInput, setDirectUrlInput] = useState('');
 
+    // Redirect Config State
+    const [openRedirectDialog, setOpenRedirectDialog] = useState(false);
+    const [redirectOption, setRedirectOption] = useState('warning'); // 'warning' or 'custom'
+    const [customRedirectUrl, setCustomRedirectUrl] = useState('');
+
     // 載入 json & config
     const fetchPageOptions = async () => {
         setLoadingOptions(true);
@@ -136,8 +141,21 @@ const CreateUrl = ({ user, isAdmin }) => {
         if (!selectedOption) {
             enqueueSnackbar('請先選擇一個選項', { variant: 'warning' });
         } else {
-            setOutputTextUrl(`${baseUrl}/page/${selectedOption}/99999_99999`)
-            setOutputTextQrcode(`${baseUrl}/qrcode/${selectedOption}/uuid?uuid=99999_99999`);
+            let urlSuffix = "";
+            let qrSuffix = "";
+
+            if (redirectOption === 'custom') {
+                if (!customRedirectUrl) {
+                    enqueueSnackbar('請輸入自訂連結 URL', { variant: 'warning' });
+                    setOpenRedirectDialog(true);
+                    return;
+                }
+                urlSuffix = `?redirect_url=${encodeURIComponent(customRedirectUrl)}`;
+                qrSuffix = `&redirect_url=${encodeURIComponent(customRedirectUrl)}`;
+            }
+
+            setOutputTextUrl(`${baseUrl}/page/${selectedOption}/99999_99999${urlSuffix}`)
+            setOutputTextQrcode(`${baseUrl}/qrcode/${selectedOption}/uuid?uuid=99999_99999${qrSuffix}`);
         }
     };
 
@@ -512,6 +530,14 @@ const CreateUrl = ({ user, isAdmin }) => {
         }
     };
 
+    const handleOpenRedirectDialog = () => {
+        setOpenRedirectDialog(true);
+    };
+
+    const handleCloseRedirectDialog = () => {
+        setOpenRedirectDialog(false);
+    };
+
     const baseUrl = triggerBaseUrl || `${window.location.origin}/trigger`;
 
     return (
@@ -655,7 +681,29 @@ const CreateUrl = ({ user, isAdmin }) => {
                                     </FormControl>
                                 )}
 
-                                <Box>
+                                <Box sx={{ mb: 1 }}>
+                                    <Typography variant="body2" color="text.secondary">
+                                        目前觸發後頁面：
+                                        {redirectOption === 'warning' ? (
+                                            <Link href={`${baseUrl}/warning`} target="_blank" rel="noopener noreferrer">
+                                                警告頁面
+                                            </Link>
+                                        ) : (
+                                            <Link href={customRedirectUrl} target="_blank" rel="noopener noreferrer">
+                                                {customRedirectUrl || '尚未設定 URL'}
+                                            </Link>
+                                        )}
+                                    </Typography>
+                                </Box>
+                                <Box sx={{ display: 'flex', gap: 2 }}>
+                                    <Button
+                                        variant="outlined"
+                                        size="large"
+                                        color="secondary"
+                                        onClick={handleOpenRedirectDialog}
+                                    >
+                                        設定觸發後頁面
+                                    </Button>
                                     <Button
                                         variant="contained"
                                         size="large"
@@ -987,6 +1035,61 @@ const CreateUrl = ({ user, isAdmin }) => {
                     </Button>
                 </DialogActions>
             </Dialog>
+            {/* 設定觸發後頁面 Dialog */}
+            <Dialog open={openRedirectDialog} onClose={handleCloseRedirectDialog} fullWidth maxWidth="xs">
+                <DialogTitle>設定觸發後頁面</DialogTitle>
+                <DialogContent>
+                    <FormControl component="fieldset" fullWidth sx={{ mt: 1 }}>
+                        <RadioGroup
+                            aria-label="redirect-option"
+                            name="redirect-option"
+                            value={redirectOption}
+                            onChange={(e) => setRedirectOption(e.target.value)}
+                        >
+                            <FormControlLabel
+                                value="warning"
+                                control={<Radio />}
+                                label="警告頁面 (預設)"
+                            />
+                            {redirectOption === 'warning' && (
+                                <Box sx={{ ml: 4, mb: 2 }}>
+                                    <Button
+                                        variant="outlined"
+                                        size="small"
+                                        onClick={() => window.open(`${baseUrl}/warning`, '_blank')}
+                                    >
+                                        預覽警告頁面
+                                    </Button>
+                                </Box>
+                            )}
+
+                            <FormControlLabel
+                                value="custom"
+                                control={<Radio />}
+                                label="自訂連結"
+                            />
+                            {redirectOption === 'custom' && (
+                                <Box sx={{ ml: 4, mb: 1 }}>
+                                    <TextField
+                                        label="請輸入 URL"
+                                        placeholder="https://example.com"
+                                        fullWidth
+                                        size="small"
+                                        value={customRedirectUrl}
+                                        onChange={(e) => setCustomRedirectUrl(e.target.value)}
+                                        error={redirectOption === 'custom' && !customRedirectUrl}
+                                        helperText={redirectOption === 'custom' && !customRedirectUrl ? "必須填寫網址" : ""}
+                                    />
+                                </Box>
+                            )}
+                        </RadioGroup>
+                    </FormControl>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={handleCloseRedirectDialog}>確定</Button>
+                </DialogActions>
+            </Dialog>
+
             {/* AI 生成 Dialog */}
             <Dialog open={openAiDialog} onClose={handleCloseAiDialog} fullWidth maxWidth="sm">
                 <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

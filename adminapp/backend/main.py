@@ -1,4 +1,5 @@
 import os
+import asyncio
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from fastapi import FastAPI
@@ -9,7 +10,6 @@ from fastapi import status
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-import asyncio
 
 from backend.repository.db_controller import ApplianceDB
 from backend.services.getSe2data import get_se2_data
@@ -25,7 +25,7 @@ from backend.api import notification_api, job_api
 
 from backend.workers.sync_worker import SyncWorker
 from backend.workers.archiving_worker import ArchivingWorker
-import asyncio
+
 
 # Global worker instances
 sync_worker = SyncWorker()
@@ -35,6 +35,15 @@ worker_tasks = []
 db = ApplianceDB()
 db_user = DBUser(db=db)
 logger = Logger().get_logger()
+
+def dict_to_hashable(d):
+    return tuple(sorted(
+        (k, tuple(v) if isinstance(v, list) else v)
+        for k, v in d.items()
+    ))
+
+def hashable_to_dict(t):
+    return {k: list(v) if isinstance(v, tuple) else v for k, v in t}
 
 # 定義定時任務
 async def refresh_token_job():
@@ -110,15 +119,6 @@ async def check_sendtasks_job():
         all_tasksname_list = await db_user.get_se2_sendtasks(sendtasks_columns)
 
         my_tasksname_list = await db.get_db("sendtasks", select_columns=sendtasks_columns)
-
-        def dict_to_hashable(d):
-            return tuple(sorted(
-                (k, tuple(v) if isinstance(v, list) else v)
-                for k, v in d.items()
-            ))
-
-        def hashable_to_dict(t):
-            return {k: list(v) if isinstance(v, tuple) else v for k, v in t}
 
         all_set = set(dict_to_hashable(d) for d in all_tasksname_list)
         my_set = set(dict_to_hashable(d) for d in my_tasksname_list)
