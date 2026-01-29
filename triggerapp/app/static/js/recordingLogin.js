@@ -66,7 +66,12 @@ form.addEventListener("submit", function (event) {
       const redirectUrl = urlParams.get('redirect_url');
 
       if (redirectUrl) {
-        window.location.href = redirectUrl;
+        if (redirectUrl === 'self') {
+          // 導回自己 (刷新頁面)
+          window.location.reload();
+        } else {
+          window.location.href = redirectUrl;
+        }
       } else {
         // 重新導向到警告頁面
         window.location.href = `${API_BASE_PATH}/warning`;

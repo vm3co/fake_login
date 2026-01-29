@@ -152,6 +152,9 @@ const CreateUrl = ({ user, isAdmin }) => {
                 }
                 urlSuffix = `?redirect_url=${encodeURIComponent(customRedirectUrl)}`;
                 qrSuffix = `&redirect_url=${encodeURIComponent(customRedirectUrl)}`;
+            } else if (redirectOption === 'self') {
+                urlSuffix = `?redirect_url=self`;
+                qrSuffix = `&redirect_url=self`;
             }
 
             setOutputTextUrl(`${baseUrl}/page/${selectedOption}/99999_99999${urlSuffix}`)
@@ -688,6 +691,8 @@ const CreateUrl = ({ user, isAdmin }) => {
                                             <Link href={`${baseUrl}/warning`} target="_blank" rel="noopener noreferrer">
                                                 警告頁面
                                             </Link>
+                                        ) : redirectOption === 'self' ? (
+                                            <span style={{ fontWeight: 'bold' }}>停留在目前頁面</span>
                                         ) : (
                                             <Link href={customRedirectUrl} target="_blank" rel="noopener noreferrer">
                                                 {customRedirectUrl || '尚未設定 URL'}
@@ -1082,6 +1087,12 @@ const CreateUrl = ({ user, isAdmin }) => {
                                     />
                                 </Box>
                             )}
+
+                            <FormControlLabel
+                                value="self"
+                                control={<Radio />}
+                                label="停留在目前頁面"
+                            />
                         </RadioGroup>
                     </FormControl>
                 </DialogContent>
