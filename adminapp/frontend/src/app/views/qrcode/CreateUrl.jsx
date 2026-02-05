@@ -73,6 +73,7 @@ const CreateUrl = ({ user, isAdmin }) => {
     const [aiPrompt, setAiPrompt] = useState('');
     const [aiRefUrl, setAiRefUrl] = useState('');
     const [aiModel, setAiModel] = useState('gemini');
+    const [aiImage, setAiImage] = useState(null);
     const [generating, setGenerating] = useState(false);
 
 
@@ -340,10 +341,10 @@ const CreateUrl = ({ user, isAdmin }) => {
         }
     }
 
-    // AI 生成處理函式
     const handleOpenAiDialog = () => {
         setAiPrompt('');
         setAiRefUrl('');
+        setAiImage(null);
         setOpenAiDialog(true);
     };
 
@@ -371,6 +372,9 @@ const CreateUrl = ({ user, isAdmin }) => {
         formData.append('prompt', aiPrompt);
         if (aiRefUrl) {
             formData.append('refUrl', aiRefUrl);
+        }
+        if (aiImage) {
+            formData.append('image', aiImage);
         }
 
         // 建立新的 AbortController
@@ -1155,6 +1159,36 @@ const CreateUrl = ({ user, isAdmin }) => {
                             disabled={generating}
                             helperText="提供網址可協助 AI 更精確還原該網站的設計風格"
                         />
+
+                        <Button
+                            variant="outlined"
+                            component="label"
+                            disabled={generating}
+                            startIcon={<UploadIcon />}
+                            fullWidth
+                        >
+                            上傳參考圖片 (Optional)
+                            <input
+                                type="file"
+                                hidden
+                                accept="image/*"
+                                onChange={(e) => {
+                                    if (e.target.files && e.target.files.length > 0) {
+                                        setAiImage(e.target.files[0]);
+                                    }
+                                }}
+                            />
+                        </Button>
+                        {aiImage && (
+                            <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mt: 1, p: 1, border: '1px solid #ddd', borderRadius: 1 }}>
+                                <Typography variant="body2" noWrap sx={{ maxWidth: '80%' }}>
+                                    已選擇: {aiImage.name}
+                                </Typography>
+                                <IconButton size="small" onClick={() => setAiImage(null)} disabled={generating}>
+                                    <CloseIcon fontSize="small" />
+                                </IconButton>
+                            </Stack>
+                        )}
                     </Stack>
                 </DialogContent>
                 <DialogActions>

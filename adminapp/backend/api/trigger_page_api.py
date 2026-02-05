@@ -20,6 +20,9 @@ from fastapi import (
 from fastapi.responses import JSONResponse, PlainTextResponse, FileResponse
 from openai import OpenAI
 import google.generativeai as genai
+import base64
+import io
+from PIL import Image
 
 from backend.services.log_manager import Logger
 from backend.repository.db_controller import ApplianceDB
@@ -724,6 +727,7 @@ def get_router(db: ApplianceDB, db_user: DBUser):
     async def generate_page_with_litellm(
         prompt: str = Form(..., description="使用者的提示詞"),
         refUrl: str = Form(None, description="參考網址 (可選)"),
+        image: UploadFile = File(None, description="參考圖片 (可選)"),
         current_user: dict = Depends(get_current_user)
     ):
         """
@@ -745,8 +749,8 @@ def get_router(db: ApplianceDB, db_user: DBUser):
                 api_key=api_key,
                 base_url=f"http://{server_ip}/v1"
             )
-            # 使用 gpt-oss (程式碼 / 特定任務)
-            model_name = "gpt-oss"
+            # 使用 gemma-27b (專家 / 邏輯強)
+            model_name = "gemma-27b"
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"LiteLLM Client 設定失敗: {str(e)}")
 
@@ -756,9 +760,37 @@ def get_router(db: ApplianceDB, db_user: DBUser):
         if refUrl:
             user_prompt += f"\n\n[參考網址]\n使用者提供了一個參考網址：{refUrl}\n這是使用者想模仿的目標。請盡可能參考該網址對應的現有網站設計風格。"
 
+        # 建構 user message 內容
+        user_content = []
+        user_content.append({"type": "text", "text": user_prompt})
+
+        # 處理圖片
+        if image:
+            try:
+                # 讀取檔案內容
+                file_bytes = await image.read()
+                # 轉 Base64
+                base64_image = base64.b64encode(file_bytes).decode('utf-8')
+                
+                # 取得 mime type
+                mime_type = image.content_type or "image/jpeg"
+                
+                user_content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime_type};base64,{base64_image}"
+                    }
+                })
+            except Exception as e:
+                logger.error(f"處理圖片失敗: {e}")
+                # 失敗時不中斷，僅記錄錯誤
+                pass
+            finally:
+                await image.close()
+
         messages = [
             {"role": "system", "content": system_instructions},
-            {"role": "user", "content": user_prompt}
+            {"role": "user", "content": user_content}
         ]
 
         # 4. 呼叫模型
@@ -790,6 +822,7 @@ def get_router(db: ApplianceDB, db_user: DBUser):
     async def generate_page_with_gpt(
         prompt: str = Form(..., description="使用者的提示詞"),
         refUrl: str = Form(None, description="參考網址 (可選)"),
+        image: UploadFile = File(None, description="參考圖片 (可選)"),
         current_user: dict = Depends(get_current_user)
     ):
         """
@@ -818,9 +851,36 @@ def get_router(db: ApplianceDB, db_user: DBUser):
         if refUrl:
             user_prompt += f"\n\n[參考網址]\n使用者提供了一個參考網址：{refUrl}\n這是使用者想模仿的目標。請盡可能參考該網址對應的現有網站設計風格。"
 
+        # 建構 user message 內容
+        user_content = []
+        user_content.append({"type": "text", "text": user_prompt})
+
+        # 處理圖片
+        if image:
+            try:
+                # 讀取檔案內容
+                file_bytes = await image.read()
+                # 轉 Base64
+                base64_image = base64.b64encode(file_bytes).decode('utf-8')
+                
+                # 取得 mime type
+                mime_type = image.content_type or "image/jpeg"
+                
+                user_content.append({
+                    "type": "image_url",
+                    "image_url": {
+                        "url": f"data:{mime_type};base64,{base64_image}"
+                    }
+                })
+            except Exception as e:
+                logger.error(f"處理圖片失敗: {e}")
+                pass
+            finally:
+                await image.close()
+
         messages = [
             {"role": "system", "content": system_instructions},
-            {"role": "user", "content": user_prompt}
+            {"role": "user", "content": user_content}
         ]
 
         # 4. 呼叫模型
@@ -850,6 +910,7 @@ def get_router(db: ApplianceDB, db_user: DBUser):
     async def generate_page_with_gemini(
         prompt: str = Form(..., description="使用者的提示詞"),
         refUrl: str = Form(None, description="參考網址 (可選)"),
+        image: UploadFile = File(None, description="參考圖片 (可選)"),
         current_user: dict = Depends(get_current_user)
     ):
         """
@@ -882,9 +943,26 @@ def get_router(db: ApplianceDB, db_user: DBUser):
 
         full_prompt = f"{system_instructions}\n\n{prompt_suffix}"
 
+        # 準備 Content
+        contents = [full_prompt]
+
+        if image:
+             try:
+                # 讀取檔案
+                file_bytes = await image.read()
+                # 轉為 PIL Image
+                pil_image = Image.open(io.BytesIO(file_bytes))
+                contents.append(pil_image)
+             except Exception as e:
+                logger.error(f"Gemini 處理圖片失敗: {e}")
+                pass
+             finally:
+                # 這裡不需要特別 close UploadFile，但為了保險
+                await image.close()
+
         # 4. 呼叫模型
         try:
-            response = await model.generate_content_async(full_prompt)
+            response = await model.generate_content_async(contents)
             generated_text = response.text
             
             # 清理可能的 markdown 標記

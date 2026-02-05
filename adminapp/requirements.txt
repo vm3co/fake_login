@@ -15,3 +15,4 @@ openpyxl
 google-generativeai
 openai
 redis
+pillow
