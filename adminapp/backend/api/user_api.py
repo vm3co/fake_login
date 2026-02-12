@@ -11,6 +11,9 @@ from backend.core.security import hash_password
 from backend.core.security import create_access_token
 from backend.services.log_manager import Logger
 from jose import jwt, JWTError
+from sqlalchemy import select
+from backend.repository.db_controller import db_controller
+from backend.repository.models import User, CustomerAcct, Acct
 
 logger = Logger().get_logger()
 
@@ -41,10 +44,9 @@ async def get_current_user(request: Request):
     except jwt.InvalidTokenError:
         raise HTTPException(status_code=401, detail="Token 無效")
 
-def get_router(db, db_user):
+def get_router(db_user):
     """
     Initializes the user API router.
-    :param db: Database instance
     :param db_user: DBUser instance
     :return: APIRouter instance for user-related endpoints
     """
@@ -119,22 +121,22 @@ def get_router(db, db_user):
             }
         
         # users
-        user_list = await db.get_db("users", where_column="username", values=username)
-        if user_list:
-            user = user_list[0]
-            if verify_password(password, user["password_hash"]):
+        user = await db_controller.get_one(User, {"username": username})
+
+        if user:
+            if verify_password(password, user.password_hash):
                 # 一般使用者登入成功
                 access_token = create_access_token({
-                    "acct_uuid": user["acct_uuid"], 
-                    "username": user["username"],
+                    "acct_uuid": user.acct_uuid, 
+                    "username": user.username,
                     "user_type": "user"
                 })
                 user_obj = {
-                    "acct_uuid": user["acct_uuid"],
-                    "name": user["username"],
-                    "orgs": user.get("orgs", []),
+                    "acct_uuid": user.acct_uuid,
+                    "name": user.username,
+                    "orgs": user.orgs or [],
                     "user_type": "user",
-                    "full_name": user.get("full_name", "")
+                    "full_name": user.full_name or ""
                 }
                 await db_user.add_login_log(
                     username=username,
@@ -151,22 +153,22 @@ def get_router(db, db_user):
                 }
 
         # customer_accts
-        customer_list = await db.get_db("customer_accts", where_column="customer_name", values=username)
-        if customer_list:
-            customer = customer_list[0]
-            if verify_password(password, customer["password_hash"]):
+        customer = await db_controller.get_one(CustomerAcct, {"customer_name": username})
+            
+        if customer:
+            if verify_password(password, customer.password_hash):
                 # 客戶登入成功
                 access_token = create_access_token({
-                    "acct_uuid": customer["acct_uuid"], 
-                    "username": customer["customer_name"],
+                    "acct_uuid": customer.acct_uuid, 
+                    "username": customer.customer_name,
                     "user_type": "customer"
                 })
                 customer_obj = {
-                    "acct_uuid": customer["acct_uuid"],
-                    "name": customer["customer_name"],
-                    "sendtasks": customer.get("sendtasks", []),
+                    "acct_uuid": customer.acct_uuid,
+                    "name": customer.customer_name,
+                    "sendtasks": customer.sendtasks or [],
                     "user_type": "customer",
-                    "full_name": customer.get("customer_full_name", "")
+                    "full_name": customer.customer_full_name or ""
                 }
                 await db_user.add_login_log(
                     username=username,
@@ -232,33 +234,33 @@ def get_router(db, db_user):
             
             elif user_type == "user":
                 # 查詢一般使用者
-                user_list = await db.get_db("users", where_column="username", values=username)
-                if not user_list:
+                user = await db_controller.get_one(User, {"username": username})
+
+                if not user:
                     raise HTTPException(status_code=404, detail="找不到使用者")
                 
-                user = user_list[0]
                 user_obj = {
-                    "acct_uuid": user["acct_uuid"],
-                    "name": user["username"],
-                    "orgs": user.get("orgs", []),
+                    "acct_uuid": user.acct_uuid,
+                    "name": user.username,
+                    "orgs": user.orgs or [],
                     "user_type": "user",
-                    "full_name": user.get("full_name", "")
+                    "full_name": user.full_name or ""
                 }
                 return {"user": user_obj}
             
             elif user_type == "customer":
                 # 查詢客戶
-                customer_list = await db.get_db("customer_accts", where_column="customer_name", values=username)
-                if not customer_list:
+                customer = await db_controller.get_one(CustomerAcct, {"customer_name": username})
+
+                if not customer:
                     raise HTTPException(status_code=404, detail="找不到客戶")
                 
-                customer = customer_list[0]
                 customer_obj = {
-                    "acct_uuid": customer["acct_uuid"],
-                    "name": customer["customer_name"],
-                    "sendtasks": customer.get("sendtasks", []),
+                    "acct_uuid": customer.acct_uuid,
+                    "name": customer.customer_name,
+                    "sendtasks": customer.sendtasks or [],
                     "user_type": "customer",
-                    "full_name": customer.get("customer_full_name", "")
+                    "full_name": customer.customer_full_name or ""
                 }
                 return {"user": customer_obj}
             
@@ -330,11 +332,11 @@ def get_router(db, db_user):
         try:
             changed_count = 0
             se2_list = await db_user.get_se2_accts(db_user.accts_columns)
-            for acct_data in se2_list:
-                status = await db.upsert_db("accts", acct_data, conflict_keys=["acct_uuid"])
-                if status == "changed":
-                    changed_count += 1
-            return {"status": "success", "message": f"同步完成。總共處理 {len(se2_list)} 筆帳號，其中 {changed_count} 筆資料已更新或新增。"}
+            
+            if se2_list:
+                await db_controller.upsert(Acct, se2_list, index_elements=['acct_uuid'])
+            
+            return {"status": "success", "message": f"同步完成。總共處理 {len(se2_list)} 筆帳號。"}
         except Exception as e:
             logger.error(f"Error syncing accts: {str(e)}")
             raise HTTPException(status_code=500, detail=f"同步帳號時發生錯誤: {str(e)}")

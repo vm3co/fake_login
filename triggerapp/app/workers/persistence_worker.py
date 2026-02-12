@@ -1,7 +1,9 @@
 import asyncio
 import json
 from app.services.redis_client import RedisClient
-from app.repository.db_controller import db
+from sqlalchemy import update, select, func
+from app.repository.models import SendLogDetail
+from app.repository.db_controller import db_controller
 from app.services.log_manager import Logger
 
 logger = Logger().get_logger()
@@ -56,16 +58,20 @@ class PersistenceWorker:
             logger.error(f"Failed to process event {event}: {e}")
 
     async def _process_visit(self, event):
-        await db.update_array_append(
-            table_name="send_log_details",
-            append_data={
-                "second_access_time": event["timestamp"],
-                "second_access_src": event["ip"],
-                "second_access_dev": event["user_agent"]
-            },
-            condition={"uuid": event["uuid"]}
-        )
-        logger.info(f"Processed visit event for {event['uuid']}")
+        try:
+            stmt = update(SendLogDetail).where(SendLogDetail.uuid == event["uuid"]).values(
+                second_access_time=func.array_append(func.coalesce(SendLogDetail.second_access_time, []), event["timestamp"]),
+                second_access_src=func.array_append(func.coalesce(SendLogDetail.second_access_src, []), event["ip"]),
+                second_access_dev=func.array_append(func.coalesce(SendLogDetail.second_access_dev, []), event["user_agent"])
+            )
+            result = await db_controller.execute(stmt)
+            
+            if result.rowcount == 0:
+                logger.warning(f"No row found for uuid {event['uuid']} to update visit.")
+            else:
+                logger.info(f"Processed visit event for {event['uuid']}")
+        except Exception as e:
+            logger.error(f"Error processing visit event: {e}")
         
         if event.get("sendtask_uuid"):
              await self._invalidate_cache(event["sendtask_uuid"])
@@ -73,16 +79,16 @@ class PersistenceWorker:
              await self._invalidate_cache_by_db(event["uuid"])
 
     async def _process_qr_visit(self, event):
-        await db.update_array_append(
-            table_name="send_log_details",
-            append_data={
-                "second_qrcode_time": event["timestamp"],
-                "second_qrcode_src": event["ip"],
-                "second_qrcode_dev": event["user_agent"]
-            },
-            condition={"uuid": event["uuid"]}
-        )
-        logger.info(f"Processed qr_visit event for {event['uuid']}")
+        try:
+            stmt = update(SendLogDetail).where(SendLogDetail.uuid == event["uuid"]).values(
+                second_qrcode_time=func.array_append(func.coalesce(SendLogDetail.second_qrcode_time, []), event["timestamp"]),
+                second_qrcode_src=func.array_append(func.coalesce(SendLogDetail.second_qrcode_src, []), event["ip"]),
+                second_qrcode_dev=func.array_append(func.coalesce(SendLogDetail.second_qrcode_dev, []), event["user_agent"])
+            )
+            result = await db_controller.execute(stmt)
+            logger.info(f"Processed qr_visit event for {event['uuid']}")
+        except Exception as e:
+            logger.error(f"Error processing qr_visit event: {e}")
         
         if event.get("sendtask_uuid"):
              await self._invalidate_cache(event["sendtask_uuid"])
@@ -90,17 +96,17 @@ class PersistenceWorker:
              await self._invalidate_cache_by_db(event["uuid"])
 
     async def _process_input(self, event):
-        await db.update_array_append(
-            table_name="send_log_details",
-            append_data={
-                "second_input_time": event["timestamp"],
-                "second_input_src": event["ip"],
-                "second_input_dev": event["user_agent"],
-                "second_input_info": event["data"]
-            },
-            condition={"uuid": event["uuid"]}
-        )
-        logger.info(f"Processed input event for {event['uuid']}")
+        try:
+            stmt = update(SendLogDetail).where(SendLogDetail.uuid == event["uuid"]).values(
+                second_input_time=func.array_append(func.coalesce(SendLogDetail.second_input_time, []), event["timestamp"]),
+                second_input_src=func.array_append(func.coalesce(SendLogDetail.second_input_src, []), event["ip"]),
+                second_input_dev=func.array_append(func.coalesce(SendLogDetail.second_input_dev, []), event["user_agent"]),
+                second_input_info=func.array_append(func.coalesce(SendLogDetail.second_input_info, []), event["data"])
+            )
+            result = await db_controller.execute(stmt)
+            logger.info(f"Processed input event for {event['uuid']}")
+        except Exception as e:
+            logger.error(f"Error processing input event: {e}")
         
         if event.get("sendtask_uuid"):
              await self._invalidate_cache(event["sendtask_uuid"])
@@ -126,17 +132,14 @@ class PersistenceWorker:
         """
         try:
              # 1. 查詢 sendtask_uuid
-            rows = await db.get_db(
-                table_name="send_log_details",
-                select_columns=["sendtask_uuid"],
-                where_column="uuid",
-                values=uuid
-            )
-            if rows:
-                sendtask_uuid = rows[0]["sendtask_uuid"]
-                await self._invalidate_cache(sendtask_uuid)
-            else:
-                logger.warning(f"Could not find sendtask_uuid for uuid {uuid}")
+             stmt = select(SendLogDetail.sendtask_uuid).where(SendLogDetail.uuid == uuid)
+             result = await db_controller.execute_scalars(stmt)
+             sendtask_uuid = result[0] if result else None
+                 
+                 if sendtask_uuid:
+                     await self._invalidate_cache(sendtask_uuid)
+                 else:
+                     logger.warning(f"Could not find sendtask_uuid for uuid {uuid}")
         except Exception as e:
             logger.error(f"Failed to invalidate cache by db for {uuid}: {e}")
 

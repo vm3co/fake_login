@@ -14,11 +14,11 @@ from zoneinfo import ZoneInfo
 
 from backend.services.log_manager import Logger
 from backend.services.getSe2data import get_se2_data
-from backend.repository.db_controller import ApplianceDB
+from backend.repository.db_controller import db_controller
 from backend.core.security import verify_password, hash_password
 from backend.services.notification_manager import send_telegram_notification, escape_markdown_v2
-from backend.core.security import hash_password
-
+from backend.repository.models import User, Acct, CustomerAcct, SendTask, SendLogDetail, SendLogStats, Mtmpl, LoginLog
+from backend.services.redis_client import RedisClient
 
 logger = Logger().get_logger()
 
@@ -105,12 +105,10 @@ SENDLOG_COLUMNS = ["uuid", "target_email", "person_info", "template_uuid", "plan
 
 
 class DBUser:
-    def __init__(self, db: ApplianceDB = ApplianceDB()):
+    def __init__(self):
         """ 
         初始化 DBUser 類別
-        :param db: ApplianceDB 實例，預設為 ApplianceDB()
         """
-        self.db = db
         self.day = 7  # 預設查詢天數為 7 天
         self.accts_columns = ACCTS_COLUMNS
         
@@ -120,44 +118,64 @@ class DBUser:
         檢查資料表是否為空，如果是空的，則從 SE2 獲取資料並插入到資料表中。
         如果資料表已經有資料，則跳過初始化。
         """
-        # 檢查資料庫連線
-        await self.db.check_db_connection()
-
-        table_names = ["accts", "sendtasks", "mtmpl", "sendlog_stats", "send_log_details"]
+        table_mappings = {
+            "accts": {"model": Acct, "fetch_method": self.get_se2_accts, "fetch_args": [ACCTS_COLUMNS]},
+            "sendtasks": {"model": SendTask, "fetch_method": self.get_se2_sendtasks, "fetch_args": [SENDTASKS_COLUMNS, self.day]},
+            "mtmpl": {"model": Mtmpl, "fetch_method": self.get_se2_mtmpl, "fetch_args": []},
+            "sendlog_stats": {"model": SendLogStats, "special_logic": True},
+            "send_log_details": {"model": SendLogDetail, "special_logic": True}
+        }
         
-        # 檢查資料表是否為空，如果是空的，則從 SE2 獲取資料並插入到資料表中。
-        for table_name in table_names:
-            if await self.db.table_empty(table_name):
+        for table_name, config in table_mappings.items():
+            model = config["model"]
+            
+            # Check if table is empty
+            # Using get(limit=1) as a proxy for count > 0
+            existing_data = await db_controller.get(model, limit=1)
+            count = len(existing_data)
+            
+            if count == 0:
                 logger.info(f"{table_name} is empty. Initializing with data from SE2...")
-                if table_name == "accts":
-                    # 從 SE2 獲取 accts 資料
-                    se2_list = await self.get_se2_accts(ACCTS_COLUMNS)
-                elif table_name == "sendtasks":
-                    # 從 SE2 獲取 sendtasks 資料
-                    se2_list = await self.get_se2_sendtasks(SENDTASKS_COLUMNS, days=self.day)
-                elif table_name == "mtmpl":
-                    # 從 SE2 獲取 mtmpl 資料
-                    se2_list = await self.get_se2_mtmpl()
-                elif table_name == "sendlog_stats":
-                    # 取得sendtask_uuids
-                    sendtask_data = await self.db.get_db("sendtasks", select_columns=["sendtask_uuid"])
-                    sendtask_uuids = [t["sendtask_uuid"] for t in sendtask_data]
-                    # 開始更新sendlog_stats table
-                    sendlog_stats_status = await self.refresh_sendlog_stats(sendtask_uuids)
-                    logger.info(f"Updated sendlog_stats with status: {sendlog_stats_status}")
+                
+                if config.get("special_logic"):
+                    if table_name == "sendlog_stats":
+                         # Logic handled outside this loop
+                         pass
+                    elif table_name == "send_log_details":
+                         logger.info(f"Skipping direct initialization for {table_name}, it will be populated via logic.")
+                         pass
                     continue
-                elif table_name == "send_log_details":
-                    # 這個表通常由 refresh_sendlog_stats 或 check_sendlog 填充
-                    logger.info(f"Skipping direct initialization for {table_name}, it will be populated via logic.")
-                    continue
-
+                
+                # Fetch data
+                fetch_method = config["fetch_method"]
+                fetch_args = config.get("fetch_args", [])
+                se2_list = await fetch_method(*fetch_args)
+                
                 if not se2_list:
                     logger.warning(f"No data found for {table_name} in SE2.")
                     continue
-                await self.db.insert_db(table_name, se2_list)
-                logger.info(f"Inserted {len(se2_list)} records into {table_name}.")
+                
+                # Insert data
+                # Using batch_create (insert) since table is empty
+                try:
+                    await db_controller.batch_create(model, se2_list)
+                    logger.info(f"Inserted {len(se2_list)} records into {table_name}.")
+                except Exception as e:
+                    logger.error(f"Failed to initialize {table_name}: {e}")
             else:
                 logger.info(f"{table_name} already has data. Skipping initialization.")
+
+        sample_stats = await db_controller.get(SendLogStats, limit=1)
+        count_stats = len(sample_stats)
+        
+        if count_stats == 0:
+             tasks = await db_controller.get(SendTask)
+             sendtask_uuids = [t.sendtask_uuid for t in tasks]
+             
+             if sendtask_uuids:
+                 # refresh_sendlog_stats manages its own session
+                 sendlog_stats_status = await self.refresh_sendlog_stats(sendtask_uuids)
+                 logger.info(f"Updated sendlog_stats with status: {sendlog_stats_status}")
 
     async def get_se2_accts(self, acct_columns=None) -> list[dict]:
         """
@@ -165,7 +183,6 @@ class DBUser:
         :param acct_columns: accts 的欄位名稱
         :return: accts 資料列表
         """
-        await self.db.check_db_connection()
 
         acct_df = await get_se2_data.get_accts()
         if acct_df is not None and not acct_df.empty:
@@ -207,7 +224,6 @@ class DBUser:
         :param days: 查詢的天數(目前預設7天)
         :return: sendtasks 資料列表
         """
-        await self.db.check_db_connection()
 
         sendtasks_df = await get_se2_data.get_sendtasks()
         if sendtasks_df is not None and not sendtasks_df.empty:
@@ -234,7 +250,6 @@ class DBUser:
         """
         從 SE2 獲取 mtmpl 資料
         """
-        await self.db.check_db_connection()
         mtmpl_df = await get_se2_data.get_mtmpl_subject_list()
         if mtmpl_df is not None and not mtmpl_df.empty:
             mtmpl_list = mtmpl_df.to_dict(orient="records")
@@ -248,7 +263,6 @@ class DBUser:
         :param sendlog_columns: sendlog 的欄位名稱
         :return: sendlog 資料列表
         """
-        await self.db.check_db_connection()
         sendlog_df = await get_se2_data.get_sendlog(sendtask_uuid)
         if sendlog_df is not None and not sendlog_df.empty:
             sendlog_list = sendlog_df[sendlog_columns].to_dict(orient="records")
@@ -273,96 +287,78 @@ class DBUser:
 ## sendlog and sendlog_stats相關操作
     async def check_sendlog(self, uuids_and_create_time: dict):
         """
-        檢查 sendlog table 是否存在於資料庫中，且建立時間正確
+        檢查 sendlog table 是否存在於資料庫中
         :param uuids_and_create_time: sendtask 的 UUID，對應建立時間的字典
         """
-        await self.db.check_db_connection()
         logger.info("Checking sendlog tables...")
         
         statuses = {}
         # 0. 先過濾掉已封存的任務 (Safety Check)
-        # 雖然外部通常已過濾，但為了安全起見再次確認
-        # 查詢所有傳入的 UUID 中，有哪些已經是 is_archived = TRUE
         target_uuids = list(uuids_and_create_time.keys())
         if not target_uuids:
              return {}
         
-        archived_tasks = await self.db.get_db(
-            "sendtasks", 
-            select_columns=["sendtask_uuid"], 
-            where_column="sendtask_uuid", 
-            values=target_uuids,
-            where_clauses=["is_archived = TRUE"]
-        )
-        archived_uuids = {t["sendtask_uuid"] for t in archived_tasks}
+        # 查詢所有傳入的 UUID 中，有哪些已經是 is_archived = TRUE
+        # Use DBController get with in_ filter (assumes DBController supports list for IN)
+        archived_tasks = await db_controller.get(SendTask, {"sendtask_uuid": target_uuids, "is_archived": True})
+        archived_uuids = set(t.sendtask_uuid for t in archived_tasks)
         
         # 只保留未封存的任務
         active_uuids_and_time = {
             u: t for u, t in uuids_and_create_time.items() 
             if u not in archived_uuids
         }
-        
+            
         if len(active_uuids_and_time) < len(uuids_and_create_time):
-             logger.info(f"Skipped {len(uuids_and_create_time) - len(active_uuids_and_time)} archived tasks in check_sendlog.")
+            logger.info(f"Skipped {len(uuids_and_create_time) - len(active_uuids_and_time)} archived tasks in check_sendlog.")
 
-        # 批次檢查所有資料表是否存在，且建立時間正確
-        tables_to_create = []
+        # 批次檢查所有資料表是否存在
         for uuid, create_ut in active_uuids_and_time.items():
-            if not await self.db.table_exists(uuid):
-                tables_to_create.append(uuid)
-            else:
-                data = await get_se2_data.get_sendtask(uuid)
-                if data and data.get("error", {}).get("code") == 404:
-                    logger.warning(f"Task {uuid} not found on SE2 (404). Deleting local data.")
-                    # 該任務在主系統已不存在，刪除本地所有相關資料
-                    # sendtasks刪除資料
-                    await self.db.delete_db(table_name="sendtasks", condition={"sendtask_uuid": uuid})
-                    # sendlog_stats 刪除資料
-                    await self.db.delete_db(table_name="sendlog_stats", condition={"sendtask_uuid": uuid})
-                    statuses[uuid] = "deleted"
-
-                    continue # 繼續處理下一個 uuid
+            data = await get_se2_data.get_sendtask(uuid)
+            if data and data.get("error", {}).get("code") == 404:
+                logger.warning(f"Task {uuid} not found on SE2 (404). Deleting local data.")
+                # 該任務在主系統已不存在，刪除本地所有相關資料
                 
-                if data is None:
-                    logger.error(f"Failed to get task info for {uuid} from SE2, likely a token or connection issue. Skipping.")
-                    statuses[uuid] = "error"
-                    continue
+                # Delete from sendtasks
+                await db_controller.delete(SendTask, {"sendtask_uuid": uuid})
+                # Delete from sendlog_stats
+                await db_controller.delete(SendLogStats, {"sendtask_uuid": uuid})
+                # Delete from send_log_details
+                await db_controller.delete(SendLogDetail, {"sendtask_uuid": uuid})
 
-                remote_create_ut = data.get("data", {}).get("sendtask_create_ut")
-                if create_ut != remote_create_ut:
-                    log_message = f"Task {uuid} has a new create time. Local: {create_ut}, Remote: {remote_create_ut}. Re-syncing task."
-                    logger.warning(log_message)
-                    
-                    telegram_message = f"🔄 *任務已重同步*\n任務 `{escape_markdown_v2(uuid)}` 的建立時間不符，已觸發資料重同步。"
-                    await send_telegram_notification(telegram_message)
-                    
-                    # 獲取新任務資料並更新 sendtasks 表
-        tables_to_create = []
-        for uuid, create_ut in active_uuids_and_time.items():
-            if not await self.db.table_exists(uuid):
-                tables_to_create.append(uuid)
-            else:
-                data = await get_se2_data.get_sendtask(uuid)
-                remote_create_ut = data.get("data", {}).get("sendtask_create_ut")
-                if create_ut != remote_create_ut:
-                    # log_message = f"Task {uuid} has a new create time. Local: {create_ut}, Remote: {remote_create_ut}. Re-syncing task."
-                    # logger.warning(log_message)
-                    
-                    # telegram_message = f"🔄 *任務已重同步*\n任務 `{escape_markdown_v2(uuid)}` 的建立時間不符，已觸發資料重同步。"
-                    # await send_telegram_notification(telegram_message)
-                    
-                    # 獲取新任務資料並更新 sendtasks 表
-                    task_data_df = pd.DataFrame([data.get("data", {})])
-                    updated_task_df = await self._fetch_and_apply_metadata(task_data_df)
-                    if not updated_task_df.empty:
-                        task_to_update = updated_task_df[SENDTASKS_COLUMNS].to_dict(orient="records")[0]
-                        await self.db.update_db("sendtasks", task_to_update, {"sendtask_uuid": uuid})
-                        logger.info(f"Updated sendtasks table for {uuid}.")
+                statuses[uuid] = "deleted"
+                continue # 繼續處理下一個 uuid
+            
+            if data is None:
+                logger.error(f"Failed to get task info for {uuid} from SE2, likely a token or connection issue. Skipping.")
+                statuses[uuid] = "error"
+                continue
 
-        logger.info("Upserting sendlog tables...")
+            remote_create_ut = data.get("data", {}).get("sendtask_create_ut")
+            if create_ut != remote_create_ut:
+                log_message = f"Task {uuid} has a new create time. Local: {create_ut}, Remote: {remote_create_ut}. Re-syncing task."
+                logger.warning(log_message)
+                
+                telegram_message = f"🔄 *任務已重同步*\n任務 `{escape_markdown_v2(uuid)}` 的建立時間不符，已觸發資料重同步。"
+                await send_telegram_notification(telegram_message)
+                
+                # 獲取新任務資料並更新 sendtasks 表
+                task_data_df = pd.DataFrame([data.get("data", {})])
+                updated_task_df = await self._fetch_and_apply_metadata(task_data_df)
+                if not updated_task_df.empty:
+                    task_to_update = updated_task_df[SENDTASKS_COLUMNS].to_dict(orient="records")[0]
+                    # Use ORM update
+                    await db_controller.update(SendTask, {"sendtask_uuid": uuid}, task_to_update)
+                    logger.info(f"Updated sendtasks table for {uuid}.")
+            
+        # sendlog_write now handles its own session, but we call it here.
+        # To avoid nested sessions issues if not handled (db.get_session creates new one),
+        # we can pass session or just let it create new one. sendlog_write creates its own.
         logger.info("Upserting sendlog tables...")
         # 只處理未被刪除或未出錯的任務
         sendtask_uuids_to_write = [uuid for uuid in active_uuids_and_time.keys() if statuses.get(uuid) not in ["deleted", "error"]]
+    
+        # Call sendlog_write (it manages its own transaction)
         write_statuses = await self.sendlog_write(sendtask_uuids_to_write)
         statuses.update(write_statuses)
         logger.info(f"Sendlog tables upserted with statuses: {statuses}")
@@ -374,20 +370,32 @@ class DBUser:
         :param sendtask_uuid: 任務清單的uuid列表
          """
         sendlog_status = {}
-        await self.db.check_db_connection()
+        sendlog_status = {}
+        # sendlog_write now uses db_controller
+        
         for uuid in sendtask_uuid:
-            # 獲取 sendlog 資料
+            # 獲取 sendlog 資料 (From SE2 API)
             sendlog = await self.get_se2_sendlog(uuid, sendlog_columns=SENDLOG_COLUMNS)
+            
             if sendlog:
                 sendlog_status[uuid] = "unchanged"
+                
+                sendlog_data_list = []
                 for log in sendlog:
-                    # 注入 sendtask_uuid
-                    log["sendtask_uuid"] = uuid
-                    # 寫入 send_log_details 表
-                    # 注意：我們使用 log 中的 uuid 作為 conflict key (這是每封信的唯一識別碼)
-                    status = await self.db.upsert_db("send_log_details", log, conflict_keys=["uuid"])
-                    if status == "changed":
-                        sendlog_status[uuid] = "changed"
+                    # 準備寫入資料
+                    log_data = log.copy()
+                    log_data["sendtask_uuid"] = uuid
+                    sendlog_data_list.append(log_data)
+                
+                # 使用 db_controller.upsert
+                if sendlog_data_list:
+                     await db_controller.upsert(
+                        SendLogDetail,
+                        sendlog_data_list,
+                        index_elements=['uuid'],
+                        update_columns=[c for c in sendlog_data_list[0].keys() if c != 'uuid']
+                    )
+
             else:
                 logger.warning(f"No valid columns found in sendlog for task {uuid}")
 
@@ -399,39 +407,40 @@ class DBUser:
         :param uuid: 如果提供，則僅刷新指定的 sendtask_uuid；如果為 None，則刷新所有 sendtask 的統計資料
         :return: sendlog_stats 的更新狀態
         """
-        await self.db.check_db_connection()
         if uuids is not None and len(uuids) == 0:
             logger.info("Empty UUIDs list provided to refresh_sendlog_stats. Skipping.")
             return {}
 
         if uuids is None:
             logger.info("Fetching all sendtask uuids for refresh...")
-            sendtask_data = await self.db.get_db("sendtasks", select_columns=["sendtask_uuid", "sendtask_create_ut", "sendtask_id"])
+            sendtask_data = await db_controller.get(SendTask)
         else:
             logger.info(f"Refreshing sendlog_stats for specified uuids: {uuids}")
-            sendtask_data = await self.db.get_db("sendtasks", select_columns=["sendtask_uuid", "sendtask_create_ut", "sendtask_id"], where_column="sendtask_uuid", values=uuids)
-        uuids_and_create_time = {task["sendtask_uuid"]: task["sendtask_create_ut"] for task in sendtask_data}
+            sendtask_data = await db_controller.get(SendTask, {"sendtask_uuid": uuids})
 
-        # 確保 sendlog 資料表存在，同時更新資料表
+        # Convert to dict for easier access locally
+        uuids_and_create_time = {task.sendtask_uuid: task.sendtask_create_ut for task in sendtask_data}
+        # 取得任務名稱，用於通知
+        task_names = {task.sendtask_uuid: task.sendtask_id for task in sendtask_data}
+
+        # 確保 sendlog 資料表存在，同時更新資料表 (check_sendlog handles its own session)
         check_statuses = await self.check_sendlog(uuids_and_create_time)
 
-        # 取得任務名稱，用於通知
-        task_names = {task["sendtask_uuid"]: task["sendtask_id"] for task in sendtask_data}
 
         # 開始刷新 sendlog_stats
         for uuid in [u for u in uuids_and_create_time.keys() if check_statuses.get(u) not in ["deleted", "error"]]:
             # logger.info(f"Refreshing sendlog_stats for {uuid}")
 
             # 1. 獲取舊的統計數據
-            old_stats_data = await self.db.get_db("sendlog_stats", where_column="sendtask_uuid", values=uuid)
-            old_stats = old_stats_data[0] if old_stats_data else {}
+            old_stats = await db_controller.get_one(SendLogStats, {"sendtask_uuid": uuid})
+            old_todaysend = old_stats.todaysend if old_stats else 0
 
             # 2. 計算新的統計數據
+            # get_sendlog implementation is below, it uses session internally or creates one
             data = await self.get_sendlog(sendtask_uuid=uuid, need_id=False, use_cache=False)
             new_stats = calc_stats(data)
 
             # 3. 比較並觸發通知
-            old_todaysend = old_stats.get("todaysend", 0)
             new_todaysend = new_stats.get("todaysend", 0)
             if old_todaysend == 0 and new_todaysend > 0:
                 task_name = task_names.get(uuid, uuid)
@@ -439,23 +448,27 @@ class DBUser:
                 await send_telegram_notification(message)
 
             # 4. 更新資料庫
-            check_statuses[uuid] = await self.db.upsert_db("sendlog_stats", {
+            stats_data = {
                 "sendtask_uuid": uuid,
                 **new_stats
-            }, conflict_keys=["sendtask_uuid"])
-            # logger.info(f"Updated sendlog_stats for {uuid}. Status: {check_statuses[uuid]}")
+            }
+            # Upsert SendLogStats
+            await db_controller.upsert(
+                SendLogStats,
+                [stats_data],
+                index_elements=['sendtask_uuid']
+            )
+            
         logger.info(f"Finished refreshing sendlog_stats.")
 
         return check_statuses
 
     async def get_sendlog(self, sendtask_uuid: str, need_id=True, use_cache=True):
-        await self.db.check_db_connection()
         
         # 0. 嘗試從 Redis 讀取快取
         cache_key = f"task:{sendtask_uuid}:details"
         if use_cache:
             try:
-                from backend.services.redis_client import RedisClient
                 redis_client = RedisClient()
                 client = await redis_client.get_client()
                 
@@ -474,8 +487,15 @@ class DBUser:
             except Exception as e:
                 logger.warning(f"Failed to initialize Redis client: {e}")
 
-        # 1. DB 查詢 send_log_details
-        data = await self.db.get_db("send_log_details", where_column="sendtask_uuid", values=sendtask_uuid)
+        # 1. DB 查詢 send_log_details using ORM
+        # Use DBController
+        log_records = await db_controller.get(SendLogDetail, {"sendtask_uuid": sendtask_uuid})
+        
+        # Convert Query Result to list of dicts for compatibility with existing logic
+        data = []
+        for row in log_records:
+            d = {col.name: getattr(row, col.name) for col in row.__table__.columns}
+            data.append(d)
         
         # 資料沒變，先把 id 拿掉 (如果不需要的話)
         if not need_id: 
@@ -495,18 +515,13 @@ class DBUser:
         try:
             if final_data:
                 # 檢查這任務是否已封存，決定 TTL
-                # 簡單起見，先讀取 sendtasks 狀態。這可能會多一次 DB Query，但為了 TTL 正確值得。
-                # 也可以考慮把 is_archived 放入 Cache Key 或另外存
-                task_rows = await self.db.get_db("sendtasks", select_columns=["is_archived"], where_column="sendtask_uuid", values=sendtask_uuid)
-                is_archived = task_rows[0].get("is_archived", False) if task_rows else False
+                task = await db_controller.get_one(SendTask, {"sendtask_uuid": sendtask_uuid})
+                is_archived = task.is_archived if task else False
                 
                 ttl = 3600 if is_archived else 86400  # 1小時 vs 1天 (Active)
                 
-                # 序列化含有 datetime/date 的物件需要小心，但這裡 data 來自 asyncpg row (dict)，
-                # 且大部分時間是 BIGINT 或 TEXT，應該可以直接 dumps。
-                # 若有 datetime 物件需自訂 encoder，但在 table_info 看到都是 BIGINT (timestamp)。
-                
-                await client.set(cache_key, json.dumps(final_data), ex=ttl)
+                # 序列化
+                await client.set(cache_key, json.dumps(final_data, default=str), ex=ttl)
                 logger.debug(f"Cache Set for {sendtask_uuid} with TTL {ttl}")
         except Exception as e:
              logger.warning(f"Failed to set Redis cache for {sendtask_uuid}: {e}")
@@ -520,9 +535,8 @@ class DBUser:
         :param username: 使用者名稱
         :return: 如果使用者存在，返回 True，否則返回 False
         """
-        await self.db.check_db_connection()
-        result = await self.db.get_db("users", where_column="username", values=username)
-        return len(result) > 0
+        user = await db_controller.get_one(User, {"username": username})
+        return user is not None
 
     async def insert_user(self, username: str, password_hash: str):
         """
@@ -530,59 +544,58 @@ class DBUser:
         :param username: 使用者名稱
         :param password_hash: 密碼哈希值
         """
-        await self.db.check_db_connection()
-        accts_data = await self.db.get_db("accts", where_column="acct_id", values=username)
-        if not accts_data:
+        # 檢查 acct 是否存在
+        acct = await db_controller.get_one(Acct, {"acct_id": username})
+
+        if not acct:
             logger.error(f"acct_id {username} does not exist in the main system (accts).")
             return {"status": "error", "message": "帳號不存在在主系統"}
-        acct = accts_data[0]
-        data = {
-            "acct_uuid": acct["acct_uuid"],
-            "username": username,
-            "password_hash": password_hash,
-            "email": acct["acct_email"],
-            "full_name": acct["acct_full_name"],
-            "orgs": acct["orgs"]
-        }
-        await self.db.insert_db("users", data)
-        return {"status": "success", "message": "註冊成功", "acct_uuid": data["acct_uuid"], "username": data["username"]}
+        
+        try:
+            new_user = await db_controller.create(User, {
+                "acct_uuid": acct.acct_uuid,
+                "username": username,
+                "password_hash": password_hash,
+                "email": acct.acct_email,
+                "full_name": acct.acct_full_name,
+                "orgs": acct.orgs
+            })
+            
+            return {
+                "status": "success", 
+                "message": "註冊成功", 
+                "acct_uuid": new_user.acct_uuid, 
+                "username": new_user.username
+            }
+        except Exception as e:
+             return {"status": "error", "message": str(e)}
     
     async def get_all_users_with_registration_status(self):
         """
         從 'accts' 獲取所有帳戶，並檢查他們在 'users' 中的註冊狀態。
         """
-        await self.db.check_db_connection()
         # Fetch all accounts
-        accts = await self.db.get_db(
-            table_name="accts", 
-            select_columns=["acct_uuid", "acct_id", "acct_full_name", "acct_email", "is_active", "orgs"],
-            order_by="acct_full_name"
-        )
+        accts = await db_controller.get(Acct, order_by=Acct.acct_full_name)
         
         # Fetch all registered user uuids
-        users = await self.db.get_db(
-            table_name="users",
-            select_columns=["acct_uuid"]
-        )
-        registered_uuids = {u["acct_uuid"] for u in users if u.get("acct_uuid")}
+        users = await db_controller.get(User)
+        registered_uuids = set(user.acct_uuid for user in users)
         
         # Merge and transform
         result = []
         for acct in accts:
-            acct_uuid = acct.get("acct_uuid")
+            acct_uuid = acct.acct_uuid
             row = {
                 "acct_uuid": acct_uuid,
-                "acct_id": acct.get("acct_id"),
-                "acct_full_name": acct.get("acct_full_name"),
-                "acct_email": acct.get("acct_email"),
-                "is_active": acct.get("is_active"),
-                "orgs": acct.get("orgs"),
+                "acct_id": acct.acct_id,
+                "acct_full_name": acct.acct_full_name,
+                "acct_email": acct.acct_email,
+                "is_active": acct.acct_activate, 
+                "orgs": acct.orgs,
                 "is_registered": acct_uuid in registered_uuids
             }
             result.append(row)
             
-
-        
         return result
     
 
@@ -591,20 +604,12 @@ class DBUser:
         清除指定受測者(uuid)的所有觸發紀錄 (包含主系統與 Dashboard)
         並清除 Redis 快取
         """
-        await self.db.check_db_connection()
-        
-        # 1. 定義要清空的欄位
-        update_data = {
-            "second_access_time": None, "second_access_src": None, "second_access_dev": None,
-            "second_input_time": None, "second_input_src": None, "second_input_dev": None, "second_input_info": None,
-            "second_qrcode_time": None, "second_qrcode_src": None, "second_qrcode_dev": None
-        }
-        
-        # 2. 更新資料庫
-        # 注意: update_db 需要 condition={"uuid": uuid}
-        # 為了安全起見，也可以只用 uuid，因為 uuid 應該是唯一的
         try:
-            await self.db.update_db("send_log_details", update_data, condition={"uuid": uuid})
+            await db_controller.update(SendLogDetail, {"uuid": uuid}, {
+                "second_access_time": None, "second_access_src": None, "second_access_dev": None,
+                "second_input_time": None, "second_input_src": None, "second_input_dev": None, "second_input_info": None,
+                "second_qrcode_time": None, "second_qrcode_src": None, "second_qrcode_dev": None
+            })
             logger.info(f"Cleared trigger data for uuid: {uuid}")
         except Exception as e:
             logger.error(f"Failed to clear trigger data in DB for {uuid}: {e}")
@@ -631,9 +636,8 @@ class DBUser:
         :param customer_name: 客戶名稱
         :return: 如果客戶存在，返回 True，否則返回 False
         """
-        await self.db.check_db_connection()
-        result = await self.db.get_db("customer_accts", where_column="customer_name", values=customer_name)
-        return len(result) > 0
+        customer = await db_controller.get_one(CustomerAcct, {"customer_name": customer_name})
+        return customer is not None
 
     async def insert_customer(self, data: dict):
         """
@@ -641,19 +645,16 @@ class DBUser:
         :param data: 客戶資料
         :return: 
         """
-        await self.db.check_db_connection()
         try:
-            data = {
+            new_customer = await db_controller.create(CustomerAcct, {
                 "customer_name": data.get("customer_name"),
                 "customer_full_name": data.get("customer_full_name"),
                 "password_hash": data.get("password_hash"),
                 "acct_uuid": data.get("acct_uuid")
-            }
-            await self.db.insert_db("customer_accts", data)
-            return {"status": "success", "message": "新增客戶成功", "customer_name": data["customer_name"]}
+            })
+            return {"status": "success", "message": "新增客戶成功", "customer_name": new_customer.customer_name}
         except Exception as e:
             return {"status": "error", "message": str(e)}
-
 
     async def update_customer_sendtasks(self, customer_name: str, sendtask_data: List[Dict[str, Any]]):
         """
@@ -661,21 +662,19 @@ class DBUser:
         :param customer_name: 客戶名稱
         :param sendtask_data: 任務物件的列表 (List of Dictionaries)
         """
-        await self.db.check_db_connection()
+        # 檢查是否存在    
+        customer = await db_controller.get_one(CustomerAcct, {"customer_name": customer_name})
 
-        # 檢查客戶是否存在
-        if not await self.customer_exists(customer_name):
+        if not customer:
             logger.error(f"Customer {customer_name} does not exist.")
             return {"status": "error", "message": "客戶不存在"}
         
-        sendtasks_json_string = json.dumps(sendtask_data, ensure_ascii=False)
-
-        status = await self.db.update_db(
-            table_name="customer_accts",
-            data={"sendtasks": sendtasks_json_string},
-            condition={"customer_name": customer_name}
-        )
-        return status
+        try:
+            await db_controller.update(CustomerAcct, {"customer_name": customer_name}, {"sendtasks": sendtask_data})
+            return "success"
+        except Exception as e:
+            logger.error(f"Update customer sendtasks failed: {e}")
+            return {"status": "error", "message": str(e)}
 
     async def update_password(self, user_type: str, identifier: str, new_password: str, old_password: str = None, acct_uuid: str = None) -> dict:
         """
@@ -687,33 +686,29 @@ class DBUser:
         :param acct_uuid: 用戶的 UUID（可選，用於權限驗證）
         :return: 更新結果
         """
-        await self.db.check_db_connection()
         
         try:
+            target_user = None
+            model = None
+            filter_key = None
+            
             if user_type == "user":
-                table_name = "users"
-                where_column = "acct_uuid"
+                model = User
+                filter_key = "acct_uuid"
             elif user_type == "customer":
-                table_name = "customer_accts"
-                where_column = "customer_name"
+                model = CustomerAcct
+                filter_key = "customer_name"
             else:
                 return {"status": "error", "message": "無效的用戶類型"}
+                
+            target_user = await db_controller.get_one(model, {filter_key: identifier})
             
-            # 檢查用戶是否存在
-            user_data = await self.db.get_db(
-                table_name, 
-                where_column=where_column, 
-                values=identifier
-            )
-            
-            if not user_data:
+            if not target_user:
                 return {"status": "error", "message": f"{'用戶' if user_type == 'user' else '客戶'}不存在"}
-            
-            user = user_data[0]
             
             # 進行驗證舊密碼
             if old_password:
-                if not verify_password(old_password, user.get("password_hash")):
+                if not verify_password(old_password, target_user.password_hash):
                     return {"status": "error", "message": "舊密碼不正確"}
                 
                 if old_password == new_password:
@@ -721,25 +716,20 @@ class DBUser:
             
             # 更新密碼
             new_password_hash = hash_password(new_password)
-            status = await self.db.update_db(
-                table_name=table_name, 
-                data={"password_hash": new_password_hash}, 
-                condition={where_column: identifier}
-            )
             
-            if status:
-                logger.info(f"Password updated successfully for {user_type}: {identifier}")
-                return {
-                    "status": "success", 
-                    "message": "密碼更新成功", 
-                    "identifier": identifier,
-                    "user_type": user_type
-                }
-            else:
-                return {"status": "error", "message": "密碼更新失敗"}
+            await db_controller.update(model, {filter_key: identifier}, {"password_hash": new_password_hash})
+            
+            logger.info(f"Password updated successfully for {user_type}: {identifier}")
+            return {
+                "status": "success", 
+                "message": "密碼更新成功", 
+                "identifier": identifier,
+                "user_type": user_type
+            }
                 
         except Exception as e:
             logger.error(f"Error updating password for {user_type} {identifier}: {str(e)}")
+            return {"status": "error", "message": str(e)}
             return {"status": "error", "message": f"更新密碼時發生錯誤: {str(e)}"}
 
     async def add_login_log(self, username: str, action: str, status: str, ip_address: str = None, details: str = None):
@@ -751,16 +741,14 @@ class DBUser:
         :param ip_address: IP 位址
         :param details: 詳細資訊
         """
-        await self.db.check_db_connection()
         try:
-            data = {
-                "username": username,
-                "action": action,
-                "status": status,
-                "ip_address": ip_address,
+            await db_controller.create(LoginLog, {
+                "username": username, 
+                "action": action, 
+                "status": status, 
+                "ip_address": ip_address, 
                 "details": details
-            }
-            await self.db.insert_db("login_logs", data)
+            })
             logger.info(f"Added login log: {username} {action} {status}")
         except Exception as e:
             logger.error(f"Error adding login log: {str(e)}")
@@ -771,16 +759,22 @@ class DBUser:
         :param limit: 限制筆數
         :return: 紀錄列表
         """
-        await self.db.check_db_connection()
         try:
-            result = await self.db.get_paginated_db(
-                table_name="login_logs",
-                paginate=True,
-                page=1,
-                rows_per_page=limit,
-                order_by="create_time DESC"
-            )
-            return result.get("data", [])
+            result = await db_controller.get(LoginLog, limit=limit, order_by=LoginLog.create_time.desc())
+            
+            # Convert to dict list
+            logs = []
+            for row in result:
+                 logs.append({
+                     "username": row.username,
+                     "action": row.action,
+                     "status": row.status,
+                     "ip_address": row.ip_address,
+                     "details": row.details,
+                     "create_time": row.create_time
+                 })
+            return logs
+            
         except Exception as e:
             logger.error(f"Error fetching login logs: {str(e)}")
             return []

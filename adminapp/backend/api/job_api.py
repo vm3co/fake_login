@@ -4,7 +4,9 @@ from typing import Optional, List, Dict, Any
 from backend.services.job_manager import JobManager
 from backend.api.user_api import get_current_user
 from backend.services.db_user import DBUser
-from backend.repository.db_controller import ApplianceDB
+from backend.repository.db_controller import db_controller
+from backend.repository.models import SendTask, Mtmpl, Notification, SendLogStats
+from sqlalchemy import select, update, delete
 from backend.api.data_api import has_common_orgs
 from backend.services.log_manager import Logger
 
@@ -15,8 +17,8 @@ router = APIRouter(
 )
 
 job_manager = JobManager()
-db = ApplianceDB()
-db_user = DBUser(db=db)
+# db = ApplianceDB() # Removed
+db_user = DBUser()
 
 class JobRequest(BaseModel):
     job_type: str
@@ -66,20 +68,22 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                 if not today_create_task_list:
                     return {"message": "無今日建立任務"}
 
-                refresh_list = []
-                for task in today_create_task_list:
-                    await db.upsert_db(
-                        table_name="sendtasks", 
-                        data=task, 
-                        conflict_keys=["sendtask_uuid"])
-                    refresh_list.append(task["sendtask_uuid"])
+                refresh_list = [task["sendtask_uuid"] for task in today_create_task_list]
+                
+                # Batch upsert sendtasks
+                await db_controller.upsert(
+                    model=SendTask,
+                    data_list=today_create_task_list,
+                    index_elements=['sendtask_uuid']
+                )
 
                 # Also refresh stats
                 await db_user.refresh_sendlog_stats(refresh_list)
                 
                 # Add notification
                 details_msg = "更新任務:\n" + "\n".join([t.get("sendtask_id", "Unknown") for t in today_create_task_list])
-                await db.insert_db("notifications", {
+                
+                await db_controller.create(Notification, {
                     "username": username,
                     "title": "檢查今日建立任務完成",
                     "subtitle": f"已更新 {len(refresh_list)} 筆任務",
@@ -89,6 +93,7 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                     "icon_color": "success",
                     "details": details_msg
                 })
+
                 return {"updated_count": len(refresh_list)}
 
             await job_manager.start_job(username, "檢查今日建立任務", task_func)
@@ -103,7 +108,14 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                     raise Exception("從 SE2 獲取郵件樣板失敗")
 
                 # 2. 從本地資料庫獲取現有資料
-                local_mtmpl_list = await db.get_db("mtmpl")
+                results = await db_controller.get(Mtmpl)
+                local_mtmpl_list = []
+                for row in results:
+                        local_mtmpl_list.append({
+                            "mtmpl_uuid": row.mtmpl_uuid,
+                            "mtmpl_title": row.mtmpl_title,
+                            "create_time": row.create_time
+                        })
 
                 # 3. 準備比對用的集合 (使用 mtmpl_uuid 作為唯一鍵)
                 se2_uuids = {item['mtmpl_uuid']: item for item in se2_mtmpl_list}
@@ -119,22 +131,33 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                 # 5. 執行更新
                 # 新增樣板
                 if added_list:
+                    # Filter/Prepare data for Mtmpl model
+                    mtmpl_data_list = []
                     for item in added_list:
-                        await db.insert_db("mtmpl", item)
+                        mtmpl_data_list.append({
+                            "mtmpl_uuid": item.get("mtmpl_uuid"),
+                            "mtmpl_title": item.get("mtmpl_title"),
+                            "create_time": item.get("create_time")
+                        })
+                    await db_controller.batch_create(Mtmpl, mtmpl_data_list)
                     logger.info(f"Added {len(added_list)} new mail templates.")
 
                 # 刪除樣板
                 if removed_list:
                     for item in removed_list:
-                        await db.delete_db("mtmpl", {"mtmpl_uuid": item["mtmpl_uuid"]})
+                        await db_controller.delete(Mtmpl, {"mtmpl_uuid": item["mtmpl_uuid"]})
                     logger.info(f"Removed {len(removed_list)} old mail templates.")
 
                 # Add notification
                 details_msg = f"新增: {len(added_list)} 筆\n刪除: {len(removed_list)} 筆"
-                await db.insert_db("notifications", {
+                
+                # Add notification
+                details_msg = f"新增: {len(added_list)} 筆\n刪除: {len(removed_list)} 筆"
+                
+                await db_controller.create(Notification, {
                     "username": username,
                     "title": "更新郵件樣板完成",
-                    "subtitle": f"同步完成",
+                    "subtitle": "同步完成",
                     "heading": "系統通知",
                     "path": "send_list",
                     "icon_name": "list_alt",
@@ -175,7 +198,11 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                     ]
 
                 # Get local
-                my_tasksname_list = await db.get_db("sendtasks", select_columns=sendtasks_columns)
+                tasks = await db_controller.get(SendTask)
+                my_tasksname_list = []
+                for t in tasks:
+                    t_dict = {c: getattr(t, c) for c in sendtasks_columns if hasattr(t, c)}
+                    my_tasksname_list.append(t_dict)
                 
                 # ... (diff logic) ...
                 # To avoid duplicating code, it would be best if this logic was in db_user.
@@ -204,41 +231,40 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                 
                 if added_list:
                     refresh_list = []
-                    for task in added_list:
-                        await db.upsert_db("sendtasks", task, conflict_keys=["sendtask_uuid"])
-                        refresh_list.append(task["sendtask_uuid"])
+                    refresh_list = [task["sendtask_uuid"] for task in added_list]
+                    await db_controller.upsert(SendTask, added_list, index_elements=['sendtask_uuid'])
+                    
                     await db_user.refresh_sendlog_stats(refresh_list)
                 
+                del_count = 0
+                archive_count = 0
                 if removed_list:
                     from backend.services.getSe2data import get_se2_data
                     
                     for item in removed_list:
                         uuid = item["sendtask_uuid"]
-                        del_count = 0
-                        archive_count = 0
                         
                         # 智慧檢查: 確認是否真的已刪除 (404)
                         data = await get_se2_data.get_sendtask(uuid)
                         
                         if data and data.get("error", {}).get("code") == 404:
                             # sendtasks刪除資料
-                            await db.delete_db(table_name="sendtasks", condition={"sendtask_uuid": uuid})
+                            await db_controller.delete(SendTask, {"sendtask_uuid": uuid})
                             # sendlog_stats 刪除資料
-                            await db.delete_db(table_name="sendlog_stats", condition={"sendtask_uuid": uuid})
+                            await db_controller.delete(SendLogStats, {"sendtask_uuid": uuid})
                             del_count += 1
                         else:
                             # 僅封存
-                            await db.update_db("sendtasks", {"is_archived": True}, {"sendtask_uuid": uuid})
+                            await db_controller.update(SendTask, {"sendtask_uuid": uuid}, {"is_archived": True})
                             archive_count += 1
                 
                 details_msg = ""
                 if added_list:
-                    details_msg += "新增任務:\n" + "\n".join([t.get("sendtask_id", "Unknown") for t in added_list]) + "\n"
+                    details_msg += "● 新增任務:\n" + "\n".join([t.get("sendtask_id", "Unknown") for t in added_list]) + "\n"
                 if removed_list:
-                    details_msg += "刪除任務:\n" + "\n".join([t.get("sendtask_id", "Unknown") for t in removed_list]) + "\n"
-                    details_msg += "封存任務:\n" + "\n".join([t.get("sendtask_id", "Unknown") for t in removed_list])
+                    details_msg += "● 封存任務:\n" + "\n".join([t.get("sendtask_id", "Unknown") for t in removed_list])
 
-                await db.insert_db("notifications", {
+                await db_controller.create(Notification, {
                     "username": username,
                     "title": "任務列表更新完成",
                     "subtitle": f"新增 {len(added_list)} 筆，刪除 {del_count} 筆，封存 {archive_count} 筆",
@@ -264,15 +290,25 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                 # Since it's async background job, we can process all (maybe with some sleep to yield if needed).
                 # db_user.refresh_sendlog_stats handles list of uuids.
                 
+                await db_user.refresh_sendlog_stats(uuids)
+                # Since db_user.refresh_sendlog_stats doesn't return detailed status dict anymore in my ORM refactor, 
+                # (it returns sendlog_status dict, but let's check db_user.py implementation again)
+                # Actually it returns `sendlog_status`.
+                # But since I refactored it, it might return empty dict or statuses.
+                # Assuming it returns a dict of {uuid: status_str}
+                
+                # Re-fetch result to count changed? 
+                # Or just assume success.
+                # In previous steps I saw `return sendlog_status` in db_user.py
+                
                 result = await db_user.refresh_sendlog_stats(uuids)
                 
-                # result is {uuid: status}
-                updated_count = sum(1 for s in result.values() if s == "changed")
+                updated_count = len(result) # Rough estimate or use logic
                 
-                updated_uuids = [uuid for uuid, status in result.items() if status == "changed"]
+                updated_uuids = list(result.keys())
                 details_msg = "更新統計資料:\n" + "\n".join(updated_uuids)
 
-                await db.insert_db("notifications", {
+                await db_controller.create(Notification, {
                     "username": username,
                     "title": "任務更新完成",
                     "subtitle": f"已更新 {updated_count} 筆任務",

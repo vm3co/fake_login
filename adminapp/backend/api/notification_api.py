@@ -3,7 +3,9 @@ from pydantic import BaseModel
 from typing import List, Optional
 from datetime import datetime
 from backend.services.log_manager import Logger
-from backend.repository.db_controller import ApplianceDB
+from backend.repository.models import Notification as NotificationModel
+from backend.repository.db_controller import db_controller
+from sqlalchemy import select, delete
 from backend.api.user_api import get_current_user
 
 logger = Logger().get_logger()
@@ -11,8 +13,6 @@ router = APIRouter(
     prefix="/notification",
     tags=["notification"]
 )
-
-db = ApplianceDB()
 
 class Notification(BaseModel):
     id: Optional[int] = None
@@ -61,39 +61,29 @@ async def get_notifications(current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=400, detail="User not found")
 
     try:
-        notifications = await db.get_db(
-            table_name="notifications",
-            where_column="username",
-            values=username
-        )
-        # Sort by timestamp desc
-        notifications.sort(key=lambda x: x.get("timestamp", ""), reverse=True)
-        
-        # Convert icon structure for frontend compatibility if needed
-        # The frontend expects: icon: { name: "...", color: "..." }
-        # But our DB stores flat fields. We'll return flat fields and let frontend handle it 
-        # OR we can transform it here. 
-        # Looking at NotificationBar.jsx: notification.icon.name, notification.icon.color
-        # So we should transform the response to match frontend expectation OR modify frontend.
-        # Let's modify the response model to match frontend expectation.
-        
-        result = []
-        for n in notifications:
-            result.append({
-                "id": n.get("id"),
-                "heading": n.get("heading"),
-                "icon": {
-                    "name": n.get("icon_name"),
-                    "color": n.get("icon_color")
-                },
-                "timestamp": n.get("timestamp"),
-                "title": n.get("title"),
-                "subtitle": n.get("subtitle"),
-                "path": n.get("path"),
-                "details": n.get("details")
-            })
+        async with db_controller.get_session() as session:
+            stmt = select(NotificationModel).where(NotificationModel.username == username)
+            stmt = stmt.order_by(NotificationModel.timestamp.desc())
+            result = await session.execute(stmt)
+            notifications = result.scalars().all()
             
-        return result
+            result_list = []
+            for n in notifications:
+                result_list.append({
+                    "id": n.id,
+                    "heading": n.heading,
+                    "icon": {
+                        "name": n.icon_name,
+                        "color": n.icon_color
+                    },
+                    "timestamp": n.timestamp,
+                    "title": n.title,
+                    "subtitle": n.subtitle,
+                    "path": n.path,
+                    "details": n.details
+                })
+            
+            return result_list
     except Exception as e:
         logger.error(f"Error fetching notifications: {e}")
         return []
@@ -110,8 +100,20 @@ async def add_notification(notification: Notification, current_user: dict = Depe
     # Flatten icon for DB
     # data["icon_name"] = ... (already in model)
     
+    
     try:
-        await db.insert_db("notifications", data)
+        await db_controller.create(NotificationModel, {
+            "username": username,
+            "title": data.get("title"),
+            "subtitle": data.get("subtitle"),
+            "heading": data.get("heading"),
+            "path": data.get("path"),
+            "icon_name": data.get("icon_name"),
+            "icon_color": data.get("icon_color"),
+            "details": data.get("details"),
+            "is_read": data.get("is_read", False)
+        })
+            
         # Return updated list
         return await get_notifications(current_user)
     except Exception as e:
@@ -128,7 +130,8 @@ async def delete_notification(payload: dict, current_user: dict = Depends(get_cu
         raise HTTPException(status_code=400, detail="Missing notification ID")
 
     try:
-        await db.delete_db("notifications", {"id": notification_id})
+        await db_controller.delete(NotificationModel, {"id": notification_id})
+            
         return await get_notifications(current_user)
     except Exception as e:
         logger.error(f"Error deleting notification: {e}")
@@ -141,9 +144,8 @@ async def delete_all_notifications(current_user: dict = Depends(get_current_user
     """
     username = current_user.get("username")
     try:
-        await db.delete_db("notifications", {"username": username})
+        await db_controller.delete(NotificationModel, {"username": username})
         return []
     except Exception as e:
-        # delete_db might raise error if no records found, which is fine
-        logger.warning(f"Error deleting all notifications (might be empty): {e}")
+        logger.error(f"Error deleting all notifications: {e}")
         return []

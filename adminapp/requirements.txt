@@ -16,3 +16,4 @@ google-generativeai
 openai
 redis
 pillow
+sqlalchemy

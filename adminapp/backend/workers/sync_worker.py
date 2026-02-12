@@ -1,9 +1,13 @@
 import asyncio
 import pandas as pd
+
 from backend.services.db_user import DBUser
 from backend.services.getSe2data import get_se2_data
 from backend.services.log_manager import Logger
 from backend.services.redis_client import RedisClient
+from backend.repository.db_controller import db_controller
+from backend.repository.models import SendTask
+
 
 logger = Logger().get_logger()
 
@@ -23,8 +27,8 @@ class SyncWorker:
         while self.running:
             try:
                 # 獲取所有 active tasks
-                active_tasks = await self.db_user.db.get_db("sendtasks", select_columns=["sendtask_uuid"], where_clauses=["is_archived = FALSE"])
-                uuids = [t["sendtask_uuid"] for t in active_tasks]
+                tasks = await db_controller.get(SendTask, {"is_archived": False})
+                uuids = [t.sendtask_uuid for t in tasks]
                 
                 if uuids:
                     logger.info(f"SyncWorker checking {len(uuids)} active tasks...")

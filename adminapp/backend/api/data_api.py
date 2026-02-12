@@ -19,6 +19,10 @@ from datetime import datetime, timedelta
 import zipfile
 import urllib.parse
 
+from sqlalchemy import select, update, delete, func, desc, asc, text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from backend.repository.db_controller import db_controller
+from backend.repository.models import SendTask, Mtmpl, Notification, SendLogStats, SendLogDetail, CustomerAcct
 from backend.services.log_manager import Logger
 from backend.services.getSe2data import get_se2_data
 from backend.services.time_utils import format_datetime
@@ -86,10 +90,9 @@ def process_data_for_excel(data: List[dict]) -> List[dict]:
         processed_data.append(processed_row)
     return processed_data
 
-def get_router(db, db_user):
+def get_router(db_user):
     """
     初始化路由
-    :param db: 資料庫實例
     :param db_user: 資料庫運用實例
     :return: APIRouter 實例
     """
@@ -100,7 +103,7 @@ def get_router(db, db_user):
     async def refresh_and_notify(refresh_list: list, username: str):
         await db_user.refresh_sendlog_stats(refresh_list)
         # Add notification
-        await db.insert_db("notifications", {
+        await db_controller.create(Notification, {
             "username": username,
             "title": "統計資料刷新完成",
             "subtitle": f"已刷新 {len(refresh_list)} 個任務",
@@ -120,7 +123,14 @@ def get_router(db, db_user):
         )
     async def get_sendtasks(request: OrgsRequest):
         try:
-            my_tasksname_list = await db.get_db("sendtasks")
+            tasks = await db_controller.get(SendTask)
+            
+            # Convert to list of dicts
+            my_tasksname_list = []
+            for t in tasks:
+                # Manually convert or use a helper
+                my_tasksname_list.append({c.name: getattr(t, c.name) for c in t.__table__.columns})
+
             if request.orgs and request.orgs != ["admin"]:
                 my_tasksname_list = [
                     task for task in my_tasksname_list
@@ -143,12 +153,23 @@ def get_router(db, db_user):
         3. 新增及刪除到sendtask資料庫
         """
         try:
+            if request.orgs and request.orgs != ["admin"]:
+                sendtasks_columns = None # get_se2_sendtasks handles this inside or we filter after
+            
+            # get_se2_sendtasks implementation in db_user might need to be checked if it supports column_names
+            # It seems it does.
             sendtasks_columns = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "person_count",
                                 "pre_test_end_ut", "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", 
                                 "test_end_ut", "test_start_ut", "is_pause", "pre_test_enable", "stop_time_new"]
+            
             all_tasksname_list = await db_user.get_se2_sendtasks(column_names=sendtasks_columns)
 
-            my_tasksname_list = await db.get_db("sendtasks", select_columns=sendtasks_columns)
+            tasks = await db_controller.get(SendTask)
+            my_tasksname_list = []
+            for t in tasks:
+                # Filter attributes to match sendtasks_columns for consistent diff
+                t_dict = {c: getattr(t, c) for c in sendtasks_columns if hasattr(t, c)}
+                my_tasksname_list.append(t_dict)
 
             if request.orgs and request.orgs != ["admin"]:
                 all_tasksname_list = [
@@ -173,14 +194,15 @@ def get_router(db, db_user):
             sendlog_stats_status = {}
             # 新增
             if added_list:
-                refresh_list = []    
-                for task in added_list:
-                    status = await db.upsert_db(
-                        table_name="sendtasks", 
-                        data=task, 
-                        conflict_keys=["sendtask_uuid"])
-                    if status == "changed":
-                        refresh_list.append(task["sendtask_uuid"])
+                refresh_list = []
+            if added_list:
+                refresh_list = [task["sendtask_uuid"] for task in added_list]
+                await db_controller.upsert(
+                    SendTask,
+                    added_list,
+                    index_elements=['sendtask_uuid']
+                )
+
                 sendlog_stats_status = await db_user.refresh_sendlog_stats(refresh_list)
 
             # 處理移除或封存
@@ -192,12 +214,12 @@ def get_router(db, db_user):
                 
                 if data and data.get("error", {}).get("code") == 404:
                     # sendtasks刪除資料
-                    await db.delete_db(table_name="sendtasks", condition={"sendtask_uuid": uuid})
+                    await db_controller.delete(SendTask, {"sendtask_uuid": uuid})
                     # sendlog_stats 刪除資料
-                    await db.delete_db(table_name="sendlog_stats", condition={"sendtask_uuid": uuid})
+                    await db_controller.delete(SendLogStats, {"sendtask_uuid": uuid})
                 else:
                     # 僅封存，不刪除
-                    await db.update_db("sendtasks", {"is_archived": True}, {"sendtask_uuid": uuid})
+                    await db_controller.update(SendTask, {"sendtask_uuid": uuid}, {"is_archived": True})
 
             data = {"added": added_list, "removed": removed_list, "sendlog_stats_status": sendlog_stats_status}
             return {"status": "success", "data": data}
@@ -229,13 +251,13 @@ def get_router(db, db_user):
             logger.warning(f"today create task list is empty.")
             return {"status": "success", "data": []}
         
-        refresh_list = []
-        for task in today_create_task_list:
-            status = await db.upsert_db(
-                table_name="sendtasks", 
-                data=task, 
-                conflict_keys=["sendtask_uuid"])
-            refresh_list.append(task["sendtask_uuid"])
+        
+        refresh_list = [task["sendtask_uuid"] for task in today_create_task_list]
+        await db_controller.upsert(
+            SendTask,
+            today_create_task_list,
+            index_elements=['sendtask_uuid']
+        )
 
         sendlog_stats_status = await db_user.refresh_sendlog_stats(refresh_list)
 
@@ -258,7 +280,12 @@ def get_router(db, db_user):
             return {"status": "error", "message": "未收到sendtask_uuid"}
 
         try:
-            data = await db.get_db("sendtasks", where_column="sendtask_uuid", values=sendtask_uuids)
+            # Use filters dict usually for equals, but for IN clause we need special handling or get_session
+            # DBController.get currently only supports simple equality filters or list for IN clause
+            # filters={'sendtask_uuid': sendtask_uuids} will generate IN clause
+            
+            rows = await db_controller.get(SendTask, filters={"sendtask_uuid": sendtask_uuids})
+            data = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in rows]
             return {"status": "success", "data": data}
         except Exception as e:
             logger.error(f"Error in customer_get_sendtasks: {str(e)}")
@@ -312,11 +339,9 @@ def get_router(db, db_user):
             sendtask_uuids = request.sendtask_uuids
             if not sendtask_uuids:
                 return {"status": "error", "message": "沒有收到 sendtask_uuids", "data": []}
-            rows = await db.get_db(
-                table_name="sendlog_stats", 
-                where_column="sendtask_uuid",
-                values=sendtask_uuids
-            )
+            
+            rows_obj = await db_controller.get(SendLogStats, filters={"sendtask_uuid": sendtask_uuids})
+            rows = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in rows_obj]
             return {"status": "success", "data": rows}
         except Exception as e:
             logger.error(f"Error in get_sendlog_stats_batch: {str(e)}")
@@ -345,113 +370,119 @@ def get_router(db, db_user):
         if not request.sendtask_uuid:
             raise ValueError("沒有收到 sendtask_uuid")
 
-        where_clauses = ["sendtask_uuid = $1"]
-        params = [request.sendtask_uuid]
-        param_idx = 2
+        # Start building the query
+        stmt = select(SendLogDetail).where(SendLogDetail.sendtask_uuid == request.sendtask_uuid)
 
         # 搜尋文字
         if request.searchText:
-            where_clauses.append(f"(target_email ILIKE ${param_idx} OR person_info ILIKE ${param_idx})")
-            params.append(f"%{request.searchText}%")
-            param_idx += 1
+            search_text = f"%{request.searchText}%"
+            stmt = stmt.where(
+                (SendLogDetail.target_email.ilike(search_text)) | 
+                (SendLogDetail.person_info.ilike(search_text))
+            )
 
         # 日期範圍篩選 (send_time)
         if request.dateFrom:
             try:
                 start_date = datetime.strptime(request.dateFrom, "%Y-%m-%d")
                 start_timestamp = int(start_date.timestamp())
-                where_clauses.append(f"send_time >= ${param_idx}")
-                params.append(start_timestamp)
-                param_idx += 1
+                stmt = stmt.where(SendLogDetail.send_time >= start_timestamp)
             except ValueError:
-                pass  # 忽略無效的日期格式
+                pass
 
         if request.dateTo:
             try:
                 end_date = datetime.strptime(request.dateTo, "%Y-%m-%d")
-                # 包含結束日期的整天，所以設定到當天的 23:59:59
                 end_timestamp = int((end_date + timedelta(days=1)).timestamp()) - 1
-                where_clauses.append(f"send_time <= ${param_idx}")
-                params.append(end_timestamp)
-                param_idx += 1
+                stmt = stmt.where(SendLogDetail.send_time <= end_timestamp)
             except ValueError:
-                pass # 忽略無效的日期格式
-
+                pass
         
         # 寄送狀態
         isSend, isFailed, isNotyet, isNotTriggered, isTriggered = request.acctControl
-        sent_base = "send_time IS NOT NULL AND send_time > 0"
-        sent_success = "send_res IS NOT NULL AND send_res ILIKE '%True%'"
-        sent_failure = "send_res IS NOT NULL AND send_res ILIKE '%False%'"
-        not_sent = "send_time IS NULL OR send_time = 0"
+        
+        # Define conditions
+        sent_base = (SendLogDetail.send_time.isnot(None)) & (SendLogDetail.send_time > 0)
+        sent_success = SendLogDetail.send_res.ilike('%True%')
+        sent_failure = SendLogDetail.send_res.ilike('%False%')
+        not_sent = (SendLogDetail.send_time.is_(None)) | (SendLogDetail.send_time == 0)
 
-        not_triggered_cond = "array_length(access_time, 1) IS NULL AND array_length(access_src, 1) IS NULL AND array_length(access_dev, 1) IS NULL"
-        triggered_cond = "array_length(access_time, 1) > 0 OR array_length(access_src, 1) > 0 OR array_length(access_dev, 1) > 0"
+        # Array length checks for triggered/not triggered
+        # func.array_length requires (array, dimension)
+        # We check if array_length > 0 or array_length IS NULL
+        
+        has_access = func.array_length(SendLogDetail.access_time, 1) > 0
+        has_src = func.array_length(SendLogDetail.access_src, 1) > 0
+        has_dev = func.array_length(SendLogDetail.access_dev, 1) > 0
+        
+        triggered_cond = has_access | has_src | has_dev
+        not_triggered_cond = (~has_access | func.array_length(SendLogDetail.access_time, 1).is_(None)) & \
+                             (~has_src | func.array_length(SendLogDetail.access_src, 1).is_(None)) & \
+                             (~has_dev | func.array_length(SendLogDetail.access_dev, 1).is_(None))
+
 
         if request.resultType == 'all':
-            
             if isSend and isFailed and isNotyet and isNotTriggered and isTriggered:
                 pass
             elif not isSend and not isFailed and not isNotyet and not isNotTriggered and not isTriggered:
-                where_clauses.append("(1=0)")
+                stmt = stmt.where(text("1=0")) # No results
             else:
-                all_clauses = []
+                conditions = []
                 if isFailed:
-                    all_clauses.append(f"({sent_base} AND {sent_failure})")
+                    conditions.append(sent_base & sent_failure)
                 if isNotyet:
-                    all_clauses.append(f"({not_sent})")
+                    conditions.append(not_sent)
                 if isSend:
                     if isNotTriggered and not isTriggered:
-                        all_clauses.append(f"({sent_base} AND {sent_success} AND {not_triggered_cond})")
+                        conditions.append(sent_base & sent_success & not_triggered_cond)
                     elif not isNotTriggered and isTriggered:
-                        all_clauses.append(f"({triggered_cond})")
+                        conditions.append(triggered_cond)
                     else:
-                        all_clauses.append(f"({sent_base} AND {sent_success})")
-                where_clauses.append(" OR ".join(all_clauses))
+                        conditions.append(sent_base & sent_success)
+                
+                if conditions:
+                    from sqlalchemy import or_
+                    stmt = stmt.where(or_(*conditions))
 
         elif request.resultType == 'send':
-            where_clauses.append(f"({sent_base} AND {sent_success})")
+            stmt = stmt.where(sent_base & sent_success)
         elif request.resultType == 'notyet':
-            where_clauses.append(f"({not_sent})")
+            stmt = stmt.where(not_sent)
         elif request.resultType == 'failed':
-            where_clauses.append(f"({sent_base} AND {sent_failure})")
+            stmt = stmt.where(sent_base & sent_failure)
         elif request.resultType == 'notTriggered':
-            where_clauses.append(f"({sent_base} AND {sent_success} AND {not_triggered_cond})")
+            stmt = stmt.where(sent_base & sent_success & not_triggered_cond)
         elif request.resultType == 'triggered':
-            where_clauses.append(f"({triggered_cond})")
+            stmt = stmt.where(triggered_cond)
 
         # 行為過濾
         if request.showAccessed:
-            where_clauses.append("array_length(access_time, 1) > 0")
+            stmt = stmt.where(func.array_length(SendLogDetail.access_time, 1) > 0)
         if request.showClicked:
-            where_clauses.append("array_length(click_time, 1) > 0")
+            stmt = stmt.where(func.array_length(SendLogDetail.click_time, 1) > 0)
         if request.showFiled:
-            where_clauses.append("array_length(file_time, 1) > 0")
+            stmt = stmt.where(func.array_length(SendLogDetail.file_time, 1) > 0)
 
         # 排序
-        sort_map = {
-            "target_email": "target_email",
-            "plan_time": "plan_time",
-            "send_time": "send_time",
-            "person_info": "person_info"
-        }
-        sort = {
-            "asc": "ASC",
-            "desc": "DESC"
-        }
-        order_by = f"{sort_map.get(request.sortBy, "plan_time DESC")} {sort.get(request.sort, "DESC")}"
+        sort_column = getattr(SendLogDetail, request.sortBy, SendLogDetail.plan_time)
+        if request.sort == "asc":
+            stmt = stmt.order_by(asc(sort_column))
+        else:
+            stmt = stmt.order_by(desc(sort_column))
 
-        result = await db.get_paginated_db(
-            table_name="send_log_details",
-            paginate=request.paginate,
-            page=request.page,
-            rows_per_page=request.rowsPerPage,
-            where_clauses=where_clauses,
-            params=params,
-            order_by=order_by
-        )
+        # Pagination
+        # Get total count first
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total_counts = await db_controller.execute_scalars(count_stmt)
+        total_count = total_counts[0] if total_counts else 0
 
-        # 處理觸發紀錄，只留最後一筆
+        if request.paginate:
+            stmt = stmt.offset((request.page - 1) * request.rowsPerPage).limit(request.rowsPerPage)
+
+        rows = await db_controller.execute_scalars(stmt)
+            
+        # Convert to dicts
+        data = []
         trigger_columns = ["access_time", "access_src", "access_dev",
                             "click_time", "click_src", "click_dev", 
                             "file_time", "file_src", "file_dev",
@@ -459,12 +490,17 @@ def get_router(db, db_user):
                             "second_qrcode_time", "second_qrcode_src", "second_qrcode_dev",
                             "second_input_time", "second_input_src", 
                             "second_input_dev", "second_input_info"]
-        for data in result["data"]:
+        
+        for row in rows:
+            item = {c.name: getattr(row, c.name) for c in row.__table__.columns}
+            
+            # 處理觸發紀錄，只留最後一筆
             for col in trigger_columns:
-                if col in data and isinstance(data[col], list):
-                    data[col] = data[col][-1] if data[col] else None
+                if col in item and isinstance(item[col], list):
+                    item[col] = item[col][-1] if item[col] else None
+            data.append(item)
 
-        return result
+        return {"data": data, "total_count": total_count}
 
     @router.post(
         "/get_sendlog_detail",
@@ -496,17 +532,10 @@ def get_router(db, db_user):
     @router.post("/download_sendlog_xlsx")
     async def api_download_sendlog_xlsx(request: DownloadRequest):
         
-        await db.check_db_connection()
-        
         try:
             # --- A. 獲取資料 (簡化邏輯) ---
-            # 直接使用你 db_controller.py 中的 get_db 函式
-            
-            data = await db.get_db(
-                table_name="send_log_details",
-                where_column="sendtask_uuid",
-                values=request.sendtask_uuid
-            )
+            rows = await db_controller.get(SendLogDetail, filters={"sendtask_uuid": request.sendtask_uuid})
+            data = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in rows]
 
             if not data:
                 return StreamingResponse(
@@ -518,18 +547,21 @@ def get_router(db, db_user):
             # --- B. 處理資料 (使用我們提煉的函式) ---
             processed_data = process_data_for_excel(data)
 
-            mtmpl_list = await db.get_db(
-                table_name="mtmpl",
-                select_columns=["mtmpl_uuid", "mtmpl_title"]
-            )
+            # Get templates
+            mtmpl_models = await db_controller.get(Mtmpl)
+            mtmpl_list = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in mtmpl_models]
 
             for data in processed_data:
-                del data["uuid"]
+                # data is a dict here from process_data_for_excel
+                # remove uuid if present
+                if "uuid" in data:
+                    del data["uuid"]
                 data["mtmpl_name"] = ""
                 for mtmpl in mtmpl_list:
                     if mtmpl.get("mtmpl_uuid") == data.get("template_uuid"):
                         data["mtmpl_name"] = mtmpl.get("mtmpl_title", "")
-                        del data["template_uuid"]
+                        if "template_uuid" in data:
+                            del data["template_uuid"]
                         break
                 for col_name, value in data.items():
                     if isinstance(value, list) and value:
@@ -539,7 +571,8 @@ def get_router(db, db_user):
                         
             # --- C. 轉換為 Pandas 並存入記憶體 ---
             df = pd.DataFrame(processed_data)
-
+            
+            # ... (Rename logic same as before) ...
             # 重新命名欄位，讓 Excel 標頭更易讀
             df.rename(columns={
                 'target_email': '受測人信箱',
@@ -635,11 +668,8 @@ def get_router(db, db_user):
         """
         try:
             if request.selected_uuids:
-                all_data = await db.get_db(
-                    table_name="send_log_details",
-                    where_column="uuid",
-                    values=request.selected_uuids
-                )
+                rows = await db_controller.get(SendLogDetail, filters={"uuid": request.selected_uuids})
+                all_data = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in rows]
             else:
                 result = await _query_sendlog_details(request)
                 all_data = result.get('data', [])
@@ -655,12 +685,13 @@ def get_router(db, db_user):
                 for col in timestamp_columns:
                     if col in data:
                         data[col] = format_datetime(data.get(col))
-                mtmpl_name = await db.get_db(
-                    table_name="mtmpl",
-                    where_column="mtmpl_uuid",
-                    values=[data.get("template_uuid", "")]
-                )
-                data["mtmpl_name"] = mtmpl_name[0].get("mtmpl_title", "")
+                mtmpl_name = []
+                mtmpl_name = []
+                mtmpl = await db_controller.get_one(Mtmpl, {"mtmpl_uuid": data.get("template_uuid", "")})
+                if mtmpl:
+                    mtmpl_name.append(mtmpl)
+                
+                data["mtmpl_name"] = mtmpl_name[0].mtmpl_title if mtmpl_name else ""
 
                 final_columns = ["target_email", "person_info", "mtmpl_name", "plan_time",
                                 "send_time", "send_res", "access_time", "access_src", "access_dev",
@@ -705,7 +736,9 @@ def get_router(db, db_user):
         1. GET /get_mtmpl
         """
         try:
-            mtmpl_data = await db.get_db(table_name="mtmpl")
+            rows = await db_controller.get(Mtmpl)
+            mtmpl_data = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in rows]
+                
             return {"status": "success", "data": mtmpl_data}
         except Exception as e:
             logger.error(f"Error in get_mtmpl: {str(e)}")
@@ -728,7 +761,8 @@ def get_router(db, db_user):
                 return {"status": "error", "message": "從 SE2 獲取郵件樣板失敗"}
 
             # 2. 從本地資料庫獲取現有資料
-            local_mtmpl_list = await db.get_db("mtmpl")
+            local_mtmpls = await db_controller.get(Mtmpl)
+            local_mtmpl_list = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in local_mtmpls]
 
             # 3. 準備比對用的集合 (使用 mtmpl_uuid 作為唯一鍵)
             se2_uuids = {item['mtmpl_uuid']: item for item in se2_mtmpl_list}
@@ -741,19 +775,23 @@ def get_router(db, db_user):
             added_list = [se2_uuids[uuid] for uuid in added_uuids]
             removed_list = [local_uuids[uuid] for uuid in removed_uuids]
 
-            # 5. 執行更新
-            # 新增樣板
+            # 5. 更新資料庫
             if added_list:
+                # Prepare data
+                valid_keys = {"mtmpl_uuid", "mtmpl_title", "create_time"}
+                clean_added_list = []
                 for item in added_list:
-                    await db.insert_db("mtmpl", item)
+                    clean_item = {k: v for k, v in item.items() if k in valid_keys}
+                    clean_added_list.append(clean_item)
+                
+                await db_controller.batch_create(Mtmpl, clean_added_list)
                 logger.info(f"Added {len(added_list)} new mail templates.")
 
-            # 刪除樣板
             if removed_list:
                 for item in removed_list:
-                    await db.delete_db("mtmpl", {"mtmpl_uuid": item["mtmpl_uuid"]})
+                    await db_controller.delete(Mtmpl, {"mtmpl_uuid": item["mtmpl_uuid"]})
                 logger.info(f"Removed {len(removed_list)} old mail templates.")
-
+            
             # 6. 回傳結果
             return {
                 "status": "success",
@@ -837,12 +875,9 @@ def get_router(db, db_user):
         if not acct_uuid:
             return {"status": "error", "message": "沒有收到 acct_uuid"}
         try:
-            customers = await db.get_db(
-                table_name="customer_accts", 
-                where_column="acct_uuid", 
-                values=[acct_uuid]
-            )
-            return {"status": "success", "data": customers}
+            customers = await db_controller.get(CustomerAcct, {"acct_uuid": acct_uuid})
+            data = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in customers]
+            return {"status": "success", "data": data}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
@@ -942,8 +977,7 @@ def get_router(db, db_user):
         if not del_customer_names:
             return {"status": "error", "message": "沒有收到資料"}
         try:
-            for name in del_customer_names:
-                await db.delete_db("customer_accts", condition={"customer_name": name})
+            await db_controller.delete(CustomerAcct, {"customer_name": del_customer_names})
             return {"status": "success", "message": del_customer_names}
         except Exception as e:
             return {"status": "error", "message": str(e)}
@@ -962,9 +996,11 @@ def get_router(db, db_user):
         uuid = request.uuid
         try:
             # 刪除 sendtasks 資料
-            await db.delete_db(table_name="sendtasks", condition={"sendtask_uuid": uuid})
+            await db_controller.delete(SendTask, {"sendtask_uuid": uuid})
             # 刪除 sendlog_stats 資料
-            await db.delete_db(table_name="sendlog_stats", condition={"sendtask_uuid": uuid})
+            await db_controller.delete(SendLogStats, {"sendtask_uuid": uuid})
+            # 刪除 send_log_details 資料
+            await db_controller.delete(SendLogDetail, {"sendtask_uuid": uuid})
             
             return {"status": "success", "message": "任務已刪除"}
         except Exception as e:
@@ -997,23 +1033,17 @@ def get_router(db, db_user):
         if not customer_name or not old_password or not new_password:
             return {"status": "error", "message": "沒有收到資料"}
         try:
-            # 驗證舊密碼
-            customer_info = await db.get_db(
-                table_name="customer_accts", 
-                where_column="customer_name", 
-                values=[customer_name]
+            # 使用 db_user 統一的 update_password 方法
+            result = await db_user.update_password(
+                user_type="customer",
+                identifier=customer_name,
+                new_password=new_password,
+                old_password=old_password
             )
-            if not customer_info or not verify_password(old_password, customer_info[0]["password_hash"]):
-                return {"status": "error", "message": "舊密碼錯誤"}
-
-            # 更新新密碼
-            new_password_hash = hash_password(new_password)
-            await db.update_db(
-                table_name="customer_accts", 
-                condition={"customer_name": customer_name}, 
-                data={"password_hash": new_password_hash}
-            )
-            return {"status": "success", "message": "密碼更新成功"}
+            if result["status"] == "success":
+                return {"status": "success", "message": "密碼更新成功"}
+            else:
+                 return {"status": "error", "message": result["message"]}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 

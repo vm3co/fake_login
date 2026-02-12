@@ -25,7 +25,9 @@ import io
 from PIL import Image
 
 from backend.services.log_manager import Logger
-from backend.repository.db_controller import ApplianceDB
+from backend.repository.models import TriggerPage
+from backend.repository.db_controller import db_controller
+from sqlalchemy import select, update, delete, insert
 from backend.services.db_user import DBUser
 from backend.api.user_api import get_current_user
 
@@ -34,7 +36,7 @@ logger = Logger().get_logger()
 # --- 路徑設定 ---
 
 # 容器內的程式根目錄
-BASE_DIR = Path("/app")
+BASE_DIR = Path(os.getenv("APP_BASE_DIR", "/app"))
 
 # 檔案上傳的目的地 (對應到 loginapp/templates)
 UPLOAD_DIR = BASE_DIR / "uploads_for_trigger_app_templates" 
@@ -58,29 +60,27 @@ def validate_page_value(pageValue: str = Form(...)):
 
 # --- 3. API 端點 ---
 
-def get_router(db: ApplianceDB, db_user: DBUser):
+def get_router(db_user: DBUser):
 
     router = APIRouter()
 
     # 初始化預設頁面
     async def init_defaults():
         defaults = ["test", "modern", "google", "onedrive"]
-        await db.check_db_connection()
         
         for val in defaults:
-            # 檢查是否已存在
-            exists = await db.get_db("trigger_pages", where_column="page_value", values=val)
+            # Check if exists
+            exists = await db_controller.get_one(TriggerPage, {"page_value": val})
+            
             if not exists:
                 logger.info(f"初始化預設頁面: {val}")
                 try:
-                    await db.insert_db("trigger_pages", {
+                    await db_controller.create(TriggerPage, {
                         "page_value": val,
-                        "page_label": val, # 預設 label 同 value
-                        "owner_uuid": None, # 系統頁面
+                        "page_label": val,
+                        "owner_uuid": None,
                         "page_type": "system"
                     })
-                    # 確保檔案存在 (如果沒有，可能需要從哪裡複製? 這裡假設使用者會手動放，或者是空的)
-                    # 這裡僅確保 DB 條目存在
                 except Exception as e:
                     logger.error(f"初始化頁面 {val} 失敗: {e}")
 
@@ -102,30 +102,24 @@ def get_router(db: ApplianceDB, db_user: DBUser):
         """
         # 這裡順便做一次初始化檢查 (雖然有點髒，但確保無痛遷移)
         # 更好的做法是在 main.py lifespan 中做
-        defaults = ["test", "google", "onedrive"]
+        defaults = ["test", "google", "onedrive", "modern"]
         for val in defaults:
-             exists = await db.get_db("trigger_pages", where_column="page_value", values=val)
-             if not exists:
-                await db.insert_db("trigger_pages", {
-                    "page_value": val,
-                    "page_label": val.capitalize(),
-                    "owner_uuid": None,
-                    "page_type": "system"
-                })
+                exists = await db_controller.get_one(TriggerPage, {"page_value": val})
+                
+                if not exists:
+                   await db_controller.create(TriggerPage, {
+                       "page_value": val,
+                       "page_label": val.capitalize(),
+                       "owner_uuid": None,
+                       "page_type": "system"
+                   })
 
         # 查詢所有頁面
-        # 我們讓所有登入者都能看到所有頁面 (包括別人的)，但前端會根據 owner_uuid 決定能不能改
-        # 查詢所有頁面
-        rows = await db.get_db(
-            "trigger_pages", 
-            select_columns=["page_value", "page_label", "owner_uuid", "create_time"],
-            order_by="create_time DESC"
-        )
-
+        rows = await db_controller.get(TriggerPage, order_by=TriggerPage.create_time.desc())
 
         # 轉換格式以符合前端需求
         data = [
-            {"value": row["page_value"], "label": row["page_label"], "owner": row["owner_uuid"]}
+            {"value": row.page_value, "label": row.page_label, "owner": row.owner_uuid}
             for row in rows
         ]
         
@@ -192,7 +186,8 @@ def get_router(db: ApplianceDB, db_user: DBUser):
         user_uuid = current_user.get("acct_uuid")
         
         # 檢查是否已存在 (Global Check)
-        exists = await db.get_db("trigger_pages", where_column="page_value", values=pageValue)
+        exists = await db_controller.get_one(TriggerPage, {"page_value": pageValue})
+        
         if exists:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -217,13 +212,12 @@ def get_router(db: ApplianceDB, db_user: DBUser):
 
         # --- 任務 2: 將資料新增到 DB ---
         try:
-            new_page_data = {
+            await db_controller.create(TriggerPage, {
                 "page_value": pageValue,
                 "page_label": pageLabel,
                 "owner_uuid": user_uuid,
                 "page_type": "custom"
-            }
-            await db.insert_db("trigger_pages", new_page_data)
+            })
         except Exception as e:
             # [復原] 如果 DB 操作失敗，刪除剛剛上傳的檔案
             if save_path.exists():
@@ -254,26 +248,23 @@ def get_router(db: ApplianceDB, db_user: DBUser):
         user_type = current_user.get("user_type")
         
         # 權限檢查: 找出舊頁面
-        old_page_list = await db.get_db("trigger_pages", where_column="page_value", values=oldPageValue)
-        if not old_page_list:
-            raise HTTPException(status_code=404, detail="找不到欲修改的頁面")
-        old_page = old_page_list[0]
+        old_page = await db_controller.get_one(TriggerPage, {"page_value": oldPageValue})
         
+        if not old_page:
+            raise HTTPException(status_code=404, detail="找不到欲修改的頁面")
+    
         # 權限邏輯
-        # 1. 如果是系統頁面 (owner_uuid is None) -> 絕對禁止修改
-        if old_page["owner_uuid"] is None:
+        if old_page.owner_uuid is None:
             raise HTTPException(status_code=403, detail="系統預設頁面無法修改")
             
-        # 2. 如果是 Admin -> 允許
-        # 3. 如果是 Owner -> 允許
-        if user_type != "admin" and old_page["owner_uuid"] != user_uuid:
-             raise HTTPException(status_code=403, detail="您沒有權限修改此頁面")
+        if user_type != "admin" and old_page.owner_uuid != user_uuid:
+                raise HTTPException(status_code=403, detail="您沒有權限修改此頁面")
 
         is_value_changing = (pageValue != oldPageValue)
 
         # 如果改了 pageValue，檢查新 value 是否衝突
         if is_value_changing:
-            conflict_check = await db.get_db("trigger_pages", where_column="page_value", values=pageValue)
+            conflict_check = await db_controller.get_one(TriggerPage, {"page_value": pageValue})
             if conflict_check:
                 raise HTTPException(status_code=409, detail=f"網址 ID '{pageValue}' 已被使用")
 
@@ -309,11 +300,10 @@ def get_router(db: ApplianceDB, db_user: DBUser):
 
         # --- DB 更新 ---
         try:
-            update_data = {
+            await db_controller.update(TriggerPage, {"id": old_page.id}, {
                 "page_label": pageLabel,
                 "page_value": pageValue
-            }
-            await db.update_db("trigger_pages", update_data, condition={"id": old_page["id"]})
+            })
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"資料庫更新失敗: {str(e)}")
 
@@ -334,22 +324,21 @@ def get_router(db: ApplianceDB, db_user: DBUser):
         user_type = current_user.get("user_type")
         
         # 查詢頁面
-        page_list = await db.get_db("trigger_pages", where_column="page_value", values=pageValue)
-        if not page_list:
+        page = await db_controller.get_one(TriggerPage, {"page_value": pageValue})
+        
+        if not page:
             raise HTTPException(status_code=404, detail="找不到頁面")
         
-        page = page_list[0]
-        
         # 權限邏輯
-        if page["owner_uuid"] is None:
+        if page.owner_uuid is None:
             raise HTTPException(status_code=403, detail="系統預設頁面無法刪除")
             
-        if user_type != "admin" and page["owner_uuid"] != user_uuid:
+        if user_type != "admin" and page.owner_uuid != user_uuid:
             raise HTTPException(status_code=403, detail="您沒有權限刪除此頁面")
 
         # --- 刪除 DB ---
         try:
-            await db.delete_db("trigger_pages", condition={"id": page["id"]})
+            await db_controller.delete(TriggerPage, {"id": page.id})
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"資料庫刪除失敗: {str(e)}")
 
@@ -394,7 +383,8 @@ def get_router(db: ApplianceDB, db_user: DBUser):
         user_uuid = current_user.get("acct_uuid")
 
         # 檢查重複
-        exists = await db.get_db("trigger_pages", where_column="page_value", values=pageValue)
+        exists = await db_controller.get_one(TriggerPage, {"page_value": pageValue})
+             
         if exists:
             raise HTTPException(status_code=409, detail=f"網址 ID '{pageValue}' 已存在")
 
@@ -403,244 +393,246 @@ def get_router(db: ApplianceDB, db_user: DBUser):
         # --- 1. 準備 HTML 內容 ---
         
         # 經典版型 (Test.html based)
-        CLASSIC_PAGE_TEMPLATE = """<!DOCTYPE html>
-<html lang="zh-Hant">
-  <head>
-    <meta charset="UTF-8" />
-    <title>{title}</title>
-    <style>
-      body {{
-        font-family: sans-serif;
-        background-color: {bg_color};
-        background-image: {bg_image_css};
-        background-size: cover;
-        background-position: center;
-        background-repeat: no-repeat;
-        display: flex;
-        justify-content: center;
-        align-items: center;
-        height: 100vh;
-        margin: 0;
-      }}
-      .login-box {{
-        background: white;
-        padding: 2rem;
-        border-radius: 10px;
-        box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
-        width: 300px;
-        opacity: 0.95; /* 稍微透明一點以免遮擋背景太死 */
-      }}
-      input[type="{mail_type}"] {{
-        width: 100%;
-        padding: 10px;
-        margin-top: 10px;
-        margin-bottom: 20px;
-        border: 1px solid #ccc;
-        border-radius: 5px;
-        box-sizing: border-box; /* 確保 padding 不會撐開寬度 */
-      }}
-      button {{
-        width: 100%;
-        padding: 10px;
-        background-color: #4caf50;
-        color: white;
-        border: none;
-        border-radius: 5px;
-        cursor: pointer;
-      }}
-      button:hover {{
-        background-color: #45a049;
-      }}
-    </style>
-  </head>
-  <body>
-    <div class="login-box">
-      <h2>{form_title}</h2>
-      <form id="login-form">
-        <label for="email">{input_label}</label>
-        <input type="{mail_type}" id="{mail_type}" required />
-        <button type="submit">{btn_text}</button>
-      </form>
-    </div>
+        CLASSIC_PAGE_TEMPLATE = """
+            <!DOCTYPE html>
+            <html lang="zh-Hant">
+            <head>
+                <meta charset="UTF-8" />
+                <title>{title}</title>
+                <style>
+                body {{
+                    font-family: sans-serif;
+                    background-color: {bg_color};
+                    background-image: {bg_image_css};
+                    background-size: cover;
+                    background-position: center;
+                    background-repeat: no-repeat;
+                    display: flex;
+                    justify-content: center;
+                    align-items: center;
+                    height: 100vh;
+                    margin: 0;
+                }}
+                .login-box {{
+                    background: white;
+                    padding: 2rem;
+                    border-radius: 10px;
+                    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.1);
+                    width: 300px;
+                    opacity: 0.95; /* 稍微透明一點以免遮擋背景太死 */
+                }}
+                input[type="{mail_type}"] {{
+                    width: 100%;
+                    padding: 10px;
+                    margin-top: 10px;
+                    margin-bottom: 20px;
+                    border: 1px solid #ccc;
+                    border-radius: 5px;
+                    box-sizing: border-box; /* 確保 padding 不會撐開寬度 */
+                }}
+                button {{
+                    width: 100%;
+                    padding: 10px;
+                    background-color: #4caf50;
+                    color: white;
+                    border: none;
+                    border-radius: 5px;
+                    cursor: pointer;
+                }}
+                button:hover {{
+                    background-color: #45a049;
+                }}
+                </style>
+            </head>
+            <body>
+                <div class="login-box">
+                <h2>{form_title}</h2>
+                <form id="login-form">
+                    <label for="email">{input_label}</label>
+                    <input type="{mail_type}" id="{mail_type}" required />
+                    <button type="submit">{btn_text}</button>
+                </form>
+                </div>
 
-    <script>
-      const API_BASE_PATH = "{{{{ api_base_path }}}}";
-    </script>
-    <script src="{{{{ url_for('static', path='js/recordingLogin.js') }}}}"></script>
-  </body>
+                <script>
+                const API_BASE_PATH = "{{{{ api_base_path }}}}";
+                </script>
+                <script src="{{{{ url_for('static', path='js/recordingLogin.js') }}}}"></script>
+            </body>
 
-</html>
-"""
+            </html>
+            """
 
         # 現代版型 (Modern_login.html based)
-        MODERN_PAGE_TEMPLATE = """<!DOCTYPE html>
-<html lang="zh-Hant">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{title}</title>
-    <!-- Google Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        :root {{
-            --primary-color: #4f46e5;
-            --primary-hover: #4338ca;
-            --bg-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            --bg-color: {bg_color};
-            --card-bg: rgba(255, 255, 255, 0.95);
-            --text-color: #1f2937;
-            --text-secondary: #6b7280;
-        }}
+        MODERN_PAGE_TEMPLATE = """
+            <!DOCTYPE html>
+            <html lang="zh-Hant">
+            <head>
+                <meta charset="UTF-8">
+                <meta name="viewport" content="width=device-width, initial-scale=1.0">
+                <title>{title}</title>
+                <!-- Google Fonts -->
+                <link rel="preconnect" href="https://fonts.googleapis.com">
+                <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+                <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+                <style>
+                    :root {{
+                        --primary-color: #4f46e5;
+                        --primary-hover: #4338ca;
+                        --bg-gradient: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        --bg-color: {bg_color};
+                        --card-bg: rgba(255, 255, 255, 0.95);
+                        --text-color: #1f2937;
+                        --text-secondary: #6b7280;
+                    }}
 
-        body {{
-            font-family: 'Inter', sans-serif;
-            background: {bg_css};
-            background-size: cover;
-            background-position: center;
-            background-repeat: no-repeat;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            padding: 20px;
-        }}
+                    body {{
+                        font-family: 'Inter', sans-serif;
+                        background: {bg_css};
+                        background-size: cover;
+                        background-position: center;
+                        background-repeat: no-repeat;
+                        display: flex;
+                        justify-content: center;
+                        align-items: center;
+                        min-height: 100vh;
+                        margin: 0;
+                        padding: 20px;
+                    }}
 
-        .login-card {{
-            background: var(--card-bg);
-            padding: 3rem;
-            border-radius: 16px;
-            box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
-            width: 100%;
-            max-width: 400px;
-            text-align: center;
-            backdrop-filter: blur(10px);
-            transition: transform 0.3s ease;
-        }}
+                    .login-card {{
+                        background: var(--card-bg);
+                        padding: 3rem;
+                        border-radius: 16px;
+                        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+                        width: 100%;
+                        max-width: 400px;
+                        text-align: center;
+                        backdrop-filter: blur(10px);
+                        transition: transform 0.3s ease;
+                    }}
 
-        .login-card:hover {{
-            transform: translateY(-5px);
-        }}
+                    .login-card:hover {{
+                        transform: translateY(-5px);
+                    }}
 
-        .icon-container {{
-            width: 64px;
-            height: 64px;
-            background: rgba(79, 70, 229, 0.1);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin: 0 auto 1.5rem;
-        }}
+                    .icon-container {{
+                        width: 64px;
+                        height: 64px;
+                        background: rgba(79, 70, 229, 0.1);
+                        border-radius: 50%;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        margin: 0 auto 1.5rem;
+                    }}
 
-        .icon-container svg {{
-            width: 32px;
-            height: 32px;
-            color: var(--primary-color);
-        }}
+                    .icon-container svg {{
+                        width: 32px;
+                        height: 32px;
+                        color: var(--primary-color);
+                    }}
 
-        h2 {{
-            color: var(--text-color);
-            font-size: 1.875rem;
-            font-weight: 700;
-            margin: 0 0 0.5rem;
-        }}
+                    h2 {{
+                        color: var(--text-color);
+                        font-size: 1.875rem;
+                        font-weight: 700;
+                        margin: 0 0 0.5rem;
+                    }}
 
-        p.subtitle {{
-            color: var(--text-secondary);
-            margin-bottom: 2rem;
-            font-size: 0.875rem;
-        }}
+                    p.subtitle {{
+                        color: var(--text-secondary);
+                        margin-bottom: 2rem;
+                        font-size: 0.875rem;
+                    }}
 
-        .form-group {{
-            margin-bottom: 1.5rem;
-            text-align: left;
-        }}
+                    .form-group {{
+                        margin-bottom: 1.5rem;
+                        text-align: left;
+                    }}
 
-        label {{
-            display: block;
-            color: var(--text-color);
-            font-size: 0.875rem;
-            font-weight: 500;
-            margin-bottom: 0.5rem;
-        }}
+                    label {{
+                        display: block;
+                        color: var(--text-color);
+                        font-size: 0.875rem;
+                        font-weight: 500;
+                        margin-bottom: 0.5rem;
+                    }}
 
-        input[type="{mail_type}"] {{
-            width: 100%;
-            padding: 0.75rem 1rem;
-            border: 1px solid #d1d5db;
-            border-radius: 0.5rem;
-            font-size: 1rem;
-            box-sizing: border-box; /* Crucial for padding */
-            transition: border-color 0.2s, box-shadow 0.2s;
-            outline: none;
-        }}
+                    input[type="{mail_type}"] {{
+                        width: 100%;
+                        padding: 0.75rem 1rem;
+                        border: 1px solid #d1d5db;
+                        border-radius: 0.5rem;
+                        font-size: 1rem;
+                        box-sizing: border-box; /* Crucial for padding */
+                        transition: border-color 0.2s, box-shadow 0.2s;
+                        outline: none;
+                    }}
 
-        input[type="{mail_type}"]:focus {{
-            border-color: var(--primary-color);
-            box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
-        }}
+                    input[type="{mail_type}"]:focus {{
+                        border-color: var(--primary-color);
+                        box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+                    }}
 
-        button {{
-            width: 100%;
-            padding: 0.875rem;
-            background-color: var(--primary-color);
-            color: white;
-            border: none;
-            border-radius: 0.5rem;
-            font-size: 1rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: background-color 0.2s, transform 0.1s;
-        }}
+                    button {{
+                        width: 100%;
+                        padding: 0.875rem;
+                        background-color: var(--primary-color);
+                        color: white;
+                        border: none;
+                        border-radius: 0.5rem;
+                        font-size: 1rem;
+                        font-weight: 600;
+                        cursor: pointer;
+                        transition: background-color 0.2s, transform 0.1s;
+                    }}
 
-        button:hover {{
-            background-color: var(--primary-hover);
-        }}
+                    button:hover {{
+                        background-color: var(--primary-hover);
+                    }}
 
-        button:active {{
-            transform: scale(0.98);
-        }}
+                    button:active {{
+                        transform: scale(0.98);
+                    }}
 
-        .footer {{
-            margin-top: 1.5rem;
-            font-size: 0.75rem;
-            color: var(--text-secondary);
-        }}
-    </style>
-</head>
-<body>
-    <div class="login-card">
-        <div class="icon-container">
-            {svg_icon}
-        </div>
-        
-        <h2>{form_title}</h2>
-        <!-- <p class="subtitle">請輸入您的電子郵件以繼續</p> -->
+                    .footer {{
+                        margin-top: 1.5rem;
+                        font-size: 0.75rem;
+                        color: var(--text-secondary);
+                    }}
+                </style>
+            </head>
+            <body>
+                <div class="login-card">
+                    <div class="icon-container">
+                        {svg_icon}
+                    </div>
+                    
+                    <h2>{form_title}</h2>
+                    <!-- <p class="subtitle">請輸入您的電子郵件以繼續</p> -->
 
-        <form id="login-form">
-            <div class="form-group">
-                <label for="email">{input_label}</label>
-                <input type="{mail_type}" id="{mail_type}" required />
-            </div>
-            <button type="submit">{btn_text}</button>
-        </form>
+                    <form id="login-form">
+                        <div class="form-group">
+                            <label for="email">{input_label}</label>
+                            <input type="{mail_type}" id="{mail_type}" required />
+                        </div>
+                        <button type="submit">{btn_text}</button>
+                    </form>
 
-        <div class="footer">
-            © 2024 Secure Portal. All rights reserved.
-        </div>
-    </div>
+                    <div class="footer">
+                        © 2024 Secure Portal. All rights reserved.
+                    </div>
+                </div>
 
-    <!-- Required Tracking Scripts -->
-    <script>
-      const API_BASE_PATH = "{{{{ api_base_path }}}}";
-    </script>
-    <script src="{{{{ url_for('static', path='js/recordingLogin.js') }}}}"></script>
-</body>
-</html>
-"""
+                <!-- Required Tracking Scripts -->
+                <script>
+                const API_BASE_PATH = "{{{{ api_base_path }}}}";
+                </script>
+                <script src="{{{{ url_for('static', path='js/recordingLogin.js') }}}}"></script>
+            </body>
+            </html>
+            """
         
         bg_image_css = f"url('{bgImage}')" if bgImage else "none"
         
@@ -701,13 +693,12 @@ def get_router(db: ApplianceDB, db_user: DBUser):
 
         # --- 3. 更新 DB ---
         try:
-            new_page_data = {
+            await db_controller.create(TriggerPage, {
                 "page_value": pageValue,
                 "page_label": pageLabel,
                 "owner_uuid": user_uuid,
                 "page_type": "custom"
-            }
-            await db.insert_db("trigger_pages", new_page_data)
+            })
         except Exception as e:
             if save_path.exists():
                 save_path.unlink() # Rollback

@@ -1,144 +1,237 @@
-import re
-import asyncpg
-import aiofiles
+# -*- coding: utf-8 -*-
+'''
+資料庫控制模組 (TriggerApp Version)
+'''
 
+from typing import Any, Dict, List, Optional, Type, TypeVar, Union, Sequence, Type
+from sqlalchemy import select, update, delete
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.expression import Select
+
+from app.repository.database import async_session
 from app.services.log_manager import Logger
-
 
 logger = Logger().get_logger()
 
-class ApplianceDB:
-    def __init__(self):
-        self.db_pool = None
-        self.allowed_tables = {"sendtasks"}
-        self.allowed_columns = {
-            "sendtasks": {"sendtask_id", "sendtask_uuid", "sendtask_create_ut"}
-        }
+ModelType = TypeVar("ModelType")
 
-    async def db_init(self):
-        if self.db_pool is None:
-            logger.debug("Initializing PostgreSQL connection pool...")
-            self.db_pool = await asyncpg.create_pool(
-                host='postgres-db',
-                port=5432,
-                user='myuser',
-                password='mypassword',
-                database='mydatabase',
-                min_size=1,
-                max_size=10
-            )
+class DBController:
+    """
+    通用資料庫控制器，封裝基本的 CRUD 操作。
+    """
 
-    async def db_close(self):
-        if self.db_pool:
-            logger.debug("Closing PostgreSQL connection pool...")
-            await self.db_pool.close()
-            self.db_pool = None
+    def get_session(self) -> AsyncSession:
+        """取得一個新的 AsyncSession Context Manager"""
+        return async_session()
 
-    async def check_db_connection(self):
-        """ 檢查資料庫連線，若斷線則重新初始化 """
-        if self.db_pool is None:
-            await self.db_init()
-            return
-
-        try:
-            async with self.db_pool.acquire() as connection:
-                await connection.fetch("SELECT 1")
-        except Exception as e:
-            logger.error(f"Database connection lost: {e}. Reinitializing...")
-            await self.db_close()
-            await self.db_init()
-
-    async def get_db(self, table_name: str, person_uuid: str = None, column_names: list[str] = None, select_columns: list[str] = None, where_column: str = None, values: str | list[str] = None, where_clauses: list[str] = None, order_by: str = None) -> list:
+    async def execute(self, stmt: Any) -> Any:
         """
-        查詢資料，支援全表查詢、欄位篩選與條件查詢。
-        (為了相容舊介面，保留 person_uuid, column_names，但建議改用新介面參數)
+        執行傳入的 SQLAlchemy statement (Generic execution)
         """
-        await self.check_db_connection()
+        async with self.get_session() as session:
+            try:
+                result = await session.execute(stmt)
+                await session.commit()
+                return result
+            except Exception as e:
+                logger.error(f"Execute failed: {e}")
+                await session.rollback()
+                raise e
 
-        # 欄位處理
-        if select_columns:
-            col_str = ', '.join(select_columns)
-        else:
-            col_str = '*'
-
-        # 條件處理
-        where_clause = ''
-        bind_values = []
-
-        if where_clauses:
-             where_clause = " WHERE " + " AND ".join(where_clauses)
-        elif where_column and values is not None:
-
-            if not isinstance(values, list):
-                values = [values]
-            if not values:
-                 # 若 values 為空，回傳空結果
-                 return []
-            
-            placeholders = ', '.join(f'${i+1}' for i in range(len(values)))
-            where_clause = f' WHERE "{where_column}" IN ({placeholders})'
-            bind_values = values
-            
-        # Order By 處理
-        order_sql = ""
-        if order_by:
-             if not re.match(r"^[a-zA-Z0-9_, ]+$", order_by):
-                  raise ValueError("Illegal order_by string")
-             order_sql = f" ORDER BY {order_by}"
-
-        sql_cmd = f'SELECT {col_str} FROM "{table_name}"{where_clause}{order_sql}'
-
-        async with self.db_pool.acquire() as connection:
-            result = await connection.fetch(sql_cmd, *bind_values)
-            return [dict(row) for row in result] if result else []
-
-    async def update_db(self, table_name: str, data: dict, condition: dict):
-        """ 更新資料 """
-        await self.check_db_connection()
-        async with self.db_pool.acquire() as connection:
-            set_clause = ', '.join(f"{key} = ${i+1}" for i, key in enumerate(data.keys()))
-            condition_clause = ' AND '.join(f"{key} = ${len(data) + i+1}" for i, key in enumerate(condition.keys()))
-            sql_cmd = f'UPDATE "{table_name}" SET {set_clause} WHERE {condition_clause} RETURNING *'
-            result = await connection.fetchrow(sql_cmd, *data.values(), *condition.values())
-            if not result:
-                raise ValueError(f"Operation failed on {table_name}, possibly due to missing matching records.")
-            
-            return dict(result) if result else None
-
-    async def update_array_append(self, table_name: str, append_data: dict, condition: dict):
+    async def execute_scalars(self, stmt: Any) -> List[Any]:
         """
-        將資料 Append 到指定的 Array 欄位中 (Atomic Operation)
+        執行傳入的 SQLAlchemy statement 並回傳 scalars().all()
         """
-        await self.check_db_connection()
-        
-        # 簡單驗證欄位名稱
-        for col in append_data.keys():
-            if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
-                raise ValueError(f"Illegal column name: {col}")
+        async with self.get_session() as session:
+            try:
+                result = await session.execute(stmt)
+                await session.commit()
+                return result.scalars().all()
+            except Exception as e:
+                logger.error(f"Execute scalars failed: {e}")
+                await session.rollback()
+                raise e
 
-        async with self.db_pool.acquire() as connection:
-            set_clauses = []
-            values = []
+    async def get(
+        self, 
+        model: Type[ModelType], 
+        filters: Dict[str, Any] = None, 
+        limit: int = None, 
+        offset: int = None,
+        order_by: Any = None
+    ) -> List[ModelType]:
+        """
+        通用查詢方法
+        """
+        async with self.get_session() as session:
+            stmt = select(model)
+            if filters:
+                for key, value in filters.items():
+                    if hasattr(model, key):
+                        column = getattr(model, key)
+                        if isinstance(value, list):
+                            stmt = stmt.where(column.in_(value))
+                        else:
+                            stmt = stmt.where(column == value)
             
-            for i, (col, val) in enumerate(append_data.items()):
-                set_clauses.append(f'"{col}" = array_append(COALESCE("{col}", \'{{}}\'), ${i+1})')
-                values.append(val)
+            if order_by is not None:
+                stmt = stmt.order_by(order_by)
+
+            if limit:
+                stmt = stmt.limit(limit)
+            if offset:
+                stmt = stmt.offset(offset)
+
+            result = await session.execute(stmt)
+            return result.scalars().all()
+
+    async def get_one(self, model: Type[ModelType], filters: Dict[str, Any]) -> Optional[ModelType]:
+        """
+        取得單一物件
+        """
+        results = await self.get(model, filters, limit=1)
+        return results[0] if results else None
+
+    async def create(self, model: Type[ModelType], data: Dict[str, Any]) -> ModelType:
+        """
+        建立新物件
+        """
+        async with self.get_session() as session:
+            try:
+                obj = model(**data)
+                session.add(obj)
+                await session.commit()
+                await session.refresh(obj)
+                return obj
+            except Exception as e:
+                logger.error(f"Create failed: {e}")
+                await session.rollback()
+                raise e
+
+    async def update(
+        self, 
+        model: Type[ModelType], 
+        filters: Dict[str, Any], 
+        data: Dict[str, Any]
+    ) -> int:
+        """
+        更新物件
+        """
+        if not data:
+            return 0
+            
+        async with self.get_session() as session:
+            try:
+                stmt = update(model)
                 
-            condition_clauses = []
-            base_idx = len(values)
-            for i, (col, val) in enumerate(condition.items()):
-                 condition_clauses.append(f'"{col}" = ${base_idx + i + 1}')
-                 values.append(val)
+                conditions = []
+                for key, value in filters.items():
+                    if hasattr(model, key):
+                        column = getattr(model, key)
+                        if isinstance(value, list):
+                            conditions.append(column.in_(value))
+                        else:
+                            conditions.append(column == value)
+                
+                if conditions:
+                    from sqlalchemy import and_
+                    stmt = stmt.where(and_(*conditions))
+                
+                stmt = stmt.values(**data)
+                result = await session.execute(stmt)
+                await session.commit()
+                return result.rowcount
+            except Exception as e:
+                logger.error(f"Update failed: {e}")
+                await session.rollback()
+                raise e
+
+    async def delete(self, model: Type[ModelType], filters: Dict[str, Any]) -> int:
+        """
+        刪除物件
+        """
+        async with self.get_session() as session:
+            try:
+                stmt = delete(model)
+                conditions = []
+                for key, value in filters.items():
+                    if hasattr(model, key):
+                        column = getattr(model, key)
+                        if isinstance(value, list):
+                            conditions.append(column.in_(value))
+                        else:
+                            conditions.append(column == value)
+                
+                if conditions:
+                    from sqlalchemy import and_
+                    stmt = stmt.where(and_(*conditions))
+
+                result = await session.execute(stmt)
+                await session.commit()
+                return result.rowcount
+            except Exception as e:
+                logger.error(f"Delete failed: {e}")
+                await session.rollback()
+                raise e
+    
+    async def batch_create(self, model: Type[ModelType], data_list: List[Dict[str, Any]]) -> int:
+        """
+        批次建立
+        """
+        if not data_list:
+            return 0
+
+        async with self.get_session() as session:
+            try:
+                objects = [model(**data) for data in data_list]
+                session.add_all(objects)
+                await session.commit()
+                return len(objects)
+            except Exception as e:
+                logger.error(f"Batch create failed: {e}")
+                await session.rollback()
+                raise e
+
+    async def upsert(
+        self,
+        model: Type[ModelType],
+        data_list: List[Dict[str, Any]],
+        index_elements: List[str],
+        update_columns: List[str] = None
+    ) -> int:
+        """
+        PostgreSQL Upsert (Insert on Conflict Update)
+        """
+        if not data_list:
+            return 0
             
-            set_sql = ", ".join(set_clauses)
-            condition_sql = " AND ".join(condition_clauses)
-            
-            sql_cmd = f'UPDATE "{table_name}" SET {set_sql} WHERE {condition_sql} RETURNING *'
-            
-            result = await connection.fetchrow(sql_cmd, *values)
-            return dict(result) if result else None
+        async with self.get_session() as session:
+            try:
+                from sqlalchemy.dialects.postgresql import insert as pg_insert
+                
+                count = 0
+                for data in data_list:
+                    stmt = pg_insert(model).values(data)
+                    
+                    if update_columns:
+                        set_dict = {col: getattr(stmt.excluded, col) for col in update_columns}
+                    else:
+                        set_dict = data
+                    
+                    stmt = stmt.on_conflict_do_update(
+                        index_elements=index_elements,
+                        set_=set_dict
+                    )
+                    await session.execute(stmt)
+                    count += 1
+                
+                await session.commit()
+                return count
+            except Exception as e:
+                logger.error(f"Upsert failed: {e}")
+                await session.rollback()
+                raise e
 
 
-
-
-db = ApplianceDB()
+# Global instance
+db_controller = DBController()

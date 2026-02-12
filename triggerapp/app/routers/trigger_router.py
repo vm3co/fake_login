@@ -11,7 +11,6 @@ from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, Response, RedirectResponse
 
-from app.repository.db_controller import db
 from app.services.log_manager import Logger
 
 
@@ -35,17 +34,7 @@ async def get_request_info(request: Request) -> Dict[str, Any]:
     user_agent = request.headers.get("User-Agent", "Unknown")  # 取得 User-Agent
     return {"ip": ip, "user_agent": user_agent}
 
-async def writer_db(url_id, columns_list, new_data):
-    if len(url_id) < 48:
-        # Avoid empty table name error for test/short IDs
-        return
-        
-    table_name = url_id[16:48]
-    person_uuid = url_id[48:] + url_id[:16]
 
-    # 使用 Atomic Append 更新，無需先讀再寫
-    append_data = dict(zip(columns_list, new_data))
-    await db.update_array_append(table_name, append_data, {"uuid": person_uuid})
 
 # 設定模板目錄
 templates_dir = BASE_DIR / "templates"

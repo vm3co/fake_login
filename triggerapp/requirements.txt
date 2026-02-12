@@ -10,3 +10,4 @@ Pillow
 asyncpg
 aiofiles
 redis
+sqlalchemy

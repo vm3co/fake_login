@@ -2,8 +2,10 @@
 import asyncio
 import pandas as pd
 import sys
-from backend.repository.db_controller import ApplianceDB
+
 from backend.services.time_utils import format_datetime
+from backend.repository.db_controller import db_controller
+
 
 async def export_table_to_excel(table_name: str, output_filename: str):
     """
@@ -22,14 +24,15 @@ async def export_table_to_excel(table_name: str, output_filename: str):
     if not output_filename.endswith('.xlsx'):
         output_filename += '.xlsx'
 
-    db = ApplianceDB()
 
     try:
-        # 檢查資料庫連線
-        await db.check_db_connection()
-
         # 撈取所有資料
-        data = await db.get_db(table_name=table_name)
+        # 使用 safe method，避免 SQL Injection
+        try:
+            data = await db_controller.get_all_by_tablename(table_name)
+        except ValueError as e:
+            print(f"錯誤：{e}")
+            return
 
         if not data:
             print(f"資料表 '{table_name}' 中沒有資料，或資料表不存在。")
@@ -83,7 +86,7 @@ async def export_table_to_excel(table_name: str, output_filename: str):
 
         # 3. 將資料 (list[dict]) 轉換為 pandas DataFrame
         print("正在將資料轉換為 DataFrame...")
-        df = pd.DataFrame(data)
+        df = pd.DataFrame(processed_data)
 
         # 4. 將 DataFrame 匯出為 Excel 檔案
         # index=False 表示不要將 pandas 的 index (0, 1, 2...) 寫入 Excel
@@ -96,9 +99,7 @@ async def export_table_to_excel(table_name: str, output_filename: str):
         print(f"發生錯誤：{e}", file=sys.stderr)
     finally:
         # 5. 確保資料庫連線池被關閉
-        if db.db_pool:
-            print("正在關閉資料庫連線...")
-            await db.db_close()
+        pass # engine cleanup is global or handled by caller if needed, specific close not strictly required for script unless hanging
 
 # --- 程式執行入口 ---
 if __name__ == "__main__":

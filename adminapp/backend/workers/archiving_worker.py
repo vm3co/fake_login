@@ -3,6 +3,9 @@ import time
 from backend.services.db_user import DBUser
 from backend.services.log_manager import Logger
 from backend.services.redis_client import RedisClient
+from backend.repository.db_controller import db_controller
+from backend.repository.models import SendTask
+from sqlalchemy import select, update, or_
 
 logger = Logger().get_logger()
 
@@ -10,6 +13,7 @@ class ArchivingWorker:
     def __init__(self):
         self.db_user = DBUser()
         self.redis = RedisClient()
+
     async def start(self):
         """
         手動觸發封存檢查 (供排程器呼叫)
@@ -28,39 +32,32 @@ class ArchivingWorker:
         # 14天 = 14 * 24 * 60 * 60
         threshold_time = now - (14 * 86400)
         
-        # 找出 test_end_ut, stop_time_new, pre_test_end_ut 早於 threshold 且尚未封存的任務
-        # 1. test_end_ut < threshold
-        # 2. stop_time_new < threshold (or NULL)
-        # 3. pre_test_end_ut < threshold (or NULL)
-        
-        where_clauses = [
-            f"test_end_ut < {threshold_time}",
-            f"(stop_time_new < {threshold_time} OR stop_time_new IS NULL)",
-            f"(pre_test_end_ut < {threshold_time} OR pre_test_end_ut IS NULL)",
-            "is_archived = FALSE"
-        ]
-
-        candidates = await self.db_user.db.get_db(
-            "sendtasks", 
-            select_columns=["sendtask_uuid"], 
-            where_clauses=where_clauses
+        # 找出需要封存的任務 UUID
+        stmt = select(SendTask.sendtask_uuid).where(
+            SendTask.test_end_ut < threshold_time,
+            or_(SendTask.stop_time_new < threshold_time, SendTask.stop_time_new.is_(None)),
+            or_(SendTask.pre_test_end_ut < threshold_time, SendTask.pre_test_end_ut.is_(None)),
+            SendTask.is_archived == False
         )
+        candidates = await db_controller.execute_scalars(stmt)
         
         if not candidates:
             logger.info("No tasks to archive.")
             return
 
-        client = await self.redis.get_client()
+        # 1. 批次更新 DB
+        stmt_update = update(SendTask).where(SendTask.sendtask_uuid.in_(candidates)).values(is_archived=True)
+        await db_controller.execute(stmt_update)
         
-        for task in candidates:
-            uuid = task["sendtask_uuid"]
-            logger.info(f"Archiving task {uuid}...")
-            
-            # 1. 更新 DB
-            await self.db_user.db.update_db("sendtasks", {"is_archived": True}, {"sendtask_uuid": uuid})
-            
-            # 2. 清除 Redis Cache (下次讀取時會設為短 TTL)
-            await client.delete(f"task:{uuid}:details")
+        # 2. 清除 Redis Cache
+        client = await self.redis.get_client()
+        for uuid in candidates:
+            # logger.info(f"Archiving task {uuid}...")
+            # await client.delete(f"task:{uuid}:details")
+             try:
+                 await client.delete(f"task:{uuid}:details")
+             except Exception as e:
+                 logger.warning(f"Failed to delete redis cache for {uuid}: {e}")
             
         logger.info(f"Archived {len(candidates)} tasks.")
 

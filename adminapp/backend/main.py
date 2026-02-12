@@ -11,7 +11,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
-from backend.repository.db_controller import ApplianceDB
+from backend.repository.db_controller import db_controller
+from backend.repository.models import SendTask, SendLogStats
+from sqlalchemy import select, update, delete, or_
+
 from backend.services.getSe2data import get_se2_data
 from backend.services.db_user import DBUser
 from backend.services.get_token import get_token
@@ -25,6 +28,7 @@ from backend.api import notification_api, job_api
 
 from backend.workers.sync_worker import SyncWorker
 from backend.workers.archiving_worker import ArchivingWorker
+from backend.repository.database import init_db
 
 
 # Global worker instances
@@ -32,8 +36,7 @@ sync_worker = SyncWorker()
 archiving_worker = ArchivingWorker()
 worker_tasks = []
 
-db = ApplianceDB()
-db_user = DBUser(db=db)
+db_user = DBUser()
 logger = Logger().get_logger()
 
 def dict_to_hashable(d):
@@ -64,12 +67,14 @@ async def refresh_today_create_task_job():
         today_create_tasks_list = await db_user.refresh_today_create_task()
         if today_create_tasks_list:
             refresh_list = []
-            for task in today_create_tasks_list:
-                await db.upsert_db(
-                    table_name="sendtasks", 
-                    data=task, 
-                    conflict_keys=["sendtask_uuid"])
-                refresh_list.append(task["sendtask_uuid"])
+            # Use DBController.upsert
+            refresh_list = [task["sendtask_uuid"] for task in today_create_tasks_list]
+            await db_controller.upsert(
+                SendTask, 
+                today_create_tasks_list, 
+                index_elements=['sendtask_uuid']
+            )
+            
             await db_user.refresh_sendlog_stats(refresh_list)
             logger.info(f"refresh_today_create_task_job 完成 - 新增或更新了 {len(refresh_list)} 個今日任務")
     except Exception as e:
@@ -83,11 +88,10 @@ async def refresh_notyet_today_tasks_job():
     try:
         # 1. 取得今天有排程的任務 (today_earliest_plan_time != 0)
         #    並選取需要判斷的欄位
-        tasks_with_today_plan = await db.get_db(
-            table_name="sendlog_stats",
-            select_columns=["sendtask_uuid", "todayunsend", "todayfailed"],
-            where_clauses=["today_earliest_plan_time <> 0"]
-        )
+        async with db_controller.get_session() as session:
+            stmt = select(SendLogStats).where(SendLogStats.today_earliest_plan_time != 0)
+            result = await session.execute(stmt)
+            tasks_with_today_plan = result.scalars().all()
 
         if not tasks_with_today_plan:
             # logger.info("refresh_notyet_today_tasks_job: 今日沒有排程中的任務需要檢查。")
@@ -96,8 +100,9 @@ async def refresh_notyet_today_tasks_job():
         # 2. 篩選出尚未完成 (todayunsend > 0) 或有失敗 (todayfailed > 0) 的任務
         uuids_to_refresh = []
         for task in tasks_with_today_plan:
-            if task.get("todayunsend", 0) > 0 or task.get("todayfailed", 0) > 0:
-                uuids_to_refresh.append(task["sendtask_uuid"])
+            # SendLogStats model fields: todayunsend, todayfailed
+            if (task.todayunsend and task.todayunsend > 0) or (task.todayfailed and task.todayfailed > 0):
+                uuids_to_refresh.append(task.sendtask_uuid)
 
         if uuids_to_refresh:
             await db_user.refresh_sendlog_stats(uuids_to_refresh)
@@ -113,12 +118,20 @@ async def check_sendtasks_job():
     logger.info("check_sendtasks_job 執行")
     try:
         # 使用和 data_api.py 相同的邏輯
+        if request.orgs and request.orgs != ["admin"]:
+            sendtasks_columns = None
+        
         sendtasks_columns = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "person_count",
-                             "pre_test_end_ut", "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", 
-                             "test_end_ut", "test_start_ut", "is_pause", "pre_test_enable", "stop_time_new"]
-        all_tasksname_list = await db_user.get_se2_sendtasks(sendtasks_columns)
+                                "pre_test_end_ut", "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", 
+                                "test_end_ut", "test_start_ut", "is_pause", "pre_test_enable", "stop_time_new"]
+        
+        all_tasksname_list = await db_user.get_se2_sendtasks(column_names=sendtasks_columns)
 
-        my_tasksname_list = await db.get_db("sendtasks", select_columns=sendtasks_columns)
+        tasks = await db_controller.get(SendTask)
+        my_tasksname_list = []
+        for t in tasks:
+            t_dict = {c: getattr(t, c) for c in sendtasks_columns if hasattr(t, c)}
+            my_tasksname_list.append(t_dict)
 
         all_set = set(dict_to_hashable(d) for d in all_tasksname_list)
         my_set = set(dict_to_hashable(d) for d in my_tasksname_list)
@@ -130,36 +143,33 @@ async def check_sendtasks_job():
         removed_list = [hashable_to_dict(t) for t in removed]
 
         if added_list:
-            refresh_list = []
-            for task in added_list:
-                status = await db.upsert_db(
-                    table_name="sendtasks", 
-                    data=task, 
-                    conflict_keys=["sendtask_uuid"])
-                if status == "changed":
-                    refresh_list.append(task["sendtask_uuid"])
+            refresh_list = [task["sendtask_uuid"] for task in added_list]
+            await db_controller.upsert(
+                SendTask,
+                added_list,
+                index_elements=['sendtask_uuid']
+            )
+
             sendlog_stats_status = await db_user.refresh_sendlog_stats(refresh_list)
+            logger.info(f"新增了 {len(refresh_list)} 個任務") # simplified count
 
-            logger.info(f"新增了 {len(sendlog_stats_status)} 個任務")
-
+        del_count = 0
+        archive_count = 0
         if removed_list:
+            # 確認是否真的已刪除 (404)
             for item in removed_list:
                 uuid = item["sendtask_uuid"]
-                
-                # 智慧檢查: 確認是否真的已刪除 (404)
                 data = await get_se2_data.get_sendtask(uuid)
-                del_count = 0
-                archive_count = 0
                 
                 if data and data.get("error", {}).get("code") == 404:
                     # sendtasks刪除資料
-                    await db.delete_db(table_name="sendtasks", condition={"sendtask_uuid": uuid})
+                    await db_controller.delete(SendTask, {"sendtask_uuid": uuid})
                     # sendlog_stats 刪除資料
-                    await db.delete_db(table_name="sendlog_stats", condition={"sendtask_uuid": uuid})
+                    await db_controller.delete(SendLogStats, {"sendtask_uuid": uuid})
                     del_count += 1
                 else:
                     # 僅封存
-                    await db.update_db("sendtasks", {"is_archived": True}, {"sendtask_uuid": uuid})
+                    await db_controller.update(SendTask, {"sendtask_uuid": uuid}, {"is_archived": True})
                     archive_count += 1
             
             logger.info(f"刪除 {del_count} 個任務，封存 {archive_count} 個任務")
@@ -230,7 +240,9 @@ def start_scheduler():
 # 引入資料庫
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    await db.db_init()
+    # Initialize ORM (Create tables if they don't exist)
+    await init_db()
+    
     await refresh_token_job()   # 測試初始化 token
     await db_user.table_initialize()
     logger.info("資料庫初始化完成")
@@ -239,12 +251,13 @@ async def lifespan(app: FastAPI):
     try:
         logger.info("Starting Cache Warming...")
         # Fetch active tasks (is_archived is False or NULL)
-        active_tasks = await db.get_db(
-            "sendtasks", 
-            select_columns=["sendtask_uuid"], 
-            where_clauses=["(is_archived IS NOT TRUE)"]
+        active_uuids = []
+        stmt = select(SendTask).where(
+            or_(SendTask.is_archived == False, SendTask.is_archived.is_(None))
         )
-        active_uuids = [t["sendtask_uuid"] for t in active_tasks]
+        tasks = await db_controller.execute_scalars(stmt)
+        active_uuids = [task.sendtask_uuid for task in tasks]
+
         if active_uuids:
              await db_user.refresh_sendlog_stats(active_uuids)
              logger.info(f"Cache Warming completed for {len(active_uuids)} active tasks.")
@@ -265,8 +278,6 @@ async def lifespan(app: FastAPI):
     for task in worker_tasks:
         task.cancel()
     await asyncio.gather(*worker_tasks, return_exceptions=True)
-    
-    await db.db_close()
 
 app = FastAPI(lifespan=lifespan)
 
@@ -288,9 +299,9 @@ app.add_middleware(
 )
 
 # 註冊路由
-app.include_router(log_router(db, db_user), prefix="/api")
-app.include_router(user_router(db, db_user), prefix="/api")
-app.include_router(page_router(db, db_user), prefix="/api/trigger_page")
+app.include_router(log_router(db_user), prefix="/api")
+app.include_router(user_router(db_user), prefix="/api")
+app.include_router(page_router(db_user), prefix="/api/trigger_page")
 app.include_router(notification_api.router, prefix="/api")
 app.include_router(job_api.router, prefix="/api")
 

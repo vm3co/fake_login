@@ -7,7 +7,6 @@ from app.services.redis_client import RedisClient
 from fastapi import Request, APIRouter, Depends
 from typing import Dict, Any
 
-from app.repository.db_controller import db
 from app.services.log_manager import Logger
 
 
@@ -29,13 +28,7 @@ async def get_request_info(request: Request) -> Dict[str, Any]:
     user_agent = request.headers.get("User-Agent", "Unknown")  # 取得 User-Agent
     return {"ip": ip, "user_agent": user_agent}
 
-async def writer_db(url_id, columns_list, new_data):
-    table_name = url_id[16:48]
-    person_uuid = url_id[48:] + url_id[:16]
 
-    # 使用 Atomic Append 更新，無需先讀再寫
-    append_data = dict(zip(columns_list, new_data))
-    await db.update_array_append(table_name, append_data, {"uuid": person_uuid})
 
 async def writer_test(type, new_data):
     file = 'data/test_visit.csv' if type == 'visit' else 'data/test_input.csv'
