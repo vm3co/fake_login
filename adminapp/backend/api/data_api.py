@@ -19,7 +19,8 @@ from datetime import datetime, timedelta
 import zipfile
 import urllib.parse
 
-from sqlalchemy import select, update, delete, func, desc, asc, text
+from sqlalchemy import select, update, delete, func, desc, asc, text, String, cast, literal
+from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from backend.repository.db_controller import db_controller
 from backend.repository.models import SendTask, Mtmpl, Notification, SendLogStats, SendLogDetail, CustomerAcct
@@ -362,6 +363,7 @@ def get_router(db_user):
         sort: str = "desc"
         sortBy: str = "plan_time"
         paginate: bool = True
+        filterIp: str | None = None  # 以逗點分隔的排除 IP 字串
 
     async def _query_sendlog_details(request: GetSendlogDetailRequest):
         """
@@ -462,6 +464,24 @@ def get_router(db_user):
             stmt = stmt.where(func.array_length(SendLogDetail.click_time, 1) > 0)
         if request.showFiled:
             stmt = stmt.where(func.array_length(SendLogDetail.file_time, 1) > 0)
+
+        # 排除 IP 過濾
+        # 將使用者輸入的逗點分隔字串切割、去除空白，取得有效 IP 清單
+        if request.filterIp:
+            ip_list = [ip.strip() for ip in request.filterIp.split(',') if ip.strip()]
+            if ip_list:
+                # 排除 access_src、click_src、file_src 陣列中含有指定 IP 的記錄
+                # 使用原生 SQL text() 產生有明確型別的陣列，避免 PostgreSQL 型別推斷問題
+                # 格式: ARRAY['1.1.1.1','2.2.2.2']::text[]
+                ip_placeholder = ", ".join(f"'{ip}'" for ip in ip_list)
+                ip_array_sql = text(f"ARRAY[{ip_placeholder}]::text[]")
+                for col_name in ["access_src", "click_src", "file_src"]:
+                    col = getattr(SendLogDetail, col_name)
+                    stmt = stmt.where(
+                        col.is_(None) |
+                        (func.coalesce(func.array_length(col, 1), 0) == 0) |
+                        ~col.op("&&")(ip_array_sql)
+                    )
 
         # 排序
         sort_column = getattr(SendLogDetail, request.sortBy, SendLogDetail.plan_time)

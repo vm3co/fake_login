@@ -21,7 +21,7 @@ const parseTasks = (sendtasks) => {
         } catch (e) {
             console.error("解析客戶任務 JSON 失敗:", e);
             return []; // 解析失敗則給空陣列
-        }       
+        }
     }
     return []; // 對於其他類型，回傳空陣列
 };
@@ -80,12 +80,12 @@ export default function useCustomer() {
             // 同時獲取所有任務的資料
             const [sendtasksResponse, sendlogStatsResponse] = await Promise.all([
                 // 獲取 sendtasks 資料
-                axios.post("/api/customer_get_sendtasks", 
+                axios.post("/api/customer_get_sendtasks",
                     { sendtask_uuids: sendtaskUuids },
                     { signal: controller.signal }
                 ),
                 // 獲取 sendlog_stats 資料
-                axios.post("/api/get_sendlog_stats", 
+                axios.post("/api/get_sendlog_stats",
                     { sendtask_uuids: sendtaskUuids },
                     { signal: controller.signal }
                 )
@@ -109,9 +109,9 @@ export default function useCustomer() {
                 .map(sendtaskData => {
                     const statsData = statsMap[sendtaskData.sendtask_uuid] || {};
                     const end_ut = (sendtaskData.stop_time_new && sendtaskData.stop_time_new !== -1)
-                                    ? sendtaskData.stop_time_new
-                                    : sendtaskData.test_end_ut;
-                    
+                        ? sendtaskData.stop_time_new
+                        : sendtaskData.test_end_ut;
+
                     return {
                         // sendtasks 資料
                         sendtask_uuid: sendtaskData.sendtask_uuid,
@@ -124,6 +124,7 @@ export default function useCustomer() {
                         // sendlog_stats 資料
                         totalplanned: statsData.totalplanned || 0,
                         totalsend: statsData.totalsend || 0,
+                        totalnotyet: statsData.totalplanned - statsData.totalsend || 0,
                         totalsuccess: statsData.totalsuccess || 0,
                         totaltriggered: statsData.totaltriggered || 0,
                         todayunsend: statsData.todayunsend || 0,
@@ -137,14 +138,14 @@ export default function useCustomer() {
                         // 計算的額外資料
                         totalfailed: (statsData.totalsend || 0) - (statsData.totalsuccess || 0),
                         todayfailed: (statsData.todaysend || 0) - (statsData.todaysuccess || 0),
-                        
+
                         // 任務狀態判斷
                         status: getTaskStatus(statsData),
                     };
                 });
 
             setSendtasksData(combinedDataList);
-            
+
         } catch (error) {
             if (error.name === "AbortError") {
                 console.log("批次獲取任務資料請求被中止");
@@ -179,24 +180,24 @@ export default function useCustomer() {
 
             // 創建 Blob 物件
             const blob = new Blob([dataStr], { type: 'application/json' });
-            
+
             // 創建下載連結
             const url = window.URL.createObjectURL(blob);
             const link = document.createElement('a');
             link.href = url;
             link.download = filename;
-            
+
             // 觸發下載
             document.body.appendChild(link);
             link.click();
-            
+
             // 清理
             document.body.removeChild(link);
             window.URL.revokeObjectURL(url);
-            
+
             setSuccess(`成功下載任務資料: ${filename}`);
             console.log(`任務資料已下載: ${filename}`);
-            
+
         } catch (error) {
             console.error("下載任務資料失敗:", error);
             setError("下載失敗，請稍後再試");
@@ -207,21 +208,21 @@ export default function useCustomer() {
     // 輔助函數：判斷任務狀態
     const getTaskStatus = (stats) => {
         if (!stats) return 'unknown';
-        
+
         const totalplanned = Number(stats.totalplanned) || 0;
         const totalsend = Number(stats.totalsend) || 0;
         // const todayunsend = Number(stats.todayunsend) || 0;
         // const todaysuccess = Number(stats.todaysuccess) || 0;
         // const todaysend = Number(stats.todaysend) || 0;
         // const todayfailed = todaysend - todaysuccess;
-        
+
         // 今日任務狀態判斷
         // if (todayunsend > 0) {
         //     if (todaysuccess > 0 && todayfailed === 0) return 'running'; // 執行中
         //     if (todaysuccess === 0 && todayfailed === 0) return 'pending'; // 尚未開始
         //     if (todayfailed > 0) return 'error'; // 有錯誤
         // }
-        
+
         // 整體任務狀態
         if (totalsend === 0) {
             return 'pending'; // 待開始
@@ -237,12 +238,12 @@ export default function useCustomer() {
         loading,
         error,
         success,
-        
+
         // 客戶任務相關方法
         fetchCustomerSendtasksData,
         sendtasksData,           // 獲取客戶的任務資訊
         downloadTaskData,               // 下載任務資料
-        
+
         // 工具方法
         clearMessages,
         abortAllRequests,

@@ -16,6 +16,7 @@ import {
   Avatar,
   CircularProgress
 } from '@mui/material';
+import { useSnackbar } from 'notistack';
 import { styled } from '@mui/material/styles';
 import {
   Assignment,
@@ -139,6 +140,7 @@ export default function Customer() {
     sendtasks: null,
     acct_uuid: null
   });
+  const { enqueueSnackbar } = useSnackbar();
   const [searchText, setSearchText] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [sortBy, setSortBy] = useState('建立時間');
@@ -216,6 +218,7 @@ export default function Customer() {
       totalsuccess: task.totalsuccess || 0,
       totalfailed: task.totalfailed || 0,
       totaltriggered: task.totaltriggered || 0,
+      totalnotyet: task.totalnotyet || 0,
     }));
   };
 
@@ -269,7 +272,14 @@ export default function Customer() {
 
   // 處理單一任務更新的函式
   const handleUpdateTask = async (uuid) => {
-    await fetchCheckSends([uuid]);
+    // Check cooldown
+    if (cooldowns[uuid] && (Date.now() - cooldowns[uuid] < 10000)) {
+      enqueueSnackbar("任務已是最新狀態", { variant: 'info' });
+      return;
+    }
+    const result = await fetchCheckSends([uuid]);
+    if (!result) return;
+
     // 更新成功後，設定冷卻時間
     setCooldowns(prev => ({
       ...prev,
@@ -315,7 +325,7 @@ export default function Customer() {
               onChange={(e) => setStatusFilter(e.target.value)}
             >
               <MenuItem value="all">全部</MenuItem>
-              <MenuItem value="triggered">已觸發</MenuItem>
+              {/* <MenuItem value="triggered">已觸發</MenuItem> */}
               <MenuItem value="active">進行中</MenuItem>
               <MenuItem value="pending">等待中</MenuItem>
               <MenuItem value="completed">已完成</MenuItem>
@@ -351,7 +361,7 @@ export default function Customer() {
             label="只顯示進行中"
           />
         </FilterSection>
-        <FilterSection>
+        {/* <FilterSection>
           <FormControlLabel
             control={
               <Switch
@@ -362,7 +372,7 @@ export default function Customer() {
             }
             label="只顯示已觸發"
           />
-        </FilterSection>
+        </FilterSection> */}
 
       </LeftSidebar>
 
@@ -424,7 +434,16 @@ export default function Customer() {
                   </Avatar>
 
                   <Box sx={{ flex: 1 }}>
-                    <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                    <Typography variant="h6"
+                      onClick={() => handleCardClick(task)}
+                      sx={{
+                        cursor: 'pointer',
+                        color: 'primary.main',
+                        '&:hover': {
+                          textDecoration: 'underline',
+                        },
+                        fontWeight: 'bold'
+                      }}>
                       {task.name}
                     </Typography>
                     <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
@@ -463,21 +482,76 @@ export default function Customer() {
                       }
                     </Box> */}
                     {taskStatus && (
-                      <Box sx={{ mt: 1 }}>
-                        <Typography variant="subtitle2">顯示：</Typography>
-                        <ul style={{ margin: 0, paddingLeft: 16 }}>
-                          {taskStatus.send &&
-                            <li>
-                              已成功寄送:
-                              <ul>
-                                {taskStatus.notTriggered && <li>未觸發</li>}
-                                {taskStatus.triggered && <li>已觸發</li>}
-                              </ul>
-                            </li>}
-                          {taskStatus.failed && <li>寄送失敗</li>}
-                          {taskStatus.notyet && <li>待寄送</li>}
-                          {!taskStatus.send && !taskStatus.failed && !taskStatus.notyet && !taskStatus.notTriggered && !taskStatus.triggered && <li>無</li>}
-                        </ul>
+                      <Box sx={{ mt: 1.5 }}>
+                        {/* 總數徽章 */}
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                          <Chip
+                            label={`📋 總數：${task.totalplanned || 0}`}
+                            size="small"
+                            sx={{
+                              backgroundColor: '#e0e7ff',
+                              color: '#3730a3',
+                              fontWeight: 700,
+                              fontSize: '0.78rem',
+                              borderRadius: '8px',
+                            }}
+                          />
+                        </Box>
+                        {/* 統計徽章列 */}
+                        <Box sx={{ display: 'flex', gap: 0.8, flexWrap: 'wrap' }}>
+                          {taskStatus.send && (
+                            <Chip
+                              label={`✅ 已寄出：${task.totalsuccess}`}
+                              size="small"
+                              sx={{
+                                backgroundColor: '#dcfce7',
+                                color: '#15803d',
+                                fontWeight: 600,
+                                fontSize: '0.75rem',
+                                borderRadius: '8px',
+                              }}
+                            />
+                          )}
+                          {taskStatus.failed && (
+                            <Chip
+                              label={`❌ 失敗：${task.totalfailed}`}
+                              size="small"
+                              sx={{
+                                backgroundColor: '#fee2e2',
+                                color: '#b91c1c',
+                                fontWeight: 600,
+                                fontSize: '0.75rem',
+                                borderRadius: '8px',
+                              }}
+                            />
+                          )}
+                          {taskStatus.notyet && (
+                            <Chip
+                              label={`⏳ 待寄送：${task.totalnotyet}`}
+                              size="small"
+                              sx={{
+                                backgroundColor: '#fef9c3',
+                                color: '#a16207',
+                                fontWeight: 600,
+                                fontSize: '0.75rem',
+                                borderRadius: '8px',
+                              }}
+                            />
+                          )}
+                          {!taskStatus.send && !taskStatus.failed && !taskStatus.notyet && !taskStatus.notTriggered && !taskStatus.triggered && (
+                            <Chip
+                              label="— 無資料"
+                              size="small"
+                              sx={{
+                                backgroundColor: '#f1f5f9',
+                                color: '#64748b',
+                                fontWeight: 600,
+                                fontSize: '0.75rem',
+                                borderRadius: '8px',
+                              }}
+                            />
+                          )}
+                        </Box>
                       </Box>
                     )}
                   </Box>
@@ -493,18 +567,11 @@ export default function Customer() {
                     <Button
                       variant="outlined"
                       size="small"
-                      onClick={() => handleCardClick(task)}
-                    >
-                      查看詳情
-                    </Button>
-                    <Button
-                      variant="outlined"
-                      size="small"
                       onClick={() => handleUpdateTask(task.sendtask_uuid)}
                       disabled={isCheckingSends || isInCooldown}
-                      sx={{ minWidth: '80px' }}
+                      sx={{ minWidth: '130px' }}
                     >
-                      {isInCooldown ? '冷卻中' : '更新'}
+                      {isInCooldown ? '目前為最新資料' : '更新'}
                     </Button>
                   </Box>
                 </TaskHeader>

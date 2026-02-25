@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { jwtDecode } from 'jwt-decode';
 import {
   Box,
   Card,
@@ -108,11 +109,12 @@ const StyledTable = styled(Table)(() => ({
         "&:nth-of-type(2)": { width: "45px" }, // 類型
         "&:nth-of-type(3)": { width: "60px" }, // 信箱
         "&:nth-of-type(4)": { width: "60px" }, // 信件主旨
-        "&:nth-of-type(5)": { width: "60px" }, // 預計寄送時間
-        "&:nth-of-type(6)": { width: "60px" }, // 實際寄送時間
-        "&:nth-of-type(7)": { width: "160px" }, // 郵件讀取資訊
-        "&:nth-of-type(8)": { width: "160px" }, // 按鈕點擊資訊
-        "&:nth-of-type(9)": { width: "160px" }, // 附件開啟資訊
+        // "&:nth-of-type(5)": { width: "60px" }, // 預計寄送時間
+        "&:nth-of-type(5)": { width: "60px" }, // 寄出時間
+        "&:nth-of-type(6)": { width: "160px" }, // 郵件讀取資訊
+        "&:nth-of-type(7)": { width: "160px" }, // 按鈕點擊資訊
+        "&:nth-of-type(8)": { width: "160px" }, // 附件開啟資訊
+        "&:nth-of-type(9)": { width: "100px" }, // 寄送結果
       }
     }
   },
@@ -141,6 +143,36 @@ const formatDateTime = (timestamp) => {
   return date.toLocaleString('zh-TW');
 };
 
+// 顯示 Log 資訊的共用元件
+const LogInfo = ({ time, src, dev }) => {
+  if (!time) return '-';
+  return (
+    <Box>
+      <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
+        {formatDateTime(time)}
+      </Typography>
+      <Typography variant="body2">
+        {src}
+      </Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', lineHeight: 1.2, mt: 0.5 }}>
+        {dev}
+      </Typography>
+    </Box>
+  );
+};
+
+// 取得當前登入者 + 任務 uuid 的 localStorage key
+const getFilterIpStorageKey = (uuid = '') => {
+  try {
+    const token = window.localStorage.getItem('accessToken');
+    if (!token) return `filterIp_guest_${uuid}`;
+    const decoded = jwtDecode(token);
+    return `filterIp_${decoded.username || 'guest'}_${uuid}`;
+  } catch {
+    return `filterIp_guest_${uuid}`;
+  }
+};
+
 export default function TaskDetail({ task, open, onClose }) {
   const [taskData, setTaskData] = useState(null);
   const [mailTemplates, setMailTemplates] = useState([]);
@@ -156,8 +188,8 @@ export default function TaskDetail({ task, open, onClose }) {
   const [selectAllAcrossPages, setSelectAllAcrossPages] = useState(false); // 是否選取所有頁面所有資料
   const [acctControl, setAcctControl] = useState([false, false, false, false, false]);
 
-  // 篩選條件
-  const [filters, setFilters] = useState({
+  // 篩選條件（filterIp 在 Dialog 開啟時再從 localStorage 讀取）
+  const defaultFiltersBase = {
     searchText: '',
     dateFrom: '',
     dateTo: '',
@@ -167,9 +199,11 @@ export default function TaskDetail({ task, open, onClose }) {
     showFiled: false,
     sortBy: 'target_email',
     rowsPerPage: 20,
-    sort: 'asc'
-  });
-  const [pendingFilters, setPendingFilters] = useState(filters);
+    sort: 'asc',
+    filterIp: ''
+  };
+  const [filters, setFilters] = useState(defaultFiltersBase);
+  const [pendingFilters, setPendingFilters] = useState(defaultFiltersBase);
 
   // 載入任務詳細資料
   const fetchTaskLogs = async () => {
@@ -187,11 +221,13 @@ export default function TaskDetail({ task, open, onClose }) {
       setLoading(true);
       setError(null);
       // 獲取詳細日誌 (帶上所有參數)
+      const apiFilters = { ...filters };
+
       const response = await axios.post("/api/get_sendlog_detail", {
         sendtask_uuid: task.sendtask_uuid,
         page: page + 1, // 後端頁碼從 1 開始
         acctControl: acctControlArr,
-        ...filters
+        ...apiFilters
       });
 
       const logsResult = response.data;
@@ -222,6 +258,12 @@ export default function TaskDetail({ task, open, onClose }) {
         !!task.notTriggered,
         !!task.triggered
       ]);
+
+      // 從 localStorage 讀取該任務專屬的排除 IP
+      const taskSavedIp = window.localStorage.getItem(getFilterIpStorageKey(task.sendtask_uuid)) || '';
+      const taskFilters = { ...defaultFiltersBase, filterIp: taskSavedIp };
+      setFilters(taskFilters);
+      setPendingFilters(taskFilters);
 
       // 重置狀態
       setLogs([]);
@@ -272,22 +314,9 @@ export default function TaskDetail({ task, open, onClose }) {
       setTaskData(null);
       setPage(0);
 
-      // 建立一個乾淨的預設 filters
-      const defaultFilters = {
-        searchText: '',
-        dateFrom: '',
-        dateTo: '',
-        resultType: 'all',
-        showAccessed: false,
-        showClicked: false,
-        showFiled: false,
-        sortBy: 'target_email',
-        rowsPerPage: 20,
-        sort: 'asc'
-      };
-
-      setFilters(defaultFilters);
-      setPendingFilters(defaultFilters);
+      // 重置為空白狀態（下次開啟對應任務時再從 localStorage 讀取）
+      setFilters(defaultFiltersBase);
+      setPendingFilters(defaultFiltersBase);
 
       setSelectedUuids([]);
       setSelectAllAcrossPages(false);
@@ -454,8 +483,8 @@ export default function TaskDetail({ task, open, onClose }) {
                           {acctControl[0] && <MenuItem value="send">已寄出</MenuItem>}
                           {acctControl[1] && <MenuItem value="failed">寄出失敗</MenuItem>}
                           {acctControl[2] && <MenuItem value="notyet">待寄出</MenuItem>}
-                          {acctControl[3] && <MenuItem value="notTriggered">未觸發</MenuItem>}
-                          {acctControl[4] && <MenuItem value="triggered">已觸發</MenuItem>}
+                          {/* {acctControl[3] && <MenuItem value="notTriggered">未觸發</MenuItem>}
+                          {acctControl[4] && <MenuItem value="triggered">已觸發</MenuItem>} */}
                         </Select>
                       </FormControl>
                       <TextField
@@ -466,6 +495,19 @@ export default function TaskDetail({ task, open, onClose }) {
                         InputProps={{
                           startAdornment: <Search sx={{ mr: 1, color: '#94a3b8' }} />
                         }}
+                      />
+                      <TextField
+                        size="small"
+                        label="排除IP"
+                        placeholder="請填入排除ip，以逗點分隔，例如：1.1.1.1, 2001:db8::1"
+                        value={pendingFilters.filterIp || ''}
+                        onChange={(e) => {
+                          // 只允許 IPv4（數字、點）、IPv6（數字、a-f/A-F、冒號）、逗點與空白
+                          const sanitized = e.target.value.replace(/[^0-9a-fA-F.:, ]/g, '');
+                          setPendingFilters({ ...pendingFilters, filterIp: sanitized });
+                        }}
+                        InputLabelProps={{ shrink: true }}
+                        sx={{ minWidth: 500 }}
                       />
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
@@ -510,8 +552,9 @@ export default function TaskDetail({ task, open, onClose }) {
                           onChange={(e) => setPendingFilters({ ...pendingFilters, sortBy: e.target.value })}
                         >
                           <MenuItem value="target_email">郵件地址</MenuItem>
-                          <MenuItem value="plan_time">預計寄送時間</MenuItem>
-                          <MenuItem value="send_time">實際寄送時間</MenuItem>
+                          {/* <MenuItem value="plan_time">預計寄送時間</MenuItem> */}
+                          {/* <MenuItem value="send_time">實際寄送時間</MenuItem> */}
+                          <MenuItem value="send_time">寄出時間</MenuItem>
                           <MenuItem value="person_info">姓名</MenuItem>
                         </Select>
                       </FormControl>
@@ -551,18 +594,9 @@ export default function TaskDetail({ task, open, onClose }) {
                       size="small"
                       color="secondary"
                       onClick={() => {
-                        setPendingFilters({
-                          searchText: '',
-                          dateFrom: '',
-                          dateTo: '',
-                          resultType: 'all',
-                          showAccessed: false,
-                          showClicked: false,
-                          showFiled: false,
-                          sortBy: 'target_email',
-                          rowsPerPage: 20,
-                          sort: 'asc'
-                        });
+                        // 清除該任務專屬的 localStorage 排除 IP
+                        window.localStorage.removeItem(getFilterIpStorageKey(task?.sendtask_uuid));
+                        setPendingFilters(defaultFiltersBase);
                       }}>
                       清空
                     </Button>
@@ -570,6 +604,13 @@ export default function TaskDetail({ task, open, onClose }) {
                       variant="contained"
                       size="small"
                       onClick={() => {
+                        // 儲存 filterIp 到 localStorage（以帳號 + 任務 uuid 為 key）
+                        const storageKey = getFilterIpStorageKey(task?.sendtask_uuid);
+                        if (pendingFilters.filterIp) {
+                          window.localStorage.setItem(storageKey, pendingFilters.filterIp);
+                        } else {
+                          window.localStorage.removeItem(storageKey);
+                        }
                         setFilters(pendingFilters);
                         setNowRowsPerPage(pendingFilters.rowsPerPage);
                         setPage(0);
@@ -675,11 +716,13 @@ export default function TaskDetail({ task, open, onClose }) {
                         <TableCell>類型</TableCell>
                         <TableCell>受測人</TableCell>
                         <TableCell>信件主旨</TableCell>
-                        <TableCell>預計寄送時間</TableCell>
-                        <TableCell>實際寄送時間</TableCell>
+                        {/* <TableCell>預計寄送時間</TableCell>*/}
+                        {/* <TableCell>實際寄送時間</TableCell> */}
+                        <TableCell>寄出時間</TableCell>
                         <TableCell>郵件讀取資訊</TableCell>
                         <TableCell>按鈕點擊資訊</TableCell>
                         <TableCell>附件開啟資訊</TableCell>
+                        <TableCell>寄送結果</TableCell>
                       </TableRow>
                     </TableHead>
                     <TableBody>
@@ -709,13 +752,11 @@ export default function TaskDetail({ task, open, onClose }) {
                             <TableCell>
                               <Box>
                                 <Chip
-                                  label={log.access_dev ? '已觸發' :
-                                    (log.send_time && log.send_res && log.send_res.includes("True")) ? '已寄出' :
-                                      (log.send_time && log.send_res && log.send_res.includes("False")) ? '寄出失敗' : '待寄出'}
+                                  label={(log.send_time && log.send_res && log.send_res.includes("True")) ? '已寄出' :
+                                    (log.send_time && log.send_res && log.send_res.includes("False")) ? '寄出失敗' : '待寄出'}
                                   size="small"
-                                  color={log.access_dev ? 'error' :
-                                    (log.send_time && log.send_res && log.send_res.includes("True")) ? 'success' :
-                                      (log.send_time && log.send_res && log.send_res.includes("False")) ? 'secondary' : 'info'}
+                                  color={(log.send_time && log.send_res && log.send_res.includes("True")) ? 'success' :
+                                    (log.send_time && log.send_res && log.send_res.includes("False")) ? 'secondary' : 'info'}
                                 />
                               </Box>
                             </TableCell>
@@ -728,39 +769,32 @@ export default function TaskDetail({ task, open, onClose }) {
                               </Typography>
                             </TableCell>
                             <TableCell>{templateTitle || log.template_uuid}</TableCell>
-                            <TableCell>{formatDateTime(log.plan_time)}</TableCell>
+                            {/* <TableCell>{formatDateTime(log.plan_time)}</TableCell> */}
                             <TableCell>{formatDateTime(log.send_time)}</TableCell>
                             <TableCell>
-                              <Typography>
-                                <strong>{formatDateTime(log.access_time)}</strong>
-                              </Typography>
-                              <Typography>
-                                {log.access_src}
-                              </Typography>
-                              <Typography>
-                                {log.access_dev}
-                              </Typography>
+                              <LogInfo
+                                time={log.access_time}
+                                src={log.access_src}
+                                dev={log.access_dev}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <LogInfo
+                                time={log.click_time}
+                                src={log.click_src}
+                                dev={log.click_dev}
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <LogInfo
+                                time={log.file_time}
+                                src={log.file_src}
+                                dev={log.file_dev}
+                              />
                             </TableCell>
                             <TableCell>
                               <Typography>
-                                <strong>{formatDateTime(log.click_time)}</strong>
-                              </Typography>
-                              <Typography>
-                                {log.click_src}
-                              </Typography>
-                              <Typography>
-                                {log.click_dev}
-                              </Typography>
-                            </TableCell>
-                            <TableCell>
-                              <Typography>
-                                <strong>{formatDateTime(log.file_time)}</strong>
-                              </Typography>
-                              <Typography>
-                                {log.file_src}
-                              </Typography>
-                              <Typography>
-                                {log.file_dev}
+                                {log.send_res}
                               </Typography>
                             </TableCell>
                           </TableRow>

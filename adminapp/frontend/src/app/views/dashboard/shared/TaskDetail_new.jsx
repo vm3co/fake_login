@@ -115,6 +115,7 @@ const StyledTable = styled(Table)(() => ({
         "&:nth-of-type(10)": { width: "140px" }, // url連線資訊
         "&:nth-of-type(11)": { width: "140px" }, // QR Code 資訊
         "&:nth-of-type(12)": { width: "140px" }, // 表格輸入資訊
+        "&:nth-of-type(13)": { width: "80px" }, // 寄送結果
       }
     }
   },
@@ -791,6 +792,7 @@ export default function TaskDetail({ task, open, onClose }) {
                         <TableCell>url連線資訊</TableCell>
                         <TableCell>QR Code 掃描資訊</TableCell>
                         <TableCell>表格輸入資訊</TableCell>
+                        <TableCell>寄送結果</TableCell>
                         {/* <TableCell>操作</TableCell> */}
                       </TableRow>
                     </TableHead>
@@ -904,6 +906,9 @@ export default function TaskDetail({ task, open, onClose }) {
                                   </Typography>
                                 </Box>
                               )}
+                            </TableCell>
+                            <TableCell>
+                              {log.send_res}
                             </TableCell>
                           </TableRow>
                         );
