@@ -5,7 +5,7 @@ from backend.services.log_manager import Logger
 from backend.services.redis_client import RedisClient
 from backend.repository.db_controller import db_controller
 from backend.repository.models import SendTask
-from sqlalchemy import select, update, or_
+from sqlalchemy import select, update
 
 logger = Logger().get_logger()
 
@@ -26,20 +26,46 @@ class ArchivingWorker:
 
     async def archive_old_tasks(self):
         """
-        將超過 14 天的任務標記為已封存
+        將超過 14 天的任務標記為已封存。
+        
+        判斷規則：
+        - 三個結束時間欄位：test_end_ut、pre_test_end_ut、stop_time_new
+        - NULL、0、-1 視為「該欄位不適用」，忽略不計入判斷
+        - 有效值（> 0）的欄位，必須全部都超過 14 天，才執行封存
+        - 如果三個欄位都是無效值，則不封存（無法判斷是否結束）
         """
         now = int(time.time())
-        # 14天 = 14 * 24 * 60 * 60
-        threshold_time = now - (14 * 86400)
+        threshold_time = now - (14 * 86400)  # 14天 = 14 * 24 * 60 * 60
+
+        # 撈出所有尚未封存的任務（含時間欄位，在 Python 端判斷）
+        stmt = select(
+            SendTask.sendtask_uuid,
+            SendTask.test_end_ut,
+            SendTask.pre_test_end_ut,
+            SendTask.stop_time_new,
+        ).where(SendTask.is_archived == False)
         
-        # 找出需要封存的任務 UUID
-        stmt = select(SendTask.sendtask_uuid).where(
-            SendTask.test_end_ut < threshold_time,
-            or_(SendTask.stop_time_new < threshold_time, SendTask.stop_time_new.is_(None)),
-            or_(SendTask.pre_test_end_ut < threshold_time, SendTask.pre_test_end_ut.is_(None)),
-            SendTask.is_archived == False
-        )
-        candidates = await db_controller.execute_scalars(stmt)
+        # execute() 回傳完整 Result，.all() 取得 named tuple rows（支援 row.欄位名 存取）
+        result = await db_controller.execute(stmt)
+        all_active = result.all()
+
+        candidates = []
+        for row in all_active:
+            # 將三個時間欄位的值蒐集起來，過濾掉 None、0、-1 等無效值
+            time_fields = {
+                "test_end_ut":     row.test_end_ut,
+                "pre_test_end_ut": row.pre_test_end_ut,
+                "stop_time_new":   row.stop_time_new,
+            }
+            valid_times = [v for v in time_fields.values() if v and v > 0]
+
+            # 如果沒有任何有效時間欄位，無法判斷，跳過
+            if not valid_times:
+                continue
+
+            # 所有有效欄位都必須超過 14 天
+            if all(t < threshold_time for t in valid_times):
+                candidates.append(row.sendtask_uuid)
         
         if not candidates:
             logger.info("No tasks to archive.")

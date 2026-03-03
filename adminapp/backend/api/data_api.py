@@ -218,8 +218,11 @@ def get_router(db_user):
                     await db_controller.delete(SendTask, {"sendtask_uuid": uuid})
                     # sendlog_stats 刪除資料
                     await db_controller.delete(SendLogStats, {"sendtask_uuid": uuid})
+                elif data is None:
+                    # API 回傳 None = 網路問題或 Token 失效，跳過，不做任何封存或刪除
+                    logger.warning(f"SE2 API returned None for {uuid}, skipping (possible network/token issue).")
                 else:
-                    # 僅封存，不刪除
+                    # 任務仍存在於 SE2（只是本地資料有差異），僅封存
                     await db_controller.update(SendTask, {"sendtask_uuid": uuid}, {"is_archived": True})
 
             data = {"added": added_list, "removed": removed_list, "sendlog_stats_status": sendlog_stats_status}

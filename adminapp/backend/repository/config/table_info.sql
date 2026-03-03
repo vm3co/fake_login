@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS sendtasks (
     stop_time_new BIGINT,        -- 延長停止寄送時間
     is_pause BOOLEAN, -- 是否暫停
     pre_test_enable BOOLEAN, -- 是否有前測
-    is_archived BOOLEAN DEFAULT FALSE -- 用於標記該任務是否已超過 14 天
+    is_archived BOOLEAN DEFAULT FALSE -- 用於標記該任務是否已超過 14 天 (超過 標記為true)
 );
 
 -- send_log_details (取代動態 Table)
