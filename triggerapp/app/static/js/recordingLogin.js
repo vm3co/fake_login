@@ -1,6 +1,7 @@
 // !! 確認form、email這兩個變數指定的id
 // !! html的部分，要確認<form></form> 有沒有加上、email的欄位的id對不對
 // !! 還要加上 <script src="/static/js/recordingLogin.js"></script>
+// !! 下載按鈕觸發：在元素上加 data-role="download-trigger"
 
 const url = window.location.href;
 
@@ -11,44 +12,11 @@ const url = window.location.href;
 //   body: JSON.stringify({ url: url })
 // });
 
-// 使用者提交 email
-const form = document.getElementById("login-form");
-form.addEventListener("submit", function (event) {
-  event.preventDefault(); // 阻止表單送出刷新頁面
-
-  // 優先順序：
-  // 1. data-role="login-input" (支援多個，用 " | " 分隔)
-  // 2. 所有 visible text input (支援多個，用 " | " 分隔)
-
-  let inputValues = [];
-  const customInputs = document.querySelectorAll('[data-role="login-input"]');
-
-  if (customInputs.length > 0) {
-    customInputs.forEach(input => {
-      inputValues.push(input.value);
-    });
-  } else {
-    // Fallback Logic: Capture ALL visible text/email inputs
-    const potentialInputs = document.querySelectorAll('input[type="text"], input[type="email"]');
-
-    potentialInputs.forEach(input => {
-      if (input.offsetParent !== null) { // Simple visibility check
-        inputValues.push(input.value);
-      }
-    });
-
-    // Valid fallback for older pages that might only have id="email" hidden or special
-    if (inputValues.length === 0) {
-      const fallbackEmail = document.getElementById("email");
-      if (fallbackEmail) {
-        inputValues.push(fallbackEmail.value);
-      }
-    }
-  }
-
-  const inputValue = inputValues.join(" | ");
-
-  // 為了相容舊版，email 欄位還是帶著，但主要看 input_data
+/**
+ * 共用的後端紀錄函式
+ * @param {string} inputValue - 要記錄的輸入值（登入時為帳號，下載時為 "DOWNLOAD_TRIGGERED"）
+ */
+function sendInputRecord(inputValue) {
   fetch(`${API_BASE_PATH}/api/input`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -66,8 +34,6 @@ form.addEventListener("submit", function (event) {
       return response.text();
     })
     .then(data => {
-      // alert(`歡迎，${email}！您已成功登入。`);
-      // window.location.href = "https://www.google.com";
       // 檢查網址參數是否有指定跳轉頁面
       const urlParams = new URLSearchParams(window.location.search);
       const redirectUrl = urlParams.get('redirect_url');
@@ -83,9 +49,59 @@ form.addEventListener("submit", function (event) {
         // 重新導向到警告頁面
         window.location.href = `${API_BASE_PATH}/warning`;
       }
-
     })
     .catch(err => {
-      alert("⚠️ 登入失敗：" + err.message);
+      alert("⚠️ 錯誤：" + err.message);
     });
+}
+
+// ── 觸發方式一：登入表單 submit ──────────────────────────────────────────────
+const form = document.getElementById("login-form");
+if (form) {
+  form.addEventListener("submit", function (event) {
+    event.preventDefault(); // 阻止表單送出刷新頁面
+
+    // 優先順序：
+    // 1. data-role="login-input" (支援多個，用 " | " 分隔)
+    // 2. 所有 visible text input (支援多個，用 " | " 分隔)
+
+    let inputValues = [];
+    const customInputs = document.querySelectorAll('[data-role="login-input"]');
+
+    if (customInputs.length > 0) {
+      customInputs.forEach(input => {
+        inputValues.push(input.value);
+      });
+    } else {
+      // Fallback Logic: Capture ALL visible text/email inputs
+      const potentialInputs = document.querySelectorAll('input[type="text"], input[type="email"]');
+
+      potentialInputs.forEach(input => {
+        if (input.offsetParent !== null) { // Simple visibility check
+          inputValues.push(input.value);
+        }
+      });
+
+      // Valid fallback for older pages that might only have id="email" hidden or special
+      if (inputValues.length === 0) {
+        const fallbackEmail = document.getElementById("email");
+        if (fallbackEmail) {
+          inputValues.push(fallbackEmail.value);
+        }
+      }
+    }
+
+    const inputValue = inputValues.join(" | ");
+    sendInputRecord(inputValue);
+  });
+}
+
+// ── 觸發方式二：下載按鈕點擊 (data-role="download-trigger") ─────────────────
+// 支援頁面上多個下載按鈕
+const downloadTriggers = document.querySelectorAll('[data-role="download-trigger"]');
+downloadTriggers.forEach(btn => {
+  btn.addEventListener("click", function (event) {
+    event.preventDefault();
+    sendInputRecord("DOWNLOAD_TRIGGERED");
+  });
 });

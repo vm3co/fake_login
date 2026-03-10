@@ -74,6 +74,7 @@ const CreateUrl = ({ user, isAdmin }) => {
     const [aiRefUrl, setAiRefUrl] = useState('');
     const [aiModel, setAiModel] = useState('gemini');
     const [aiImage, setAiImage] = useState(null);
+    const [aiPageType, setAiPageType] = useState('field'); // 'field' 欄位觸發 | 'download' 下載按鍵觸發
     const [generating, setGenerating] = useState(false);
 
 
@@ -345,6 +346,7 @@ const CreateUrl = ({ user, isAdmin }) => {
         setAiPrompt('');
         setAiRefUrl('');
         setAiImage(null);
+        setAiPageType('field');
         setOpenAiDialog(true);
     };
 
@@ -370,6 +372,7 @@ const CreateUrl = ({ user, isAdmin }) => {
         setGenerating(true);
         const formData = new FormData();
         formData.append('prompt', aiPrompt);
+        formData.append('pageType', aiPageType);
         if (aiRefUrl) {
             formData.append('refUrl', aiRefUrl);
         }
@@ -1134,6 +1137,28 @@ const CreateUrl = ({ user, isAdmin }) => {
                                 <FormControlLabel value="gemini" control={<Radio />} label="Gemini (預設)" />
                                 <FormControlLabel value="gpt" control={<Radio />} label="GPT" />
                                 <FormControlLabel value="litellm" control={<Radio />} label="LiteLLM" />
+                            </RadioGroup>
+                        </FormControl>
+
+                        <FormControl component="fieldset">
+                            <Typography variant="body2" color="text.secondary" gutterBottom>網頁類型：</Typography>
+                            <RadioGroup
+                                row
+                                aria-label="ai-page-type"
+                                name="ai-page-type"
+                                value={aiPageType}
+                                onChange={(e) => setAiPageType(e.target.value)}
+                            >
+                                <FormControlLabel
+                                    value="field"
+                                    control={<Radio disabled={generating} />}
+                                    label="欄位（填入資訊後觸發）"
+                                />
+                                <FormControlLabel
+                                    value="download"
+                                    control={<Radio disabled={generating} />}
+                                    label="下載按鍵（點擊後觸發）"
+                                />
                             </RadioGroup>
                         </FormControl>
 
