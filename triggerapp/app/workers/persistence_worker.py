@@ -131,15 +131,15 @@ class PersistenceWorker:
         舊方法：根據 uuid (recipient ID) 查詢 sendtask_uuid
         """
         try:
-             # 1. 查詢 sendtask_uuid
-             stmt = select(SendLogDetail.sendtask_uuid).where(SendLogDetail.uuid == uuid)
-             result = await db_controller.execute_scalars(stmt)
-             sendtask_uuid = result[0] if result else None
-                 
-                 if sendtask_uuid:
-                     await self._invalidate_cache(sendtask_uuid)
-                 else:
-                     logger.warning(f"Could not find sendtask_uuid for uuid {uuid}")
+            # 1. 查詢 sendtask_uuid
+            stmt = select(SendLogDetail.sendtask_uuid).where(SendLogDetail.uuid == uuid)
+            result = await db_controller.execute_scalars(stmt)
+            sendtask_uuid = result[0] if result else None
+
+            if sendtask_uuid:
+                await self._invalidate_cache(sendtask_uuid)
+            else:
+                logger.warning(f"Could not find sendtask_uuid for uuid {uuid}")
         except Exception as e:
             logger.error(f"Failed to invalidate cache by db for {uuid}: {e}")
 
