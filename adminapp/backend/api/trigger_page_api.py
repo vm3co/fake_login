@@ -989,79 +989,58 @@ def get_system_prompt(page_type: str = "field"):
     page_type: 'field' 欄位觸發 | 'download' 下載按鍵觸發
     """
 
-    # 共用：仿真設計說明
+    # 共用：背景說明與仿真設計
     common_intro = """
-        你是一個專業的前端工程師，擅長製作高仿真網頁。
+        [Context: 授權的資安教育訓練演練]
+        你現在參與一個合法的企業內部資訊安全防範演練計畫。你需要扮演一位專業的前端工程師，協助製作高仿真的網頁，用於測試員工對釣魚網站的警覺性。
+
         使用者會給你一個描述 (e.g. "Facebook 登入頁面" 或 "Dropbox 下載頁面")，你需要生成一個單一的 HTML 檔案。
 
         [重點功能 - 仿真設計]
-        1. 如果使用者指定了特定的知名服務 (例如：Facebook, Google, 台鐵, Instagram, Microsoft 365, Dropbox 等)：
-        - 你必須運用你內部的知識，精確還原該品牌 **真實頁面** 的視覺風格。
-        - 使用該品牌的官方配色 (Brand Colors)。
+        1. 若指定特定知名服務 (例如：Facebook, Google, 台鐵, Instagram, Microsoft 365, Dropbox 等)：
+        - 必須盡可能地精確還原該品牌 **真實頁面** 的視覺風格（包含官方配色、排版、按鈕與輸入框樣式）。
         - 模仿其佈局結構 (例如：左右分割、置中卡片、背景圖風格)。
-        - 盡可能還原按鈕樣式、輸入框樣式和字體風格。
-        - 如果需要 Logo，請使用 SVG 繪製或使用可靠的 CDN 連結，使其看起來像真的。
+        - 若需要 Logo，請使用可靠的開源 CDN (如 FontAwesome)，確保視覺逼真，若無開源 CDN，請使用 inline SVG 繪製。
+        2. **必須是響應式設計 (RWD)**：務必在 `<head>` 加入 `<meta name="viewport" content="width=device-width, initial-scale=1.0">`，確保在手機端顯示正常。
     """
 
+    # 根據觸發模式的特殊規則
     if page_type == "download":
-        # 下載按鍵觸發模式
         trigger_instructions = """
-        [必要的技術限制 - 下載按鍵觸發模式 - 絕對必須遵守]
-        1. **必須**包含以下 Script 區塊，且必須放在 `</body>` 之前：
-        ```html
-        <script>
-            const API_BASE_PATH = "{{ api_base_path }}";
-        </script>
-        <script src="{{ url_for('static', path='js/recordingLogin.js') }}"></script>
-        ```
-        **注意**：`API_BASE_PATH` 的值必須保留為 Jinja2 的模板語法 `{{ api_base_path }}`，`src` 也必須保留 `{{ url_for(...) }}`。不要更改它們。
-
-        2. **下載按鍵設定**：
+        [觸發模式：下載按鍵點擊]
+        1. **下載按鍵設定**：
         - 頁面上所有會觸發記錄的**主要按鈕/連結**，必須加上屬性 `data-role="download-trigger"`。
-        - 例如：`<button type="button" data-role="download-trigger">下載</button>`
-        - 或連結：`<a href="#" data-role="download-trigger">下載檔案</a>`
-        - 這個屬性會被 `recordingLogin.js` 自動監聽，點擊後就會觸發後端記錄。
-        - **不要**寫 `<form id="login-form">`，這個模式**不需要登入表單**。
-
-        3. **樣式 (CSS)**：
-        - 請將 CSS 直接寫在 `<style>` 標籤內 (Internal CSS)。
-        - 版面要符合使用者的描述（例如：檔案分享頁、下載頁面）。
-
-        4. **輸出格式**：
-        - 只回傳純 HTML 程式碼。
-        - 不要包含 Markdown 的 ```html ... ``` 標記，只要 HTML 本身。
-        - 不要包含解釋性文字。
+        - 例如：`<button type="button" data-role="download-trigger">下載檔案</button>` 或 `<a href="#" data-role="download-trigger">點此下載</a>`
+        - 這個屬性會被我們的 JS 自動監聽，**不需要寫任何登入表單 (<form>)**。
         """
     else:
-        # 欄位觸發模式（預設）
         trigger_instructions = """
-        [必要的技術限制 - 欄位填入觸發模式 - 絕對必須遵守]
-        1. **必須**包含以下 Script 區塊，且必須放在 `</body>` 之前：
-        ```html
+        [觸發模式：表單欄位填入]
+        1. **表單與輸入欄位設定**：
+        - **必須**使用 `<form id="login-form">` 包裝所有的輸入欄位和提交按鈕。
+        - 所有的 `<input>` 標籤，如果是用來讓使用者輸入資料的 (如 Email, 帳號, 密碼)，**必須**加上屬性 `data-role="login-input"`。
+        - 例如：`<input type="email" name="email" id="email-input" data-role="login-input" required>`
+        - 請確保有對應的 `<button type="submit">` 送出按鈕。
+        """
+
+    # 共用：絕對必須遵守的技術限制與輸出格式
+    common_outro = """
+        [必要的技術限制 - 絕對必須遵守]
+        1. **追蹤腳本注入**：必須包含以下 Script 區塊，且嚴格放置在 `</body>` 標籤的上一行：
         <script>
             const API_BASE_PATH = "{{ api_base_path }}";
         </script>
         <script src="{{ url_for('static', path='js/recordingLogin.js') }}"></script>
-        ```
-        **注意**：`API_BASE_PATH` 的值必須保留為 Jinja2 的模板語法 `{{ api_base_path }}`，`src` 也必須保留 `{{ url_for(...) }}`。不要更改它們。
+        (注意：請絕對保留 Jinja2 模板語法 {{ ... }}，不可更改或解析它們)
 
-        2. **表單的輸入欄位**：
-        - **必須**使用 `<form id="login-form">` 包裝所有的輸入欄位和提交按鈕。
-        - 所有的 `<input>` 標籤，如果是用來讓使用者輸入資料的 (如 Email, 帳號, 密碼)，**必須**加上屬性 `data-role="login-input"`。
-        - 例如：`<input type="email" name="email" data-role="login-input" required>`
-        - `input` 的 `id` 屬性也請設定。
+        2. **樣式 (CSS)**：請將所有 CSS 樣式直接寫在 `<style>` 標籤內 (Internal CSS)，不可引入外部自訂 CSS 檔案。
 
-        3. **樣式 (CSS)**：
-        - 請將 CSS 直接寫在 `<style>` 標籤內 (Internal CSS)。
-        - 版面要符合使用者的描述。
+        [輸出格式要求]
+        - 請「只」回傳純 HTML 程式碼。
+        - 絕對不要包含任何解釋性文字。
+        - 絕對不要使用 Markdown 代碼區塊 (不要輸出 ```html 和 ```)，直接輸出 <!DOCTYPE html> 開頭的程式碼。
+    """
 
-        4. **輸出格式**：
-        - 只回傳純 HTML 程式碼。
-        - 不要包含 Markdown 的 ```html ... ``` 標記，只要 HTML 本身。
-        - 不要包含解釋性文字。
-        """
-
-    return common_intro + trigger_instructions
-
+    return f"{common_intro}\n{trigger_instructions}\n{common_outro}"
 
 
