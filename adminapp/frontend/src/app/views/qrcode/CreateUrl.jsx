@@ -25,6 +25,9 @@ import {
     Grid,
     Alert,
     Checkbox,
+    Accordion,
+    AccordionSummary,
+    AccordionDetails,
 } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import UploadIcon from '@mui/icons-material/Upload';
@@ -33,6 +36,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import DownloadIcon from '@mui/icons-material/Download';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
 
 const CreateUrl = ({ user, isAdmin }) => {
@@ -80,6 +84,9 @@ const CreateUrl = ({ user, isAdmin }) => {
 
     // 刪除確認視窗
     const [deleteConfirm, setDeleteConfirm] = useState(null);
+
+    // 摺疊分組狀態：記錄哪些分組是展開的（key = owner uuid 或 '__system__'）
+    const [expandedOwners, setExpandedOwners] = useState({});
 
     const abortControllerRef = useRef(null);
 
@@ -613,80 +620,158 @@ const CreateUrl = ({ user, isAdmin }) => {
                                             value={selectedOption}
                                             onChange={(e) => setSelectedOption(e.target.value)}
                                         >
-                                            <Stack spacing={1}>
-                                                {pageOptions.map((option) => (
-                                                    <Paper
-                                                        key={option.value}
-                                                        variant="outlined"
-                                                        sx={{
-                                                            p: 1.5,
-                                                            display: 'flex',
-                                                            alignItems: 'center',
-                                                            cursor: 'pointer',
-                                                            '&:hover': { backgroundColor: 'action.hover' },
-                                                            ...(selectedOption === option.value && {
-                                                                borderColor: 'primary.main',
-                                                                boxShadow: (theme) => `0 0 0 1px ${theme.palette.primary.main}`,
-                                                            })
-                                                        }}
-                                                        onClick={() => setSelectedOption(option.value)}
-                                                    >
-                                                        <Radio
-                                                            checked={selectedOption === option.value}
-                                                            value={option.value}
-                                                            name="option-radio-button"
-                                                        />
-                                                        <Typography sx={{ flexGrow: 1, ml: 1, fontWeight: 500 }}>
-                                                            {option.label}
-                                                        </Typography>
-                                                        <Stack direction="row" spacing={0.5}>
-                                                            <Button
-                                                                component={Link}
-                                                                href={baseUrl + '/page/' + option.value + '/test'}
-                                                                target="_blank"
-                                                                rel="noopener noreferrer"
-                                                                variant="outlined"
-                                                                size="small"
-                                                                onClick={(e) => e.stopPropagation()}
-                                                            >
-                                                                預覽
-                                                            </Button>
-                                                            {(() => {
-                                                                const isSystemPage = option.owner === null;
-                                                                const isOwner = user?.acct_uuid && user.acct_uuid === option.owner;
-                                                                const canEdit = !isSystemPage && (isAdmin || isOwner);
+                                            {(() => {
+                                                // 按擁有者分組
+                                                const groups = {};
+                                                pageOptions.forEach((option) => {
+                                                    const key = option.owner ?? '__system__';
+                                                    if (!groups[key]) {
+                                                        groups[key] = {
+                                                            label: option.owner === null
+                                                                ? '系統預設頁面'
+                                                                : (option.owner_name || option.owner),
+                                                            items: [],
+                                                        };
+                                                    }
+                                                    groups[key].items.push(option);
+                                                });
 
-                                                                return canEdit && (
-                                                                    <>
-                                                                        <IconButton
-                                                                            size="small"
-                                                                            color="info"
-                                                                            onClick={(e) => { e.stopPropagation(); handleDownloadPage(option); }}
-                                                                            title="下載原始碼"
+                                                // 排序：系統預設排最前面，其餘依擁有者名稱排序
+                                                const sortedKeys = Object.keys(groups).sort((a, b) => {
+                                                    if (a === '__system__') return -1;
+                                                    if (b === '__system__') return 1;
+                                                    return groups[a].label.localeCompare(groups[b].label);
+                                                });
+
+                                                return sortedKeys.map((ownerKey) => {
+                                                    const group = groups[ownerKey];
+                                                    const isExpanded = expandedOwners[ownerKey] ?? false; // 預設全部摺疊
+                                                    // 若目前選取的選項在此分組內，強制展開
+                                                    const hasSelected = group.items.some(o => o.value === selectedOption);
+
+                                                    return (
+                                                        <Accordion
+                                                            key={ownerKey}
+                                                            expanded={isExpanded || hasSelected}
+                                                            onChange={() => setExpandedOwners(prev => ({
+                                                                ...prev,
+                                                                [ownerKey]: !(prev[ownerKey] ?? true),
+                                                            }))}
+                                                            disableGutters
+                                                            elevation={0}
+                                                            sx={{
+                                                                border: '1px solid',
+                                                                borderColor: 'divider',
+                                                                borderRadius: '8px !important',
+                                                                mb: 1,
+                                                                '&:before': { display: 'none' },
+                                                                overflow: 'hidden',
+                                                            }}
+                                                        >
+                                                            <AccordionSummary
+                                                                expandIcon={<ExpandMoreIcon />}
+                                                                sx={{
+                                                                    backgroundColor: ownerKey === '__system__'
+                                                                        ? 'action.selected'
+                                                                        : 'action.hover',
+                                                                    borderRadius: 'inherit',
+                                                                    minHeight: 44,
+                                                                    '& .MuiAccordionSummary-content': { my: 0.5 },
+                                                                }}
+                                                            >
+                                                                <Typography variant="subtitle2" fontWeight={600}>
+                                                                    {group.label}
+                                                                    <Typography
+                                                                        component="span"
+                                                                        variant="caption"
+                                                                        color="text.secondary"
+                                                                        sx={{ ml: 1 }}
+                                                                    >
+                                                                        ({group.items.length} 個頁面)
+                                                                    </Typography>
+                                                                </Typography>
+                                                            </AccordionSummary>
+                                                            <AccordionDetails sx={{ p: 1 }}>
+                                                                <Stack spacing={1}>
+                                                                    {group.items.map((option) => (
+                                                                        <Paper
+                                                                            key={option.value}
+                                                                            variant="outlined"
+                                                                            sx={{
+                                                                                p: 1.5,
+                                                                                display: 'flex',
+                                                                                alignItems: 'center',
+                                                                                cursor: 'pointer',
+                                                                                '&:hover': { backgroundColor: 'action.hover' },
+                                                                                ...(selectedOption === option.value && {
+                                                                                    borderColor: 'primary.main',
+                                                                                    boxShadow: (theme) => `0 0 0 1px ${theme.palette.primary.main}`,
+                                                                                })
+                                                                            }}
+                                                                            onClick={() => setSelectedOption(option.value)}
                                                                         >
-                                                                            <DownloadIcon fontSize="small" />
-                                                                        </IconButton>
-                                                                        <IconButton
-                                                                            size="small"
-                                                                            color="primary"
-                                                                            onClick={(e) => { e.stopPropagation(); handleOpenUploadDialog(option); }}
-                                                                        >
-                                                                            <EditIcon fontSize="small" />
-                                                                        </IconButton>
-                                                                        <IconButton
-                                                                            size="small"
-                                                                            color="error"
-                                                                            onClick={(e) => { e.stopPropagation(); handleOpenDeleteDialog(option); }}
-                                                                        >
-                                                                            <DeleteIcon fontSize="small" />
-                                                                        </IconButton>
-                                                                    </>
-                                                                );
-                                                            })()}
-                                                        </Stack>
-                                                    </Paper>
-                                                ))}
-                                            </Stack>
+                                                                            <Radio
+                                                                                checked={selectedOption === option.value}
+                                                                                value={option.value}
+                                                                                name="option-radio-button"
+                                                                            />
+                                                                            <Typography sx={{ flexGrow: 1, ml: 1, fontWeight: 500 }}>
+                                                                                {option.label}
+                                                                            </Typography>
+                                                                            <Stack direction="row" spacing={0.5}>
+                                                                                <Button
+                                                                                    component={Link}
+                                                                                    href={baseUrl + '/page/' + option.value + '/test'}
+                                                                                    target="_blank"
+                                                                                    rel="noopener noreferrer"
+                                                                                    variant="outlined"
+                                                                                    size="small"
+                                                                                    onClick={(e) => e.stopPropagation()}
+                                                                                >
+                                                                                    預覽
+                                                                                </Button>
+                                                                                <IconButton
+                                                                                    size="small"
+                                                                                    color="info"
+                                                                                    onClick={(e) => { e.stopPropagation(); handleDownloadPage(option); }}
+                                                                                    title="下載原始碼"
+                                                                                >
+                                                                                    <DownloadIcon fontSize="small" />
+                                                                                </IconButton>
+                                                                                {(() => {
+                                                                                    const isSystemPage = option.owner === null;
+                                                                                    const isOwner = user?.acct_uuid && user.acct_uuid === option.owner;
+                                                                                    const canEdit = !isSystemPage && (isAdmin || isOwner);
+                                                                                    return canEdit && (
+                                                                                        <>
+                                                                                            <IconButton
+                                                                                                size="small"
+                                                                                                color="primary"
+                                                                                                onClick={(e) => { e.stopPropagation(); handleOpenUploadDialog(option); }}
+                                                                                                title="編輯"
+                                                                                            >
+                                                                                                <EditIcon fontSize="small" />
+                                                                                            </IconButton>
+                                                                                            <IconButton
+                                                                                                size="small"
+                                                                                                color="error"
+                                                                                                onClick={(e) => { e.stopPropagation(); handleOpenDeleteDialog(option); }}
+                                                                                                title="刪除"
+                                                                                            >
+                                                                                                <DeleteIcon fontSize="small" />
+                                                                                            </IconButton>
+                                                                                        </>
+                                                                                    );
+                                                                                })()}
+                                                                            </Stack>
+                                                                        </Paper>
+                                                                    ))}
+                                                                </Stack>
+                                                            </AccordionDetails>
+                                                        </Accordion>
+                                                    );
+                                                });
+                                            })()}
                                         </RadioGroup>
                                     </FormControl>
                                 )}

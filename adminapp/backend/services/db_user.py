@@ -590,7 +590,7 @@ class DBUser:
                 "acct_id": acct.acct_id,
                 "acct_full_name": acct.acct_full_name,
                 "acct_email": acct.acct_email,
-                "is_active": acct.acct_activate, 
+                "is_active": acct.is_active, 
                 "orgs": acct.orgs,
                 "is_registered": acct_uuid in registered_uuids
             }

@@ -25,7 +25,7 @@ import io
 from PIL import Image
 
 from backend.services.log_manager import Logger
-from backend.repository.models import TriggerPage
+from backend.repository.models import TriggerPage, User
 from backend.repository.db_controller import db_controller
 from sqlalchemy import select, update, delete, insert
 from backend.services.db_user import DBUser
@@ -117,9 +117,23 @@ def get_router(db_user: DBUser):
         # 查詢所有頁面
         rows = await db_controller.get(TriggerPage, order_by=TriggerPage.create_time.desc())
 
+        # 批次查詢擁有者名稱：收集所有非 null 的 owner_uuid
+        owner_uuids = list({row.owner_uuid for row in rows if row.owner_uuid is not None})
+        owner_name_map = {}
+        if owner_uuids:
+            user_rows = await db_controller.get(User, filters={"acct_uuid": owner_uuids})
+            for u in user_rows:
+                # 優先使用 full_name，否則 fallback 到 username
+                owner_name_map[u.acct_uuid] = u.full_name or u.username
+
         # 轉換格式以符合前端需求
         data = [
-            {"value": row.page_value, "label": row.page_label, "owner": row.owner_uuid}
+            {
+                "value": row.page_value,
+                "label": row.page_label,
+                "owner": row.owner_uuid,
+                "owner_name": owner_name_map.get(row.owner_uuid) if row.owner_uuid else None
+            }
             for row in rows
         ]
         
