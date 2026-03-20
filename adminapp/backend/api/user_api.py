@@ -323,6 +323,41 @@ def get_router(db_user):
         users = await db_user.get_all_users_with_registration_status()
         return users
 
+    # 管理員重設使用者密碼（不需舊密碼）
+    class AdminResetPasswordRequest(BaseModel):
+        acct_uuid: str
+        new_password: str
+
+    @router.post(
+        "/users/reset-password",
+        tags=["user"]
+    )
+    async def admin_reset_password(
+        data: AdminResetPasswordRequest,
+        current_user: dict = Depends(get_current_user)
+    ):
+        """
+        管理員重設使用者密碼 API（不需驗證舊密碼）
+        :param data: 包含 acct_uuid 與 new_password
+        :return: 更新結果
+        """
+        if current_user.get("user_type") != "admin":
+            raise HTTPException(status_code=403, detail="權限不足")
+
+        if not data.new_password or len(data.new_password) < 4:
+            raise HTTPException(status_code=400, detail="新密碼長度至少需要 4 個字元")
+
+        result = await db_user.update_password(
+            user_type="user",
+            identifier=data.acct_uuid,
+            new_password=data.new_password
+        )
+
+        if result["status"] == "success":
+            logger.info(f"Admin reset password for user: {data.acct_uuid}")
+            return {"status": "success", "message": "密碼重設成功"}
+        raise HTTPException(status_code=400, detail=result["message"])
+
     @router.post(
         "/users/sync-accts",
         tags=["user"]
