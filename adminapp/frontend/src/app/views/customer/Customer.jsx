@@ -14,8 +14,13 @@ import {
   Switch,
   FormControlLabel,
   Avatar,
-  CircularProgress
+  CircularProgress,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  IconButton,
 } from '@mui/material';
+import CloseIcon from '@mui/icons-material/Close';
 import { useSnackbar } from 'notistack';
 import { styled } from '@mui/material/styles';
 import {
@@ -23,11 +28,13 @@ import {
   Schedule,
   Search,
   FilterList,
+  AddCircleOutline,
 } from '@mui/icons-material';
 
 import useCustomer from 'app/hooks/useCustomer';
 import { useCheckSends } from "app/hooks/useCheckSends";
 import TaskDetail from './TaskDetail';
+import CreateTask from './CreateTask';
 
 
 const MainContainer = styled(Box)(() => ({
@@ -138,7 +145,8 @@ const formatDate = (timestamp, type = "datetime") => {
 export default function Customer() {
   const [customerData, setCustomerData] = useState({
     sendtasks: null,
-    acct_uuid: null
+    acct_uuid: null,
+    task_creation_enabled: false
   });
   const { enqueueSnackbar } = useSnackbar();
   const [searchText, setSearchText] = useState('');
@@ -150,6 +158,7 @@ export default function Customer() {
     open: false,
     task: null
   });
+  const [createTaskOpen, setCreateTaskOpen] = useState(false);
 
   // 新增：更新按鈕相關 state
   const [isCheckingSends, setIsCheckingSends] = useState(false);
@@ -163,9 +172,11 @@ export default function Customer() {
   const loadCustomerData = () => {
     const sendtasks = parseTasks(getCookie('sendtasks'));
     const acct_uuid = getCookie('acct_uuid');
+    const task_creation_enabled = getCookie('task_creation_enabled') === true || getCookie('task_creation_enabled') === 'true';
     setCustomerData({
       sendtasks,
-      acct_uuid
+      acct_uuid,
+      task_creation_enabled
     });
   };
 
@@ -361,6 +372,21 @@ export default function Customer() {
             label="只顯示進行中"
           />
         </FilterSection>
+        {customerData.task_creation_enabled && (
+          <FilterSection>
+            <FormControlLabel
+              control={
+                <Switch
+                  // checked={ }
+                  // onChange={ }
+                  color="primary"
+                />
+              }
+              label="只顯示使用者建立之任務"
+            />
+          </FilterSection>
+        )}
+
         {/* <FilterSection>
           <FormControlLabel
             control={
@@ -387,6 +413,17 @@ export default function Customer() {
               顯示 {filteredTasks.length} 個任務 / 共 {taskData.length} 個
             </Typography>
           </Box>
+          {customerData.task_creation_enabled && (
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<AddCircleOutline />}
+              onClick={() => setCreateTaskOpen(true)}
+              sx={{ borderRadius: '8px', fontWeight: 600 }}
+            >
+              新增任務
+            </Button>
+          )}
         </Box>
 
         {error && (
@@ -586,6 +623,24 @@ export default function Customer() {
         open={detailDialog.open}
         onClose={() => setDetailDialog({ open: false, task: null })}
       />
+
+      {/* 新增任務 Dialog */}
+      <Dialog
+        open={createTaskOpen}
+        onClose={() => setCreateTaskOpen(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          新增任務
+          <IconButton onClick={() => setCreateTaskOpen(false)} size="small">
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent>
+          <CreateTask />
+        </DialogContent>
+      </Dialog>
     </MainContainer>
   );
 }

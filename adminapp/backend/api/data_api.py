@@ -979,6 +979,30 @@ def get_router(db_user):
         except Exception as e:
             return {"status": "error", "message": str(e)}
 
+    class UpdateCustomerTaskCreationRequest(BaseModel):
+        customer_name: str = ""
+        enabled: bool = False
+
+    @router.post(
+        "/update_customer_task_creation",
+        tags=["data"]
+        )
+    async def update_customer_task_creation(request: UpdateCustomerTaskCreationRequest):
+        """
+        更新客戶的「建立任務功能」開關狀態
+
+        1. POST /update_customer_task_creation
+        2. Body: {"customer_name": ..., "enabled": true/false}
+        """
+        if not request.customer_name:
+            return {"status": "error", "message": "沒有收到客戶名稱"}
+
+        try:
+            result = await db_user.update_customer_task_creation(request.customer_name, request.enabled)
+            return result
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
     class DeleteCustomerRequest(BaseModel):
         del_customer_names: list[str] = []
 

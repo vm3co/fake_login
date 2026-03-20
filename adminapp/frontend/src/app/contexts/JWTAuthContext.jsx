@@ -50,10 +50,11 @@ const setUserCookies = (user) => {
     document.cookie = "sendtasks=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
 
   } else if (user.user_type === "customer") {
-    // 客戶：設定 sendtasks 和 acct_uuid
+    // 客戶：設定 sendtasks、acct_uuid 與 task_creation_enabled
     const sendtasks = user.sendtasks || [];
     document.cookie = `sendtasks=${encodeURIComponent(JSON.stringify(sendtasks))}; path=/;`;
     document.cookie = `acct_uuid=${encodeURIComponent(user.acct_uuid)}; path=/;`;
+    document.cookie = `task_creation_enabled=${encodeURIComponent(user.task_creation_enabled || false)}; path=/;`;
     
     // 清除一般使用者相關的 cookie（如果存在）
     document.cookie = "orgs=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
@@ -65,6 +66,7 @@ const clearUserCookies = () => {
   document.cookie = "orgs=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
   document.cookie = "acct_uuid=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
   document.cookie = "sendtasks=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  document.cookie = "task_creation_enabled=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
 };
 
 const reducer = (state, action) => {

@@ -676,6 +676,25 @@ class DBUser:
             logger.error(f"Update customer sendtasks failed: {e}")
             return {"status": "error", "message": str(e)}
 
+    async def update_customer_task_creation(self, customer_name: str, enabled: bool):
+        """
+        更新客戶的「建立任務功能」開關狀態。
+        :param customer_name: 客戶名稱
+        :param enabled: 是否啟用建立任務功能
+        """
+        customer = await db_controller.get_one(CustomerAcct, {"customer_name": customer_name})
+
+        if not customer:
+            logger.error(f"Customer {customer_name} does not exist.")
+            return {"status": "error", "message": "客戶不存在"}
+
+        try:
+            await db_controller.update(CustomerAcct, {"customer_name": customer_name}, {"task_creation_enabled": enabled})
+            return {"status": "success", "message": f"客戶 {customer_name} 建立任務功能已{'啟用' if enabled else '停用'}"}
+        except Exception as e:
+            logger.error(f"Update customer task_creation_enabled failed: {e}")
+            return {"status": "error", "message": str(e)}
+
     async def update_password(self, user_type: str, identifier: str, new_password: str, old_password: str = None, acct_uuid: str = None) -> dict:
         """
         統一的密碼更新方法，支援一般用戶和客戶

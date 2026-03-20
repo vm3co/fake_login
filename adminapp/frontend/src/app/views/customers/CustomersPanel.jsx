@@ -2,12 +2,13 @@ import { useState, useMemo, useContext } from 'react';
 import { useSnackbar } from 'notistack';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import {
-  Box, 
-  Button, 
-  Divider, 
-  CircularProgress, 
-  Typography, 
-  FormControlLabel, 
+  Box,
+  Button,
+  Divider,
+  CircularProgress,
+  Typography,
+  FormControlLabel,
+  Switch,
 } from '@mui/material';
 import Accordion from '@mui/material/Accordion';
 import AccordionActions from '@mui/material/AccordionActions';
@@ -63,8 +64,8 @@ const parseTasks = (tasksData) => {
 
 export default function CustomersPanel() {
   const { enqueueSnackbar } = useSnackbar();
-  
-  const { customers, loading, deleteCustomer, updateCustomerSendtasks } = useContext(CustomersContext);
+
+  const { customers, loading, deleteCustomer, updateCustomerSendtasks, updateCustomerTaskCreation } = useContext(CustomersContext);
   const { tasksData } = useContext(SendtaskListContext);
   const [selectedCustomers, setSelectedCustomers] = useState([]);  // 勾選客戶
   // 為每個客戶管理選中的 sendtasks
@@ -74,7 +75,7 @@ export default function CustomersPanel() {
   // 按創建時間排序客戶列表
   const sortedCustomers = useMemo(() => {
     if (!customers || customers.length === 0) return [];
-    
+
     return [...customers].sort((a, b) => {
       const dateA = new Date(a.create_time);
       const dateB = new Date(b.create_time);
@@ -139,7 +140,7 @@ export default function CustomersPanel() {
         // 其他欄位正常處理
         return { ...task, [field]: isChecked };
       });
-      
+
       return { ...prev, [customerKey]: updatedTasks };
     });
   };
@@ -167,13 +168,13 @@ export default function CustomersPanel() {
           return newState;
         });
       }
-      
+
     } catch (error) {
       enqueueSnackbar(`保存失敗: ${error.message}`, { variant: 'warning' });
     } finally {
       setSavingCustomer(null);
     }
-};
+  };
 
   // 處理取消操作
   const handleCancelCustomerSendtasks = (customer) => {
@@ -206,7 +207,7 @@ export default function CustomersPanel() {
   //     </Alert>
   //   );
   // }
-  
+
   if (!customers || customers.length === 0) {
     return (
       <Box textAlign="center" py={4}>
@@ -284,6 +285,24 @@ export default function CustomersPanel() {
 
                 <AccordionDetails className="details">
                   <Box className="column helper">
+                    <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1, p: 1.5, bgcolor: 'grey.50', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+                      <FormControlLabel
+                        control={
+                          <Switch
+                            checked={!!customer.task_creation_enabled}
+                            onChange={(e) => updateCustomerTaskCreation(customerKey, e.target.checked)}
+                            color="primary"
+                            size="small"
+                            disabled={isCurrentlySaving}
+                          />
+                        }
+                        label={
+                          <Typography variant="body2" fontWeight={600}>
+                            建立任務功能(尚未實作)
+                          </Typography>
+                        }
+                      />
+                    </Box>
                     <Autocomplete
                       multiple
                       filterSelectedOptions
@@ -355,15 +374,15 @@ export default function CustomersPanel() {
                 <Divider />
 
                 <AccordionActions>
-                  <Button 
+                  <Button
                     size="small"
                     disabled={isCurrentlySaving}
                     onClick={() => handleCancelCustomerSendtasks(customer)}
                   >
                     取消
                   </Button>
-                  <Button 
-                    size="small" 
+                  <Button
+                    size="small"
                     color="primary"
                     disabled={isCurrentlySaving || !customerSendtasks[customerKey]} // 沒變更時禁用
                     onClick={() => handleSaveCustomerSendtasks(customer)}

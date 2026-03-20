@@ -219,8 +219,43 @@ export default function useCustomers() {
         }
     };
 
+    // 更新客戶「建立任務功能」開關
+    const updateCustomerTaskCreation = async (customerName, enabled) => {
+        const controller = createController();
+        const cleanup = registerRequest(controller);
+
+        try {
+            const response = await axios.post("/api/update_customer_task_creation", {
+                customer_name: customerName,
+                enabled: enabled
+            }, {
+                signal: controller.signal,
+            });
+
+            const result = response.data;
+
+            if (result.status === "success") {
+                enqueueSnackbar(`客戶 ${customerName} 建立任務功能已${enabled ? '啟用' : '停用'}`, { variant: 'success' });
+                await fetchCustomers();
+                return result;
+            } else {
+                enqueueSnackbar(result.message || "更新失敗", { variant: 'warning' });
+            }
+        } catch (error) {
+            if (error.name === "AbortError") {
+                console.log("更新建立任務功能請求被中止");
+            } else {
+                console.error("更新建立任務功能失敗:", error);
+                setError(error.message || "網路錯誤，請稍後再試");
+            }
+        } finally {
+            cleanup();
+        }
+    };
+
     // 更新客戶密碼
     const updateCustomerPassword = async (customerName, oldPassword, newPassword) => {
+
         const controller = createController();
         const cleanup = registerRequest(controller);
 
@@ -293,6 +328,7 @@ export default function useCustomers() {
         createCustomer,
         fetchCustomers,
         updateCustomerSendtasks,
+        updateCustomerTaskCreation,
         deleteCustomer,
         updateCustomerPassword,
         clearMessages,
