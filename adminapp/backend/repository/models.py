@@ -159,3 +159,11 @@ class TriggerPage(Base):
     owner_uuid = Column(String(36), index=True)
     page_type = Column(Text, default='custom')
     create_time = Column(TIMESTAMP, server_default=func.now())
+
+class SystemConfig(Base):
+    __tablename__ = "system_config"
+
+    id = Column(Integer, primary_key=True, index=True)
+    config_key = Column(Text, unique=True, nullable=False, index=True)
+    config_value = Column(Text, nullable=True)
+    updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())

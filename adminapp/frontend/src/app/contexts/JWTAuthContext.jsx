@@ -1,4 +1,4 @@
-import { createContext, useEffect, useReducer } from "react";
+import { createContext, useEffect, useReducer, useState } from "react";
 import { useSnackbar } from 'notistack';
 import { jwtDecode } from "jwt-decode";
 import axios from "axios";
@@ -69,6 +69,17 @@ const clearUserCookies = () => {
   document.cookie = "task_creation_enabled=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
 };
 
+// 計算公告的識別 hash（更新公告內容後會自動觸發重新顯示）
+const getAnnouncementKey = (content) => {
+  if (!content) return null;
+  let hash = 0;
+  for (let i = 0; i < content.length; i++) {
+    hash = ((hash << 5) - hash) + content.charCodeAt(i);
+    hash |= 0;
+  }
+  return `announcement_dismissed_${hash}`;
+};
+
 const reducer = (state, action) => {
   switch (action.type) {
     case "INIT": {
@@ -108,9 +119,46 @@ export const AuthProvider = ({ children }) => {
   const [state, dispatch] = useReducer(reducer, initialState);
   const { enqueueSnackbar } = useSnackbar();
 
+  // 公告彈窗狀態
+  const [announcement, setAnnouncement] = useState("");
+  const [announcementVisible, setAnnouncementVisible] = useState(false);
+
+  // 登入後取得公告內容（admin 不顯示）
+  const fetchAndShowAnnouncement = async () => {
+    try {
+      const { data } = await axios.get("/api/system/config");
+      const content = data.announcement || "";
+      if (content) {
+        const key = getAnnouncementKey(content);
+        // 若使用者尚未勾選「之後不再顯示」，則顯示
+        if (key && !localStorage.getItem(key)) {
+          setAnnouncement(content);
+          setAnnouncementVisible(true);
+        }
+      }
+    } catch (error) {
+      console.error("取得公告失敗:", error);
+    }
+  };
+
+  // 使用者關閉公告
+  const dismissAnnouncement = (forever = false) => {
+    if (forever && announcement) {
+      const key = getAnnouncementKey(announcement);
+      if (key) localStorage.setItem(key, "1");
+    }
+    setAnnouncementVisible(false);
+  };
+
   const login = async (username, password) => {
     try {
       const { data } = await axios.post("/api/auth/login", { username, password });
+
+      // 維護模式攔截
+      if (data.status === "maintenance") {
+        enqueueSnackbar(data.message || "系統更新中，請洽詢服務人員", { variant: "warning", autoHideDuration: 8000 });
+        return;
+      }
 
       if (data.status !== "success") {
         enqueueSnackbar(data.message || "登入失敗，請檢查帳號密碼是否正確", { variant: 'error' });
@@ -127,6 +175,11 @@ export const AuthProvider = ({ children }) => {
       setSession(accessToken);
       setUserCookies(user);
       dispatch({ type: "LOGIN", payload: { user } });
+
+      // 登入成功後取得公告（platform_admin 不顯示，他們是管理公告的人）
+      if (user.user_type !== "platform_admin") {
+        await fetchAndShowAnnouncement();
+      }
 
     } catch (error) {
       console.error("登入錯誤:", error);
@@ -190,6 +243,11 @@ export const AuthProvider = ({ children }) => {
           setUserCookies(user);
           dispatch({ type: "INIT", payload: { isAuthenticated: true, user } });
 
+          // 已登入使用者重新整理頁面時也檢查公告（platform_admin 除外）
+          if (user.user_type !== "platform_admin") {
+            await fetchAndShowAnnouncement();
+          }
+
         } else {
           setSession(null);
           clearUserCookies();
@@ -214,7 +272,10 @@ export const AuthProvider = ({ children }) => {
         login, 
         logout, 
         register,
-        updateUserCookies  // 提供更新 cookie 的方法
+        updateUserCookies,  // 提供更新 cookie 的方法
+        announcement,
+        announcementVisible,
+        dismissAnnouncement
       }}
     >
       {children}

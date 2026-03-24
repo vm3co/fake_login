@@ -13,7 +13,7 @@ from backend.services.log_manager import Logger
 from jose import jwt, JWTError
 from sqlalchemy import select
 from backend.repository.db_controller import db_controller
-from backend.repository.models import User, CustomerAcct, Acct
+from backend.repository.models import User, CustomerAcct, Acct, SystemConfig
 
 logger = Logger().get_logger()
 
@@ -24,6 +24,9 @@ load_dotenv(dotenv_path=env_path)
 
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD")
+ADMIN_CONTROL_PASSWORD = os.environ.get("ADMIN_CONTROL_PASSWORD", "")
+PLATFORM_ADMIN_EMAIL = os.environ.get("PLATFORM_ADMIN_EMAIL", "platform@acercsi.com")
+PLATFORM_ADMIN_PASSWORD = os.environ.get("PLATFORM_ADMIN_PASSWORD", "")
 SECRET_KEY = os.getenv("JWT_SECRET_KEY", "super-secret-very-long-random-string")
 ALGORITHM = "HS256"
 
@@ -91,11 +94,63 @@ def get_router(db_user):
     async def login(data: UserRequest, request: Request):
         username = data.username
         password = data.password
-        # 檢查是否為管理員登入
-        if username == ADMIN_EMAIL and password == ADMIN_PASSWORD:
-            user =  {"acct_uuid": "admin", "username": ADMIN_EMAIL, "orgs": ["admin"]}
+
+        # ----------------------------------------------------------------
+        # Step 1: 優先判斷是否為 platform_admin（不受維護模式限制）
+        # ----------------------------------------------------------------
+        is_platform_admin = (username == PLATFORM_ADMIN_EMAIL and password == PLATFORM_ADMIN_PASSWORD)
+
+        # ----------------------------------------------------------------
+        # Step 2: 非 platform_admin 的人，皆需通過維護模式檢查
+        # ----------------------------------------------------------------
+        if not is_platform_admin:
+            maintenance_record = await db_controller.get_one(SystemConfig, {"config_key": "maintenance_mode"})
+            if maintenance_record and maintenance_record.config_value == "true":
+                await db_user.add_login_log(
+                    username=username,
+                    action="login",
+                    status="blocked",
+                    ip_address=request.client.host,
+                    details="Login blocked due to maintenance mode"
+                )
+                return {"status": "maintenance", "message": "系統更新中，請洽詢服務人員"}
+
+        # ----------------------------------------------------------------
+        # Step 3: 正式登入流程
+        # ----------------------------------------------------------------
+
+        # 3a. platform_admin 登入（已在 Step 1 驗證密碼）
+        if is_platform_admin:
             access_token = create_access_token({
-                "acct_uuid": "admin", 
+                "acct_uuid": "platform_admin",
+                "username": PLATFORM_ADMIN_EMAIL,
+                "user_type": "platform_admin"
+            })
+            user_obj = {
+                "acct_uuid": "platform_admin",
+                "name": PLATFORM_ADMIN_EMAIL,
+                "orgs": ["platform_admin"],
+                "user_type": "platform_admin",
+                "full_name": "Platform Admin"
+            }
+            await db_user.add_login_log(
+                username=username,
+                action="login",
+                status="success",
+                ip_address=request.client.host,
+                details="Platform admin login"
+            )
+            return {
+                "status": "success",
+                "message": "平台管理員登入成功",
+                "accessToken": access_token,
+                "user": user_obj
+            }
+
+        # 3b. .env 超級管理員登入
+        if username == ADMIN_EMAIL and password == ADMIN_PASSWORD:
+            access_token = create_access_token({
+                "acct_uuid": "admin",
                 "username": ADMIN_EMAIL,
                 "user_type": "admin"
             })
@@ -114,77 +169,72 @@ def get_router(db_user):
                 details="Admin login"
             )
             return {
-                "status": "success", 
+                "status": "success",
                 "message": "管理員登入成功",
                 "accessToken": access_token,
                 "user": user_obj
             }
-        
-        # users
-        user = await db_controller.get_one(User, {"username": username})
 
-        if user:
-            if verify_password(password, user.password_hash):
-                # 一般使用者登入成功
-                access_token = create_access_token({
-                    "acct_uuid": user.acct_uuid, 
-                    "username": user.username,
-                    "user_type": "user"
-                })
-                user_obj = {
-                    "acct_uuid": user.acct_uuid,
-                    "name": user.username,
-                    "orgs": user.orgs or [],
-                    "user_type": "user",
-                    "full_name": user.full_name or ""
-                }
-                await db_user.add_login_log(
-                    username=username,
-                    action="login",
-                    status="success",
-                    ip_address=request.client.host,
-                    details="User login"
-                )
-                return {
-                    "status": "success", 
-                    "message": "使用者登入成功",
-                    "accessToken": access_token,
-                    "user": user_obj
-                }
+        # 3c. 一般使用者
+        # 需要重新查詢 potential_user，因為前面拿掉了
+        potential_user = await db_controller.get_one(User, {"username": username})
+        if potential_user and verify_password(password, potential_user.password_hash):
+            access_token = create_access_token({
+                "acct_uuid": potential_user.acct_uuid,
+                "username": potential_user.username,
+                "user_type": "user"
+            })
+            user_obj = {
+                "acct_uuid": potential_user.acct_uuid,
+                "name": potential_user.username,
+                "orgs": potential_user.orgs or [],
+                "user_type": "user",
+                "full_name": potential_user.full_name or ""
+            }
+            await db_user.add_login_log(
+                username=username,
+                action="login",
+                status="success",
+                ip_address=request.client.host,
+                details="User login"
+            )
+            return {
+                "status": "success",
+                "message": "使用者登入成功",
+                "accessToken": access_token,
+                "user": user_obj
+            }
 
-        # customer_accts
+        # 3d. 客戶帳號
         customer = await db_controller.get_one(CustomerAcct, {"customer_name": username})
-            
-        if customer:
-            if verify_password(password, customer.password_hash):
-                # 客戶登入成功
-                access_token = create_access_token({
-                    "acct_uuid": customer.acct_uuid, 
-                    "username": customer.customer_name,
-                    "user_type": "customer"
-                })
-                customer_obj = {
-                    "acct_uuid": customer.acct_uuid,
-                    "name": customer.customer_name,
-                    "sendtasks": customer.sendtasks or [],
-                    "user_type": "customer",
-                    "full_name": customer.customer_full_name or "",
-                    "task_creation_enabled": customer.task_creation_enabled or False
-                }
-                await db_user.add_login_log(
-                    username=username,
-                    action="login",
-                    status="success",
-                    ip_address=request.client.host,
-                    details="Customer login"
-                )
-                return {
-                    "status": "success", 
-                    "message": "客戶登入成功",
-                    "accessToken": access_token,
-                    "user": customer_obj
-                }
-    
+        if customer and verify_password(password, customer.password_hash):
+            access_token = create_access_token({
+                "acct_uuid": customer.acct_uuid,
+                "username": customer.customer_name,
+                "user_type": "customer"
+            })
+            customer_obj = {
+                "acct_uuid": customer.acct_uuid,
+                "name": customer.customer_name,
+                "sendtasks": customer.sendtasks or [],
+                "user_type": "customer",
+                "full_name": customer.customer_full_name or "",
+                "task_creation_enabled": customer.task_creation_enabled or False
+            }
+            await db_user.add_login_log(
+                username=username,
+                action="login",
+                status="success",
+                ip_address=request.client.host,
+                details="Customer login"
+            )
+            return {
+                "status": "success",
+                "message": "客戶登入成功",
+                "accessToken": access_token,
+                "user": customer_obj
+            }
+
         # 都找不到，登入失敗
         await db_user.add_login_log(
             username=username,
@@ -193,7 +243,7 @@ def get_router(db_user):
             ip_address=request.client.host,
             details="Invalid credentials"
         )
-        return {"status": "error", "message": "帳號或密碼錯誤"}    
+        return {"status": "error", "message": "帳號或密碼錯誤"}
 
     @router.post("/auth/logout", tags=["user"])
     async def logout(request: Request, current_user: dict = Depends(get_current_user)):
@@ -233,6 +283,16 @@ def get_router(db_user):
                 }
                 return {"user": user_obj}
             
+            elif user_type == "platform_admin":
+                user_obj = {
+                    "acct_uuid": "platform_admin",
+                    "name": PLATFORM_ADMIN_EMAIL,
+                    "orgs": ["platform_admin"],
+                    "user_type": "platform_admin",
+                    "full_name": "Platform Admin"
+                }
+                return {"user": user_obj}
+
             elif user_type == "user":
                 # 查詢一般使用者
                 user = await db_controller.get_one(User, {"username": username})
@@ -311,13 +371,80 @@ def get_router(db_user):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"更新密碼時發生錯誤: {str(e)}")
 
+    # =========================================================
+    # 系統設定 API（維護模式 + 更新公告）
+    # =========================================================
+
+    @router.get(
+        "/system/config",
+        tags=["system"]
+    )
+    async def get_system_config():
+        """
+        取得系統設定（維護模式狀態與公告內容），不需驗證，前端可直接呼叫
+        """
+        maintenance = await db_controller.get_one(SystemConfig, {"config_key": "maintenance_mode"})
+        announcement = await db_controller.get_one(SystemConfig, {"config_key": "announcement"})
+        return {
+            "maintenance_mode": (maintenance.config_value == "true") if maintenance else False,
+            "announcement": announcement.config_value if announcement else ""
+        }
+
+    class SystemConfigUpdateRequest(BaseModel):
+        control_password: str
+        maintenance_mode: bool = None
+        announcement: str = None
+
+    @router.post(
+        "/system/config",
+        tags=["system"]
+    )
+    async def update_system_config(
+        data: SystemConfigUpdateRequest,
+        current_user: dict = Depends(get_current_user)
+    ):
+        """
+        更新系統設定（需要 admin 身份 + 控制密碼驗證）
+        """
+        if current_user.get("user_type") != "platform_admin":
+            raise HTTPException(status_code=403, detail="權限不足")
+
+        if not ADMIN_CONTROL_PASSWORD:
+            raise HTTPException(status_code=500, detail="控制密碼未設定，請聯繫系統管理員")
+
+        if data.control_password != ADMIN_CONTROL_PASSWORD:
+            raise HTTPException(status_code=401, detail="控制密碼錯誤")
+
+        updated = []
+
+        async def upsert_config(key: str, value: str):
+            existing = await db_controller.get_one(SystemConfig, {"config_key": key})
+            if existing:
+                await db_controller.update(SystemConfig, {"config_key": key}, {"config_value": value})
+            else:
+                await db_controller.create(SystemConfig, {"config_key": key, "config_value": value})
+
+        if data.maintenance_mode is not None:
+            await upsert_config("maintenance_mode", "true" if data.maintenance_mode else "false")
+            updated.append(f"維護模式 {'開啟' if data.maintenance_mode else '關閉'}")
+            logger.info(f"Admin updated maintenance_mode to: {data.maintenance_mode}")
+
+        if data.announcement is not None:
+            await upsert_config("announcement", data.announcement)
+            updated.append("公告內容已更新")
+            logger.info(f"Admin updated announcement.")
+
+        if not updated:
+            raise HTTPException(status_code=400, detail="未提供任何要更新的設定")
+
+        return {"status": "success", "message": "、".join(updated)}
+
     @router.get(
         "/users/all",
         tags=["user"]
     )
     async def get_all_users(current_user: dict = Depends(get_current_user)):
-        # 這裡可以加上權限檢查，例如只允許 admin 訪問
-        if current_user.get("user_type") != "admin":
+        if current_user.get("user_type") != "platform_admin":
             raise HTTPException(status_code=403, detail="權限不足")
         
         users = await db_user.get_all_users_with_registration_status()
@@ -341,7 +468,7 @@ def get_router(db_user):
         :param data: 包含 acct_uuid 與 new_password
         :return: 更新結果
         """
-        if current_user.get("user_type") != "admin":
+        if current_user.get("user_type") != "platform_admin":
             raise HTTPException(status_code=403, detail="權限不足")
 
         if not data.new_password or len(data.new_password) < 4:
@@ -363,7 +490,7 @@ def get_router(db_user):
         tags=["user"]
     )
     async def sync_accts(current_user: dict = Depends(get_current_user)):
-        if current_user.get("user_type") != "admin":
+        if current_user.get("user_type") != "platform_admin":
             raise HTTPException(status_code=403, detail="權限不足")
         
         try:
@@ -383,7 +510,7 @@ def get_router(db_user):
         tags=["user"]
     )
     async def get_login_logs(limit: int = 100, current_user: dict = Depends(get_current_user)):
-        if current_user.get("user_type") != "admin":
+        if current_user.get("user_type") != "platform_admin":
             raise HTTPException(status_code=403, detail="權限不足")
         
         logs = await db_user.get_login_logs(limit)

@@ -14,8 +14,14 @@ export default function AuthGuard({ children }) {
         // 客戶只能訪問特定頁面
         const allowedCustomerPaths = ["/customer", "/customer/profile"];
         if (!allowedCustomerPaths.some(path => pathname.startsWith(path))) {
-          // 重導到客戶專用頁面
           window.location.href = "/customer";
+          return;
+        }
+      }
+      if (user.user_type === "platform_admin") {
+        // 平台管理員只能訪問 /admin/* 頁面
+        if (!pathname.startsWith("/admin")) {
+          window.location.href = "/admin/announcement";
           return;
         }
       }

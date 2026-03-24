@@ -22,6 +22,8 @@ const Qrcode = Loadable(lazy(() => import("app/views/qrcode/QrcodeDispatcher")))
 const Accts = Loadable(lazy(() => import("app/views/admin/UserListPage")));
 // ADMIN PAGE → logs page
 const LoginLogs = Loadable(lazy(() => import("app/views/admin/LoginLogs")));
+// ADMIN PAGE → announcement page
+const AnnouncementPage = Loadable(lazy(() => import("app/views/admin/AnnouncementPage")));
 
 // CUSTOMER PAGE
 const Customer = Loadable(lazy(() => import("app/views/customer/Customer")));
@@ -48,6 +50,8 @@ const routes = [
       { path: "/admin/accts", element: <Accts />, auth: authRoles.admin },
       // admin page → logs route
       { path: "/admin/logs", element: <LoginLogs />, auth: authRoles.admin },
+      // admin page → announcement route
+      { path: "/admin/announcement", element: <AnnouncementPage />, auth: authRoles.admin },
     ]
   },
 

@@ -1,5 +1,4 @@
 import { useContext } from "react";
-// import AuthContext from "app/contexts/FirebaseAuthContext";
 import AuthContext from "app/contexts/JWTAuthContext";
 import navigations from "app/navigations";
 
@@ -9,15 +8,20 @@ export default function useAuth() {
     throw new Error("useAuth must be used within an AuthProvider");
   }
 
+  const userType = context.user?.user_type;
 
   const filteredNavigations = navigations.filter((nav) => {
-    // 根據使用者身分過濾導覽項目
-    if (nav.auth === "admin") {
-      return context.user?.name === "admin@acercsi.com";
+    // platform_admin：只看平台設定
+    if (userType === "platform_admin") {
+      return nav.auth === "platform_admin";
     }
-    return true;
+    // admin (.env 超級管理員)：看除了平台設定以外的所有項目
+    if (userType === "admin") {
+      return nav.auth !== "platform_admin";
+    }
+    // 其他使用者：只看沒有 auth 限制的項目
+    return !nav.auth;
   });
 
-  // 回傳原始 context 內容，並加上過濾後的導覽項目
   return { ...context, navigations: filteredNavigations };
 }

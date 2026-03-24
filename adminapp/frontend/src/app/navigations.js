@@ -7,10 +7,11 @@ const navigations = [
   {
     name: "平台設定",
     icon: "security",
-    auth: "admin", // 只有 admin 看得到
+    auth: "platform_admin", // 只有 platform_admin 看得到
     children: [
       { name: "使用者", iconText: "AC", icon: "account_circle", path: "/admin/accts" },
       { name: "登入登出紀錄", iconText: "LOG", icon: "history", path: "/admin/logs" },
+      { name: "更新公告", iconText: "AN", icon: "campaign", path: "/admin/announcement" },
       // { name: "Forgot Password", iconText: "FP", path: "/session/forgot-password" },
       // { name: "Error", iconText: "404", path: "/session/404" }
     ]
