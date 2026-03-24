@@ -121,7 +121,7 @@ class DBUser:
         table_mappings = {
             "accts": {"model": Acct, "fetch_method": self.get_se2_accts, "fetch_args": [ACCTS_COLUMNS]},
             "sendtasks": {"model": SendTask, "fetch_method": self.get_se2_sendtasks, "fetch_args": [SENDTASKS_COLUMNS, self.day]},
-            "mtmpl": {"model": Mtmpl, "fetch_method": self.get_se2_mtmpl, "fetch_args": []},
+            "mtmpl": {"model": Mtmpl, "special_logic": True},
             "sendlog_stats": {"model": SendLogStats, "special_logic": True},
             "send_log_details": {"model": SendLogDetail, "special_logic": True}
         }
@@ -138,7 +138,10 @@ class DBUser:
                 logger.info(f"{table_name} is empty. Initializing with data from SE2...")
                 
                 if config.get("special_logic"):
-                    if table_name == "sendlog_stats":
+                    if table_name == "mtmpl":
+                        result = await self.refresh_mtmpl()
+                        logger.info(f"Initialized mtmpl: {result}")
+                    elif table_name == "sendlog_stats":
                          # Logic handled outside this loop
                          pass
                     elif table_name == "send_log_details":
@@ -164,6 +167,7 @@ class DBUser:
                     logger.error(f"Failed to initialize {table_name}: {e}")
             else:
                 logger.info(f"{table_name} already has data. Skipping initialization.")
+
 
         sample_stats = await db_controller.get(SendLogStats, limit=1)
         count_stats = len(sample_stats)
@@ -246,15 +250,51 @@ class DBUser:
             return sendtasks_list
         return []
     
+    # Mtmpl model 允許的欄位名稱
+    _MTMPL_FIELDS = {
+        "mtmpl_uuid", "mtmpl_name", "mtmpl_tag", "mtmpl_title", "mtmpl_content",
+        "mtmpl_activate", "mtmpl_mail_attached", "mtmpl_create_ut", "mtmpl_update_ut",
+        "mtmpl_owner_gid", "mtmpl_public", "mtmpl_plain", "mtmpl_embedded_img",
+        "mtmpl_readonly", "mail_from", "mail_from_address",
+    }
+
     async def get_se2_mtmpl(self) -> list[dict]:
         """
-        從 SE2 獲取 mtmpl 資料
+        從 SE2 獲取郵件範本資料
+        :return: 符合 Mtmpl model 欄位的 list of dict
         """
-        mtmpl_df = await get_se2_data.get_mtmpl_subject_list()
-        if mtmpl_df is not None and not mtmpl_df.empty:
-            mtmpl_list = mtmpl_df.to_dict(orient="records")
-            return mtmpl_list
-        return []
+        raw_list = await get_se2_data.get_mailtmpls()
+        if not raw_list:
+            return []
+
+        # 過濾只保留 model 支援的欄位，避免寫入時報錯
+        filtered = []
+        for item in raw_list:
+            record = {k: v for k, v in item.items() if k in self._MTMPL_FIELDS}
+            if record.get("mtmpl_uuid"):
+                filtered.append(record)
+        return filtered
+
+    async def refresh_mtmpl(self) -> dict:
+        """
+        全量同步郵件範本資料到 DB（upsert by mtmpl_uuid）
+        :return: {"upserted": N}
+        """
+        mtmpl_list = await self.get_se2_mtmpl()
+        if not mtmpl_list:
+            logger.warning("No mtmpl data fetched from SE2.")
+            return {"upserted": 0}
+
+        update_cols = [c for c in mtmpl_list[0].keys() if c != "mtmpl_uuid"]
+        await db_controller.upsert(
+            Mtmpl,
+            mtmpl_list,
+            index_elements=["mtmpl_uuid"],
+            update_columns=update_cols,
+        )
+        logger.info(f"Upserted {len(mtmpl_list)} mtmpl records.")
+        return {"upserted": len(mtmpl_list)}
+
     
     async def get_se2_sendlog(self, sendtask_uuid: str, sendlog_columns=None) -> list[dict]:
         """

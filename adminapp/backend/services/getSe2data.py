@@ -26,6 +26,7 @@ API_ENDPOINTS = {
     "get_sendtask": "/api/case/get_sendtask",
     "get_sendlog": "/api/case/get_sendlog",
     "get_mtmpl_list": "/api/editor/get_mtmpl_subject_list",
+    "get_mailtmpls": "/api/editor/get_mailtmpls",
     "get_acct": "/api/account/get_acct",
     "get_accts": "/api/account/get_accts",
     "export_csv": "/api/casexport/export_csv",
@@ -181,15 +182,34 @@ class getSe2data:
         return None if not all_data else pd.DataFrame(all_data)
 
     async def get_mtmpl_subject_list(self) -> pd.DataFrame | None:
-        '''抓取郵件樣板'''
-        # 要發送 POST 的目標網址
-        logger.info("Fetching mtemplate subject list...")
+        '''抓取郵件樣板（舊版，僅供向下相容）'''
+        logger.info("Fetching mtemplate subject list (legacy)...")
         url = self.url + API_ENDPOINTS["get_mtmpl_list"]
         payload = {
             "just_query": 1
         }        
         data = await self._send_post(url, payload)
         return None if not data else pd.DataFrame(data['data'])
+
+    async def get_mailtmpls(self) -> list[dict]:
+        '''抓取完整郵件範本清單（支援分頁，回傳 list of dict）'''
+        logger.info("Fetching mail templates (get_mailtmpls)...")
+        url = self.url + API_ENDPOINTS["get_mailtmpls"]
+        payload_template = {
+            "mailtmpl_keyword": "",
+            "mailtmpl_stats": "enable",
+            "order_field": "CreateTime",
+            "time_field": "UpdateTime",
+            "order_method": "desc",
+            "record_page": 50,
+            "page_sn": 1,
+            "filter_time_range": 0,
+            "start_time": None,
+            "end_time": None,
+        }
+        all_data = await self._handle_pagination(url, payload_template)
+        logger.info(f"Total mail templates fetched: {len(all_data)}")
+        return all_data
 
     async def get_acct_orgs(self, acct_uuid: str) -> pd.DataFrame | None:
         '''抓取個別帳號擁有的組織'''

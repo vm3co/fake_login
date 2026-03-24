@@ -120,8 +120,22 @@ class Mtmpl(Base):
     __tablename__ = "mtmpl"
 
     id = Column(Integer, primary_key=True, index=True)
-    mtmpl_uuid = Column(String(36), nullable=False)
-    mtmpl_title = Column(Text, nullable=False)
+    mtmpl_uuid = Column(String(64), unique=True, nullable=False, index=True)
+    mtmpl_name = Column(Text)
+    mtmpl_tag = Column(PG_ARRAY(Text))
+    mtmpl_title = Column(Text)
+    mtmpl_content = Column(Text)
+    mtmpl_activate = Column(Boolean, default=True)
+    mtmpl_mail_attached = Column(PG_ARRAY(Text))
+    mtmpl_create_ut = Column(BigInteger)
+    mtmpl_update_ut = Column(BigInteger)
+    mtmpl_owner_gid = Column(PG_ARRAY(Text))
+    mtmpl_public = Column(Boolean, default=False)
+    mtmpl_plain = Column(Boolean, default=False)
+    mtmpl_embedded_img = Column(Boolean, default=False)
+    mtmpl_readonly = Column(Boolean, default=False)
+    mail_from = Column(Text)
+    mail_from_address = Column(Text)
     create_time = Column(TIMESTAMP, server_default=func.now())
 
 class Notification(Base):
