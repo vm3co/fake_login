@@ -191,6 +191,27 @@ class getSe2data:
         data = await self._send_post(url, payload)
         return None if not data else pd.DataFrame(data['data'])
 
+    async def get_org_name_list(self) -> dict | None:
+        '''抓取組織名稱清單'''
+        logger.info("Fetching org name list...")
+        url = self.url + "/api/account/get_org_name_list"
+        payload = {
+            "just_query": 1
+        }
+        data = await self._send_post(url, payload)
+        return dict(data) if data else None
+
+    async def get_mtmpl_name_list(self, unit_uuid: str) -> dict | None:
+        '''抓取特定組織的郵件範本清單'''
+        logger.info(f"Fetching mtmpl name list for unit {unit_uuid}...")
+        url = self.url + "/api/editor/get_mtmpl_name_list"
+        payload = {
+            "just_query": 1,
+            "unit_uuid": unit_uuid
+        }
+        data = await self._send_post(url, payload)
+        return dict(data) if data else None
+
     async def get_mailtmpls(self) -> list[dict]:
         '''抓取完整郵件範本清單（支援分頁，回傳 list of dict）'''
         logger.info("Fetching mail templates (get_mailtmpls)...")

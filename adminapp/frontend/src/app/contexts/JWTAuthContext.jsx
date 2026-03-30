@@ -10,14 +10,14 @@ const isValidToken = (accessToken) => {
 
   try {
     const decodedToken = jwtDecode(accessToken);
-    
+
     // 檢查 token 是否過期
     const currentTime = Date.now() / 1000;
     if (decodedToken.exp && decodedToken.exp < currentTime) {
       console.log("Token expired");
       return false;
     }
-    
+
     return decodedToken?.username ? true : false;
   } catch (error) {
     console.error("Token decode error:", error);
@@ -45,7 +45,7 @@ const setUserCookies = (user) => {
     const orgs = user.orgs || [];
     document.cookie = `orgs=${encodeURIComponent(JSON.stringify(orgs))}; path=/;`;
     document.cookie = `acct_uuid=${encodeURIComponent(user.acct_uuid)}; path=/;`;
-    
+
     // 清除客戶相關的 cookie（如果存在）
     document.cookie = "sendtasks=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
 
@@ -55,7 +55,8 @@ const setUserCookies = (user) => {
     document.cookie = `sendtasks=${encodeURIComponent(JSON.stringify(sendtasks))}; path=/;`;
     document.cookie = `acct_uuid=${encodeURIComponent(user.acct_uuid)}; path=/;`;
     document.cookie = `task_creation_enabled=${encodeURIComponent(user.task_creation_enabled || false)}; path=/;`;
-    
+    document.cookie = `task_creation_org_uuid=${encodeURIComponent(user.task_creation_org_uuid || '')}; path=/;`;
+
     // 清除一般使用者相關的 cookie（如果存在）
     document.cookie = "orgs=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
   }
@@ -67,6 +68,7 @@ const clearUserCookies = () => {
   document.cookie = "acct_uuid=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
   document.cookie = "sendtasks=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
   document.cookie = "task_creation_enabled=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  document.cookie = "task_creation_org_uuid=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
 };
 
 // 計算公告的識別 hash（更新公告內容後會自動觸發重新顯示）
@@ -194,7 +196,7 @@ export const AuthProvider = ({ children }) => {
         enqueueSnackbar(data.message || "註冊失敗，請檢查輸入的資料是否正確", { variant: 'error' });
         return;
       }
-      
+
       const { accessToken, user } = data;
 
       setSession(accessToken);
@@ -228,7 +230,7 @@ export const AuthProvider = ({ children }) => {
     (async () => {
       try {
         const accessToken = window.localStorage.getItem("accessToken");
-        
+
         if (accessToken && isValidToken(accessToken)) {
           setSession(accessToken);
 
@@ -265,12 +267,12 @@ export const AuthProvider = ({ children }) => {
   if (!state.isInitialized) return <Loading />;
 
   return (
-    <AuthContext.Provider 
-      value={{ 
-        ...state, 
-        method: "JWT", 
-        login, 
-        logout, 
+    <AuthContext.Provider
+      value={{
+        ...state,
+        method: "JWT",
+        login,
+        logout,
         register,
         updateUserCookies,  // 提供更新 cookie 的方法
         announcement,

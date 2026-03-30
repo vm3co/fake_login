@@ -716,11 +716,12 @@ class DBUser:
             logger.error(f"Update customer sendtasks failed: {e}")
             return {"status": "error", "message": str(e)}
 
-    async def update_customer_task_creation(self, customer_name: str, enabled: bool):
+    async def update_customer_task_creation(self, customer_name: str, enabled: bool, org_uuid: str = None):
         """
-        更新客戶的「建立任務功能」開關狀態。
+        更新客戶的「建立任務功能」開關狀態與指定組織。
         :param customer_name: 客戶名稱
         :param enabled: 是否啟用建立任務功能
+        :param org_uuid: 關聯的組織 uuid
         """
         customer = await db_controller.get_one(CustomerAcct, {"customer_name": customer_name})
 
@@ -729,8 +730,11 @@ class DBUser:
             return {"status": "error", "message": "客戶不存在"}
 
         try:
-            await db_controller.update(CustomerAcct, {"customer_name": customer_name}, {"task_creation_enabled": enabled})
-            return {"status": "success", "message": f"客戶 {customer_name} 建立任務功能已{'啟用' if enabled else '停用'}"}
+            update_data = {"task_creation_enabled": enabled}
+            if org_uuid is not None:
+                update_data["task_creation_org_uuid"] = org_uuid
+            await db_controller.update(CustomerAcct, {"customer_name": customer_name}, update_data)
+            return {"status": "success", "message": f"客戶 {customer_name} 建立任務功能設定已更新"}
         except Exception as e:
             logger.error(f"Update customer task_creation_enabled failed: {e}")
             return {"status": "error", "message": str(e)}

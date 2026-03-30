@@ -220,14 +220,15 @@ export default function useCustomers() {
     };
 
     // 更新客戶「建立任務功能」開關
-    const updateCustomerTaskCreation = async (customerName, enabled) => {
+    const updateCustomerTaskCreation = async (customerName, enabled, orgUuid = "") => {
         const controller = createController();
         const cleanup = registerRequest(controller);
 
         try {
             const response = await axios.post("/api/update_customer_task_creation", {
                 customer_name: customerName,
-                enabled: enabled
+                enabled: enabled,
+                org_uuid: orgUuid
             }, {
                 signal: controller.signal,
             });
@@ -235,7 +236,7 @@ export default function useCustomers() {
             const result = response.data;
 
             if (result.status === "success") {
-                enqueueSnackbar(`客戶 ${customerName} 建立任務功能已${enabled ? '啟用' : '停用'}`, { variant: 'success' });
+                enqueueSnackbar(`客戶 ${customerName} 任務建立設定已更新`, { variant: 'success' });
                 await fetchCustomers();
                 return result;
             } else {

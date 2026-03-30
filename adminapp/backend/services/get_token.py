@@ -90,6 +90,41 @@ class getToken:
 
             # logger.info(f"Token refreshed and saved.")
 
+    async def get_csrftoken(self) -> tuple[str, str]:
+        """
+        呼叫 API 以取得 CSRF Token
+        回傳 (csrf_token, x_csrf_token)，失敗回傳 (None, None)
+        """
+        cookie = self.get()
+        if cookie:
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/122.0.0.0 Safari/537.36",
+                "Referer": self.url + "/",
+                "Origin": self.url,
+                "Accept": "application/json, text/plain, */*",
+                "cookie": cookie
+            }
+            url = self.url + '/api/csrftoken/get_csrftoken'
+            try:
+                async with httpx.AsyncClient(verify=self.verify) as client:
+                    response = await client.post(url, headers=headers, timeout=60, json={})
+                    response.raise_for_status()
+                    
+                    data = response.json()
+                    x_csrf_token = data.get("data") if data else None
+                    csrf_token = response.cookies.get('csrf-token')
+
+                    if csrf_token:
+                        return csrf_token, x_csrf_token
+                    else:
+                        logger.error("API 回應中未包含 'csrf-token' Cookie。")
+                        return None, None
+            except Exception as e:
+                logger.error(f"取得 CSRF Token 時發生錯誤: {e}")
+                return None, None
+        return None, None
+
 get_token = getToken()
 
 if __name__ == "__main__":

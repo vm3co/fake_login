@@ -982,6 +982,7 @@ def get_router(db_user):
     class UpdateCustomerTaskCreationRequest(BaseModel):
         customer_name: str = ""
         enabled: bool = False
+        org_uuid: str = ""
 
     @router.post(
         "/update_customer_task_creation",
@@ -989,17 +990,58 @@ def get_router(db_user):
         )
     async def update_customer_task_creation(request: UpdateCustomerTaskCreationRequest):
         """
-        更新客戶的「建立任務功能」開關狀態
+        更新客戶的「建立任務功能」開關狀態與指定組織
 
         1. POST /update_customer_task_creation
-        2. Body: {"customer_name": ..., "enabled": true/false}
+        2. Body: {"customer_name": ..., "enabled": true/false, "org_uuid": ...}
         """
         if not request.customer_name:
             return {"status": "error", "message": "沒有收到客戶名稱"}
 
         try:
-            result = await db_user.update_customer_task_creation(request.customer_name, request.enabled)
+            result = await db_user.update_customer_task_creation(
+                request.customer_name, 
+                request.enabled, 
+                request.org_uuid
+            )
             return result
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    @router.get(
+        "/get_org_name_list",
+        tags=["data"]
+        )
+    async def get_org_name_list():
+        """
+        取得組織名稱清單 (來自 SE2)
+        1. GET /get_org_name_list
+        """
+        try:
+            result = await get_se2_data.get_org_name_list()
+            if result:
+                return result
+            return {"status": "error", "message": "無法取得組織清單"}
+        except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    @router.get(
+        "/get_mtmpl_name_list",
+        tags=["data"]
+        )
+    async def get_mtmpl_name_list(unit_uuid: str):
+        """
+        取得特定組織的郵件樣本名稱清單 (來自 SE2)
+        1. GET /get_mtmpl_name_list?unit_uuid=...
+        """
+        if not unit_uuid:
+            return {"status": "error", "message": "缺少 unit_uuid 參數"}
+        
+        try:
+            result = await get_se2_data.get_mtmpl_name_list(unit_uuid)
+            if result:
+                return result
+            return {"status": "error", "message": "無法取得郵件樣本清單"}
         except Exception as e:
             return {"status": "error", "message": str(e)}
 

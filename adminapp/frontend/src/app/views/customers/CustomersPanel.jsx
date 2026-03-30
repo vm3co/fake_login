@@ -1,4 +1,4 @@
-import { useState, useMemo, useContext } from 'react';
+import { useState, useEffect, useMemo, useContext } from 'react';
 import { useSnackbar } from 'notistack';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import {
@@ -9,6 +9,10 @@ import {
   Typography,
   FormControlLabel,
   Switch,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
 } from '@mui/material';
 import Accordion from '@mui/material/Accordion';
 import AccordionActions from '@mui/material/AccordionActions';
@@ -18,6 +22,7 @@ import { styled } from '@mui/material';
 import Autocomplete from "@mui/material/Autocomplete";
 import TextField from "@mui/material/TextField";
 import Checkbox from "@mui/material/Checkbox";
+import axios from 'axios';
 
 import { SendtaskListContext } from "app/contexts/SendtaskListContext";
 import CustomersContext from "app/contexts/CustomersContext";
@@ -71,6 +76,26 @@ export default function CustomersPanel() {
   // 為每個客戶管理選中的 sendtasks
   const [customerSendtasks, setCustomerSendtasks] = useState({});
   const [savingCustomer, setSavingCustomer] = useState(null);
+
+  // 組織清單與建立任務開關暫存狀態
+  const [orgsData, setOrgsData] = useState([]);
+  const [localTaskCreation, setLocalTaskCreation] = useState({}); // { [customerName]: { enabled: boolean, org_uuid: string } }
+
+  // 取得組織清單
+  useEffect(() => {
+    const fetchOrgs = async () => {
+      try {
+        const response = await axios.get('/api/get_org_name_list');
+        // SE2 回傳格式是 { message: "OK", sub_code: 20000, data: [...] }
+        if (response.data && Array.isArray(response.data.data)) {
+          setOrgsData(response.data.data);
+        }
+      } catch (error) {
+        console.error('Failed to fetch orgs data:', error);
+      }
+    };
+    fetchOrgs();
+  }, []);
 
   // 按創建時間排序客戶列表
   const sortedCustomers = useMemo(() => {
@@ -148,26 +173,48 @@ export default function CustomersPanel() {
   const handleSaveCustomerSendtasks = async (customer) => {
     const customerKey = customer.customer_name;
     const sendtasksForDb = customerSendtasks[customerKey];
+    const taskCreationForDb = localTaskCreation[customerKey];
+    
+    // 防呆：確認開啟建立任務功能時，有選擇郵件組織
+    const isEnabled = taskCreationForDb ? taskCreationForDb.enabled : !!customer.task_creation_enabled;
+    const currentOrgUuid = taskCreationForDb ? taskCreationForDb.org_uuid : (customer.task_creation_org_uuid || '');
+    
+    if (isEnabled && !currentOrgUuid) {
+      if (taskCreationForDb) {
+        enqueueSnackbar('若要開啟「建立任務功能」，請必須選擇「郵件單位組織」！', { variant: 'error' });
+        return;
+      }
+    }
 
-    if (!sendtasksForDb) {
+    if (!sendtasksForDb && !taskCreationForDb) {
       console.log("沒有變更，無需保存。");
       return;
     }
 
     try {
       setSavingCustomer(customerKey);
-
-      const result = await updateCustomerSendtasks(customerKey, sendtasksForDb);
-
-      // 保存成功後，重新載入客戶資料
-      if (result && result.status === 'success') {
-        // 清空暫存選擇
-        setCustomerSendtasks(prev => {
-          const newState = { ...prev };
-          delete newState[customerKey];
-          return newState;
-        });
+      
+      const promises = [];
+      if (sendtasksForDb) {
+        promises.push(updateCustomerSendtasks(customerKey, sendtasksForDb));
       }
+      if (taskCreationForDb) {
+        promises.push(updateCustomerTaskCreation(customerKey, taskCreationForDb.enabled, taskCreationForDb.org_uuid));
+      }
+
+      await Promise.all(promises);
+
+      // 保存成功後，清空暫存選擇
+      setCustomerSendtasks(prev => {
+        const newState = { ...prev };
+        delete newState[customerKey];
+        return newState;
+      });
+      setLocalTaskCreation(prev => {
+        const newState = { ...prev };
+        delete newState[customerKey];
+        return newState;
+      });
 
     } catch (error) {
       enqueueSnackbar(`保存失敗: ${error.message}`, { variant: 'warning' });
@@ -182,6 +229,11 @@ export default function CustomersPanel() {
 
     // 清空該客戶的暫存選擇，恢復原始狀態
     setCustomerSendtasks(prev => {
+      const newState = { ...prev };
+      delete newState[customerKey];
+      return newState;
+    });
+    setLocalTaskCreation(prev => {
       const newState = { ...prev };
       delete newState[customerKey];
       return newState;
@@ -285,12 +337,21 @@ export default function CustomersPanel() {
 
                 <AccordionDetails className="details">
                   <Box className="column helper">
-                    <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1, p: 1.5, bgcolor: 'grey.50', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+                    <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2, p: 1.5, bgcolor: 'grey.50', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
                       <FormControlLabel
                         control={
                           <Switch
-                            checked={!!customer.task_creation_enabled}
-                            onChange={(e) => updateCustomerTaskCreation(customerKey, e.target.checked)}
+                            checked={localTaskCreation[customerKey]?.enabled ?? !!customer.task_creation_enabled}
+                            onChange={(e) => {
+                              const isEnabled = e.target.checked;
+                              setLocalTaskCreation(prev => ({
+                                ...prev,
+                                [customerKey]: {
+                                  enabled: isEnabled,
+                                  org_uuid: prev[customerKey]?.org_uuid ?? (customer.task_creation_org_uuid || '')
+                                }
+                              }));
+                            }}
                             color="primary"
                             size="small"
                             disabled={isCurrentlySaving}
@@ -298,10 +359,41 @@ export default function CustomersPanel() {
                         }
                         label={
                           <Typography variant="body2" fontWeight={600}>
-                            建立任務功能(尚未實作)
+                            建立任務功能
                           </Typography>
                         }
                       />
+
+                      {(localTaskCreation[customerKey]?.enabled ?? !!customer.task_creation_enabled) && (
+                        <FormControl size="small" sx={{ minWidth: 200 }}>
+                          <InputLabel id={`org-select-label-${customerKey}`}>郵件單位組織</InputLabel>
+                          <Select
+                            labelId={`org-select-label-${customerKey}`}
+                            label="郵件單位組織"
+                            value={localTaskCreation[customerKey]?.org_uuid ?? (customer.task_creation_org_uuid || '')}
+                            onChange={(e) => {
+                              const orgUuid = e.target.value;
+                              setLocalTaskCreation(prev => ({
+                                ...prev,
+                                [customerKey]: {
+                                  enabled: prev[customerKey]?.enabled ?? !!customer.task_creation_enabled,
+                                  org_uuid: orgUuid
+                                }
+                              }));
+                            }}
+                            disabled={isCurrentlySaving}
+                          >
+                            <MenuItem value="">
+                              <em>未選擇</em>
+                            </MenuItem>
+                            {orgsData.map((org) => (
+                              <MenuItem key={org.org_uuid} value={org.org_uuid}>
+                                {`${org.org_id}(${org.org_short_name})`}
+                              </MenuItem>
+                            ))}
+                          </Select>
+                        </FormControl>
+                      )}
                     </Box>
                     <Autocomplete
                       multiple
@@ -376,7 +468,7 @@ export default function CustomersPanel() {
                 <AccordionActions>
                   <Button
                     size="small"
-                    disabled={isCurrentlySaving}
+                    disabled={isCurrentlySaving || (!customerSendtasks[customerKey] && !localTaskCreation[customerKey])}
                     onClick={() => handleCancelCustomerSendtasks(customer)}
                   >
                     取消
@@ -384,7 +476,7 @@ export default function CustomersPanel() {
                   <Button
                     size="small"
                     color="primary"
-                    disabled={isCurrentlySaving || !customerSendtasks[customerKey]} // 沒變更時禁用
+                    disabled={isCurrentlySaving || (!customerSendtasks[customerKey] && !localTaskCreation[customerKey])} // 沒變更時禁用
                     onClick={() => handleSaveCustomerSendtasks(customer)}
                     startIcon={isCurrentlySaving ? <CircularProgress size={16} /> : null}
                   >

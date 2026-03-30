@@ -115,6 +115,7 @@ class CustomerAcct(Base):
     create_time = Column(TIMESTAMP, server_default=func.now())
     is_active = Column(Boolean, default=True)
     task_creation_enabled = Column(Boolean, default=False)  # 控制客戶是否可使用「新增任務」功能
+    task_creation_org_uuid = Column(String(36), nullable=True)  # 控制客戶「新增任務」對應的組織
 
 class Mtmpl(Base):
     __tablename__ = "mtmpl"

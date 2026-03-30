@@ -146,7 +146,8 @@ export default function Customer() {
   const [customerData, setCustomerData] = useState({
     sendtasks: null,
     acct_uuid: null,
-    task_creation_enabled: false
+    task_creation_enabled: false,
+    task_creation_org_uuid: ''
   });
   const { enqueueSnackbar } = useSnackbar();
   const [searchText, setSearchText] = useState('');
@@ -173,10 +174,12 @@ export default function Customer() {
     const sendtasks = parseTasks(getCookie('sendtasks'));
     const acct_uuid = getCookie('acct_uuid');
     const task_creation_enabled = getCookie('task_creation_enabled') === true || getCookie('task_creation_enabled') === 'true';
+    const task_creation_org_uuid = getCookie('task_creation_org_uuid') || '';
     setCustomerData({
       sendtasks,
       acct_uuid,
-      task_creation_enabled
+      task_creation_enabled,
+      task_creation_org_uuid
     });
   };
 

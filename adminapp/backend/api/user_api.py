@@ -219,7 +219,8 @@ def get_router(db_user):
                 "sendtasks": customer.sendtasks or [],
                 "user_type": "customer",
                 "full_name": customer.customer_full_name or "",
-                "task_creation_enabled": customer.task_creation_enabled or False
+                "task_creation_enabled": customer.task_creation_enabled or False,
+                "task_creation_org_uuid": customer.task_creation_org_uuid or ""
             }
             await db_user.add_login_log(
                 username=username,
@@ -322,7 +323,8 @@ def get_router(db_user):
                     "sendtasks": customer.sendtasks or [],
                     "user_type": "customer",
                     "full_name": customer.customer_full_name or "",
-                    "task_creation_enabled": customer.task_creation_enabled or False
+                    "task_creation_enabled": customer.task_creation_enabled or False,
+                    "task_creation_org_uuid": customer.task_creation_org_uuid or ""
                 }
                 return {"user": customer_obj}
             
