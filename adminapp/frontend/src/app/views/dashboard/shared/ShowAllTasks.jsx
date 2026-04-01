@@ -538,8 +538,8 @@ export default function ShowAllTasks() {
                 <TableCell align="center" onClick={() => handleSort("all_latest_plan_time")}>
                   最後一封寄出<br />預計日期 {sortBy === "all_latest_plan_time" && (sortOrder === "asc" ? "▲" : "▼")}
                 </TableCell>
-                <TableCell align="center" onClick={() => handleSort("is_paused")}>
-                  是否暫停 {sortBy === "is_paused" && (sortOrder === "asc" ? "▲" : "▼")}
+                <TableCell align="center" onClick={() => handleSort("is_pause")}>
+                  是否暫停 {sortBy === "is_pause" && (sortOrder === "asc" ? "▲" : "▼")}
                 </TableCell>
                 <TableCell>
                   更新/刪除

@@ -221,6 +221,30 @@ class DBUser:
         logger.info("Metadata fetched and applied successfully.")
         return sendtasks_df
 
+    async def _update_task_metadata(self, uuid: str):
+        """
+        從 SE2 API 取得單一任務的 metadata，更新 SendTask 表中的相關欄位
+        """
+        data = await get_se2_data.get_sendtask(uuid)
+        metadata = data.get("metadata") if data else None
+
+        if metadata:
+            update_data = {
+                "is_pause": metadata.get("pause", False),
+                "stop_time_new": metadata.get("stop_time_new", -1),
+                "person_count": metadata.get("summary", {}).get("person_count", 0),
+                "pre_test_enable": metadata.get("summary", {}).get("pre_test_enable", False),
+            }
+        else:
+            update_data = {
+                "is_pause": False,
+                "stop_time_new": -1,
+                "person_count": 0,
+                "pre_test_enable": False,
+            }
+
+        await db_controller.update(SendTask, {"sendtask_uuid": uuid}, update_data)
+
     async def get_se2_sendtasks(self, column_names=None, days=7) -> list[dict]:
         """
         從 SE2 獲取 sendtasks 資料
@@ -474,6 +498,9 @@ class DBUser:
         # 開始刷新 sendlog_stats
         for uuid in [u for u in uuids_and_create_time.keys() if check_statuses.get(u) not in ["deleted", "error"]]:
             # logger.info(f"Refreshing sendlog_stats for {uuid}")
+
+            # 同步 SE2 metadata（is_pause, stop_time_new 等）
+            await self._update_task_metadata(uuid)
 
             # 1. 獲取舊的統計數據
             old_stats = await db_controller.get_one(SendLogStats, {"sendtask_uuid": uuid})
