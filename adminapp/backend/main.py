@@ -117,17 +117,15 @@ async def check_sendtasks_job():
     """
     logger.info("check_sendtasks_job 執行")
     try:
-        # 使用和 data_api.py 相同的邏輯
-        if request.orgs and request.orgs != ["admin"]:
-            sendtasks_columns = None
-        
         sendtasks_columns = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "person_count",
                                 "pre_test_end_ut", "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", 
                                 "test_end_ut", "test_start_ut", "is_pause", "pre_test_enable", "stop_time_new"]
         
         all_tasksname_list = await db_user.get_se2_sendtasks(column_names=sendtasks_columns)
 
-        tasks = await db_controller.get(SendTask)
+        # 僅獲取尚未封存的任務進行比對
+        tasks = await db_controller.get(SendTask, {"is_archived": False})
+
         my_tasksname_list = []
         for t in tasks:
             t_dict = {c: getattr(t, c) for c in sendtasks_columns if hasattr(t, c)}
@@ -167,6 +165,10 @@ async def check_sendtasks_job():
                     # sendlog_stats 刪除資料
                     await db_controller.delete(SendLogStats, {"sendtask_uuid": uuid})
                     del_count += 1
+                elif data is None:
+                    # 避免 API 無回應時錯誤封存
+                    logger.warning(f"SE2 API returned None for {uuid}, skipping check.")
+                    continue
                 else:
                     # 僅封存
                     await db_controller.update(SendTask, {"sendtask_uuid": uuid}, {"is_archived": True})
@@ -178,6 +180,16 @@ async def check_sendtasks_job():
 
     except Exception as e:
         logger.error(f"check_sendtasks_job 執行失敗: {str(e)}")
+
+async def nightly_sync_job():
+    """每日凌晨統一執行：先同步任務清單，再刷新統計"""
+    logger.info("nightly_sync_job 開始")
+    try:
+        await check_sendtasks_job()      # 步驟1：同步任務清單
+        await refresh_sendlog_stats_job() # 步驟2：刷新統計資料
+        logger.info("nightly_sync_job 完成")
+    except Exception as e:
+        logger.error(f"nightly_sync_job 失敗: {e}")
 
 def start_scheduler():
     scheduler = AsyncIOScheduler(timezone=ZoneInfo("Asia/Taipei"))  # 重點：設定時區
@@ -204,21 +216,13 @@ def start_scheduler():
         minutes=30,
         id='refresh_notyet_today_tasks'
     )
-    # 每天凌晨 0:50 執行 check_sendtasks
+    # 每天凌晨 1:00 執行 nightly_sync_job (合併原 check_sendtasks 與 refresh_sendlog_stats)
     scheduler.add_job(
-        check_sendtasks_job,
+        nightly_sync_job,
         'cron',
-        hour=0,
-        minute=50,
-        id='check_sendtasks'
-    )
-    # 每天凌晨 1:00 執行 sendlog_stats 刷新
-    scheduler.add_job(
-        refresh_sendlog_stats_job, 
-        'cron', 
-        hour=1, 
+        hour=1,
         minute=0,
-        id='refresh_sendlog_stats'
+        id='nightly_sync'
     )
     # 每天凌晨 2:00 執行 archiving_worker
     scheduler.add_job(
@@ -233,8 +237,7 @@ def start_scheduler():
     logger.info("refresh_token_job 已排程在每 10 分鐘執行")
     logger.info("refresh_today_create_task_job 已排程在每 60 分鐘執行")
     logger.info("refresh_notyet_today_tasks_job 已排程在每 30 分鐘執行")
-    logger.info("check_sendtasks_job 已排程在每日 00:50 執行")
-    logger.info("refresh_sendlog_stats_job 已排程在每日 01:00 執行")
+    logger.info("nightly_sync_job 已排程在每日 01:00 執行")
     logger.info("archiving_job 已排程在每日 02:00 執行")
 
 # 引入資料庫
@@ -253,10 +256,7 @@ async def lifespan(app: FastAPI):
             logger.info("Starting Cache Warming in background...")
             # Fetch active tasks (is_archived is False or NULL)
             active_uuids = []
-            stmt = select(SendTask).where(
-                or_(SendTask.is_archived == False, SendTask.is_archived.is_(None))
-            )
-            tasks = await db_controller.execute_scalars(stmt)
+            tasks = await db_controller.get(SendTask, {"is_archived": False})
             active_uuids = [task.sendtask_uuid for task in tasks]
 
             if active_uuids:
