@@ -298,6 +298,7 @@ def get_router(db_user):
     ## sendlog 相關的 API
     class SendLogRequest(BaseModel):
         sendtask_uuids: list[str] = []
+        ignore_archived: bool = False
 
     @router.post(
         "/refresh_sendlog_stats",
@@ -319,7 +320,7 @@ def get_router(db_user):
             if not uuids:
                 return {"status": "error", "message": "沒有收到 uuids"}
 
-            sendlog_stats_status = await db_user.refresh_sendlog_stats(uuids)
+            sendlog_stats_status = await db_user.refresh_sendlog_stats(uuids, ignore_archived=request.ignore_archived)
             return {"status": "success", "data": sendlog_stats_status}
         except Exception as e:
             logger.error(f"Error in refresh_sendlog_stats: {str(e)}")

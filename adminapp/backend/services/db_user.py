@@ -325,7 +325,7 @@ class DBUser:
         return today_create_tasks_list
 
 ## sendlog and sendlog_stats相關操作
-    async def check_sendlog(self, uuids_and_create_time: dict):
+    async def check_sendlog(self, uuids_and_create_time: dict, ignore_archived: bool = False):
         """
         檢查 sendlog table 是否存在於資料庫中
         :param uuids_and_create_time: sendtask 的 UUID，對應建立時間的字典
@@ -338,19 +338,23 @@ class DBUser:
         if not target_uuids:
              return {}
         
-        # 查詢所有傳入的 UUID 中，有哪些已經是 is_archived = TRUE
-        # Use DBController get with in_ filter (assumes DBController supports list for IN)
-        archived_tasks = await db_controller.get(SendTask, {"sendtask_uuid": target_uuids, "is_archived": True})
-        archived_uuids = set(t.sendtask_uuid for t in archived_tasks)
-        
-        # 只保留未封存的任務
-        active_uuids_and_time = {
-            u: t for u, t in uuids_and_create_time.items() 
-            if u not in archived_uuids
-        }
+        if not ignore_archived:
+            # 查詢所有傳入的 UUID 中，有哪些已經是 is_archived = TRUE
+            # Use DBController get with in_ filter (assumes DBController supports list for IN)
+            archived_tasks = await db_controller.get(SendTask, {"sendtask_uuid": target_uuids, "is_archived": True})
+            archived_uuids = set(t.sendtask_uuid for t in archived_tasks)
             
-        if len(active_uuids_and_time) < len(uuids_and_create_time):
-            logger.info(f"Skipped {len(uuids_and_create_time) - len(active_uuids_and_time)} archived tasks in check_sendlog.")
+            # 只保留未封存的任務
+            active_uuids_and_time = {
+                u: t for u, t in uuids_and_create_time.items() 
+                if u not in archived_uuids
+            }
+                
+            if len(active_uuids_and_time) < len(uuids_and_create_time):
+                logger.info(f"Skipped {len(uuids_and_create_time) - len(active_uuids_and_time)} archived tasks in check_sendlog.")
+        else:
+            logger.info("ignore_archived is True. Not filtering archived tasks.")
+            active_uuids_and_time = uuids_and_create_time
 
         # 批次檢查所有資料表是否存在
         for uuid, create_ut in active_uuids_and_time.items():
@@ -441,7 +445,7 @@ class DBUser:
 
         return sendlog_status
 
-    async def refresh_sendlog_stats(self, uuids: list[str] = None) -> dict:
+    async def refresh_sendlog_stats(self, uuids: list[str] = None, ignore_archived: bool = False) -> dict:
         """
         刷新 sendlog_stats 資料
         :param uuid: 如果提供，則僅刷新指定的 sendtask_uuid；如果為 None，則刷新所有 sendtask 的統計資料
@@ -464,7 +468,7 @@ class DBUser:
         task_names = {task.sendtask_uuid: task.sendtask_id for task in sendtask_data}
 
         # 確保 sendlog 資料表存在，同時更新資料表 (check_sendlog handles its own session)
-        check_statuses = await self.check_sendlog(uuids_and_create_time)
+        check_statuses = await self.check_sendlog(uuids_and_create_time, ignore_archived=ignore_archived)
 
 
         # 開始刷新 sendlog_stats

@@ -317,7 +317,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
             disabled={selectedUuids.length === 0 || isCheckingSends}
             onClick={() => {
               if (window.confirm("確定要執行寄送狀態更新嗎？")) {
-                startJob("refresh_sendlog_stats", { uuids: selectedUuids });
+                startJob("refresh_sendlog_stats", { uuids: selectedUuids, ignore_archived: true });
               }
             }}
             size="small"
@@ -335,7 +335,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
               }
               // fetchCheckSends(uuids);
               if (window.confirm("確定要執行寄送狀態更新嗎？")) {
-                startJob("refresh_sendlog_stats", { uuids: uuids });
+                startJob("refresh_sendlog_stats", { uuids: uuids, ignore_archived: true });
               }
             }}
             disabled={isCheckingSends}
@@ -590,7 +590,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
                           size="small"
                           onClick={() => {
                             if (window.confirm("確定要執行寄送狀態更新嗎？")) {
-                              startJob("refresh_sendlog_stats", { uuids: [row.sendtask_uuid] });
+                              startJob("refresh_sendlog_stats", { uuids: [row.sendtask_uuid], ignore_archived: true });
                             }
                           }}
                           disabled={isCheckingSends}

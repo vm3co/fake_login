@@ -115,7 +115,7 @@ async def _shared_project_detail(request: Request, page_name: str, project_id: s
     # 檔案存在，組合 context
     context = {
         "request": request,
-        "title": f"{page_name.capitalize()} 登入頁面",
+        "title": f"{page_name.capitalize()} 登入頁面", 
         "project_id": project_id,
         "api_base_path": request.scope.get("root_path", "")
     }

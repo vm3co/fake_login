@@ -247,24 +247,27 @@ async def lifespan(app: FastAPI):
     await db_user.table_initialize()
     logger.info("資料庫初始化完成")
 
-    # Cache Warming logic
-    try:
-        logger.info("Starting Cache Warming...")
-        # Fetch active tasks (is_archived is False or NULL)
-        active_uuids = []
-        stmt = select(SendTask).where(
-            or_(SendTask.is_archived == False, SendTask.is_archived.is_(None))
-        )
-        tasks = await db_controller.execute_scalars(stmt)
-        active_uuids = [task.sendtask_uuid for task in tasks]
+    # Cache Warming logic 移到背景執行，避免阻塞啟動
+    async def run_cache_warming():
+        try:
+            logger.info("Starting Cache Warming in background...")
+            # Fetch active tasks (is_archived is False or NULL)
+            active_uuids = []
+            stmt = select(SendTask).where(
+                or_(SendTask.is_archived == False, SendTask.is_archived.is_(None))
+            )
+            tasks = await db_controller.execute_scalars(stmt)
+            active_uuids = [task.sendtask_uuid for task in tasks]
 
-        if active_uuids:
-             await db_user.refresh_sendlog_stats(active_uuids)
-             logger.info(f"Cache Warming completed for {len(active_uuids)} active tasks.")
-        else:
-             logger.info("No active tasks found for Cache Warming.")
-    except Exception as e:
-        logger.error(f"Cache Warming failed: {e}")
+            if active_uuids:
+                 await db_user.refresh_sendlog_stats(active_uuids)
+                 logger.info(f"Cache Warming completed for {len(active_uuids)} active tasks.")
+            else:
+                 logger.info("No active tasks found for Cache Warming.")
+        except Exception as e:
+            logger.error(f"Cache Warming failed: {str(e)}")
+            
+    asyncio.create_task(run_cache_warming())
     start_scheduler()  # 啟動 APScheduler
 
     # Start workers

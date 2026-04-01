@@ -286,6 +286,7 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
             # Logic from refresh_sendlog_stats
             async def task_func():
                 uuids = params.get("uuids", [])
+                ignore_archived = params.get("ignore_archived", False)
                 if not uuids:
                     return {"message": "未指定任務 UUID"}
                 
@@ -293,18 +294,7 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                 # Since it's async background job, we can process all (maybe with some sleep to yield if needed).
                 # db_user.refresh_sendlog_stats handles list of uuids.
                 
-                await db_user.refresh_sendlog_stats(uuids)
-                # Since db_user.refresh_sendlog_stats doesn't return detailed status dict anymore in my ORM refactor, 
-                # (it returns sendlog_status dict, but let's check db_user.py implementation again)
-                # Actually it returns `sendlog_status`.
-                # But since I refactored it, it might return empty dict or statuses.
-                # Assuming it returns a dict of {uuid: status_str}
-                
-                # Re-fetch result to count changed? 
-                # Or just assume success.
-                # In previous steps I saw `return sendlog_status` in db_user.py
-                
-                result = await db_user.refresh_sendlog_stats(uuids)
+                result = await db_user.refresh_sendlog_stats(uuids, ignore_archived=ignore_archived)
                 
                 updated_count = len(result) # Rough estimate or use logic
                 
