@@ -199,6 +199,23 @@ export default function useSendtaskList() {
         };
     }, []);
 
+    useEffect(() => {
+        const handleJobEvent = (e) => {
+            const job = e.detail;
+            if (job && job.type === 'refresh_sendlog_stats') {
+                refresh();
+            }
+        };
+
+        window.addEventListener('jobCompleted', handleJobEvent);
+        window.addEventListener('jobFailed', handleJobEvent);
+
+        return () => {
+            window.removeEventListener('jobCompleted', handleJobEvent);
+            window.removeEventListener('jobFailed', handleJobEvent);
+        };
+    }, [isAuthenticated]); // Re-bind when auth changes is enough, as refresh creates a new controller each time
+
     const todayTasks = tasksData.filter(row => {
         const stats = statsData[row.sendtask_uuid];
         const hasStats = stats && stats.today_earliest_plan_time > 0;

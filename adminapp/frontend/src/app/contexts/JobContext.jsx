@@ -63,6 +63,7 @@ export const JobProvider = ({ children }) => {
                     enqueueSnackbar(`任務完成: ${job.type}`, { variant: 'success' });
                     getNotifications(); // Refresh notifications panel
                     setCurrentJob(null);
+                    window.dispatchEvent(new CustomEvent('jobCompleted', { detail: job }));
                     if (snackbarKey.current) {
                         closeSnackbar(snackbarKey.current);
                         snackbarKey.current = null;
@@ -71,6 +72,7 @@ export const JobProvider = ({ children }) => {
                     lastProcessedJobId.current = job.job_id;
                     enqueueSnackbar(`任務失敗: ${job.error}`, { variant: 'error' });
                     setCurrentJob(null);
+                    window.dispatchEvent(new CustomEvent('jobFailed', { detail: job }));
                     if (snackbarKey.current) {
                         closeSnackbar(snackbarKey.current);
                         snackbarKey.current = null;
