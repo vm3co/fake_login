@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { jwtDecode } from 'jwt-decode';
 import {
   Box,
   Card,
@@ -190,6 +191,18 @@ const LogInfo = ({ time, src, dev }) => {
   );
 };
 
+// 取得當前登入者 + 任務 uuid 的 localStorage key
+const getFilterIpStorageKey = (uuid = '') => {
+  try {
+    const token = window.localStorage.getItem('accessToken');
+    if (!token) return `filterIp_guest_${uuid}`;
+    const decoded = jwtDecode(token);
+    return `filterIp_${decoded.username || 'guest'}_${uuid}`;
+  } catch {
+    return `filterIp_guest_${uuid}`;
+  }
+};
+
 export default function TaskDetail({ task, open, onClose }) {
   const [taskData, setTaskData] = useState(null);
   const [mailTemplates, setMailTemplates] = useState([]);
@@ -205,8 +218,8 @@ export default function TaskDetail({ task, open, onClose }) {
   const [selectAllAcrossPages, setSelectAllAcrossPages] = useState(false); // 是否選取所有頁面所有資料
   const [acctControl, setAcctControl] = useState([false, false, false, false, false]);
 
-  // 篩選條件
-  const [filters, setFilters] = useState({
+  // 篩選條件（filterIp 在 Dialog 開啟時再從 localStorage 讀取）
+  const defaultFiltersBase = {
     searchText: '',
     dateFrom: '',
     dateTo: '',
@@ -216,9 +229,11 @@ export default function TaskDetail({ task, open, onClose }) {
     showFiled: false,
     sortBy: 'target_email',
     rowsPerPage: 20,
-    sort: 'asc'
-  });
-  const [pendingFilters, setPendingFilters] = useState(filters);
+    sort: 'asc',
+    filterIp: ''
+  };
+  const [filters, setFilters] = useState(defaultFiltersBase);
+  const [pendingFilters, setPendingFilters] = useState(defaultFiltersBase);
 
   // 載入任務詳細資料
   const fetchTaskLogs = async () => {
@@ -272,6 +287,12 @@ export default function TaskDetail({ task, open, onClose }) {
         !!task.triggered
       ]);
 
+      // 從 localStorage 讀取該任務專屬的排除 IP
+      const taskSavedIp = window.localStorage.getItem(getFilterIpStorageKey(task.sendtask_uuid)) || '';
+      const taskFilters = { ...defaultFiltersBase, filterIp: taskSavedIp };
+      setFilters(taskFilters);
+      setPendingFilters(taskFilters);
+
       // 重置狀態
       setLogs([]);
       setTotalLogs(0);
@@ -321,22 +342,9 @@ export default function TaskDetail({ task, open, onClose }) {
       setTaskData(null);
       setPage(0);
 
-      // 建立一個乾淨的預設 filters
-      const defaultFilters = {
-        searchText: '',
-        dateFrom: '',
-        dateTo: '',
-        resultType: 'all',
-        showAccessed: false,
-        showClicked: false,
-        showFiled: false,
-        sortBy: 'target_email',
-        rowsPerPage: 20,
-        sort: 'asc'
-      };
-
-      setFilters(defaultFilters);
-      setPendingFilters(defaultFilters);
+      // 重置為空白狀態（下次開啟對應任務時再從 localStorage 讀取）
+      setFilters(defaultFiltersBase);
+      setPendingFilters(defaultFiltersBase);
 
       setSelectedUuids([]);
       setSelectAllAcrossPages(false);
@@ -576,6 +584,19 @@ export default function TaskDetail({ task, open, onClose }) {
                           startAdornment: <Search sx={{ mr: 1, color: '#94a3b8' }} />
                         }}
                       />
+                      <TextField
+                        size="small"
+                        label="排除IP"
+                        placeholder="請填入排除ip，以逗點分隔，支援萬用字元(*)，例如：1.1.1.1, 1.2.3.*"
+                        value={pendingFilters.filterIp || ''}
+                        onChange={(e) => {
+                          // 只允許 IPv4（數字、點）、IPv6（數字、a-f/A-F、冒號）、星號與逗點和空白
+                          const sanitized = e.target.value.replace(/[^0-9a-fA-F.:,* ]/g, '');
+                          setPendingFilters({ ...pendingFilters, filterIp: sanitized });
+                        }}
+                        InputLabelProps={{ shrink: true }}
+                        sx={{ minWidth: 500 }}
+                      />
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
                       {acctControl[4] &&
@@ -660,18 +681,9 @@ export default function TaskDetail({ task, open, onClose }) {
                       size="small"
                       color="secondary"
                       onClick={() => {
-                        setPendingFilters({
-                          searchText: '',
-                          dateFrom: '',
-                          dateTo: '',
-                          resultType: 'all',
-                          showAccessed: false,
-                          showClicked: false,
-                          showFiled: false,
-                          sortBy: 'target_email',
-                          rowsPerPage: 20,
-                          sort: 'asc'
-                        });
+                        // 清除該任務專屬的 localStorage 排除 IP
+                        window.localStorage.removeItem(getFilterIpStorageKey(task?.sendtask_uuid));
+                        setPendingFilters(defaultFiltersBase);
                       }}>
                       清空
                     </Button>
@@ -679,6 +691,13 @@ export default function TaskDetail({ task, open, onClose }) {
                       variant="contained"
                       size="small"
                       onClick={() => {
+                        // 儲存 filterIp 到 localStorage（以帳號 + 任務 uuid 為 key）
+                        const storageKey = getFilterIpStorageKey(task?.sendtask_uuid);
+                        if (pendingFilters.filterIp) {
+                          window.localStorage.setItem(storageKey, pendingFilters.filterIp);
+                        } else {
+                          window.localStorage.removeItem(storageKey);
+                        }
                         setFilters(pendingFilters);
                         setNowRowsPerPage(pendingFilters.rowsPerPage);
                         setPage(0);

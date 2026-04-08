@@ -18,6 +18,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import zipfile
 import urllib.parse
+import re
 
 from sqlalchemy import select, update, delete, func, desc, asc, text, String, cast, literal
 from sqlalchemy.dialects.postgresql import array
@@ -469,24 +470,6 @@ def get_router(db_user):
         if request.showFiled:
             stmt = stmt.where(func.array_length(SendLogDetail.file_time, 1) > 0)
 
-        # 排除 IP 過濾
-        # 將使用者輸入的逗點分隔字串切割、去除空白，取得有效 IP 清單
-        if request.filterIp:
-            ip_list = [ip.strip() for ip in request.filterIp.split(',') if ip.strip()]
-            if ip_list:
-                # 排除 access_src、click_src、file_src 陣列中含有指定 IP 的記錄
-                # 使用原生 SQL text() 產生有明確型別的陣列，避免 PostgreSQL 型別推斷問題
-                # 格式: ARRAY['1.1.1.1','2.2.2.2']::text[]
-                ip_placeholder = ", ".join(f"'{ip}'" for ip in ip_list)
-                ip_array_sql = text(f"ARRAY[{ip_placeholder}]::text[]")
-                for col_name in ["access_src", "click_src", "file_src"]:
-                    col = getattr(SendLogDetail, col_name)
-                    stmt = stmt.where(
-                        col.is_(None) |
-                        (func.coalesce(func.array_length(col, 1), 0) == 0) |
-                        ~col.op("&&")(ip_array_sql)
-                    )
-
         # 排序
         sort_column = getattr(SendLogDetail, request.sortBy, SendLogDetail.plan_time)
         if request.sort == "asc":
@@ -505,6 +488,32 @@ def get_router(db_user):
 
         rows = await db_controller.execute_scalars(stmt)
             
+        # 解析排除 IP，準備在 Python 層級過濾紀錄
+        exact_ips = []
+        wildcard_regex = None
+        if request.filterIp:
+            import re
+            ip_list = [ip.strip() for ip in request.filterIp.split(',') if ip.strip()]
+            wildcard_patterns = []
+            for ip in ip_list:
+                if not re.match(r'^[0-9a-fA-F\.\:\*]+$', ip):
+                    continue
+                if '*' in ip:
+                    wildcard_patterns.append(ip.replace('.', r'\.').replace('*', '.*'))
+                else:
+                    exact_ips.append(ip)
+            if wildcard_patterns:
+                wildcard_regex = re.compile('^(' + '|'.join(wildcard_patterns) + ')$')
+
+        def is_ip_excluded(ip_addr):
+            if not ip_addr:
+                return False
+            if ip_addr in exact_ips:
+                return True
+            if wildcard_regex and wildcard_regex.match(ip_addr):
+                return True
+            return False
+
         # Convert to dicts
         data = []
         trigger_columns = ["access_time", "access_src", "access_dev",
@@ -515,9 +524,35 @@ def get_router(db_user):
                             "second_input_time", "second_input_src", 
                             "second_input_dev", "second_input_info"]
         
+        src_bases = ["access", "click", "file", "second_access", "second_qrcode", "second_input"]
+
         for row in rows:
             item = {c.name: getattr(row, c.name) for c in row.__table__.columns}
             
+            # 如果有設定排除 IP，過濾陣列中對應的紀錄
+            if exact_ips or wildcard_regex:
+                for base in src_bases:
+                    src_col = f"{base}_src"
+                    # 找出同群組的其他欄位
+                    related_cols = [c for c in trigger_columns if c.startswith(base) and c != src_col]
+
+                    if item.get(src_col) and isinstance(item[src_col], list):
+                        src_list = item[src_col]
+                        keep_indices = []
+                        for i, ip_addr in enumerate(src_list):
+                            if not is_ip_excluded(ip_addr):
+                                keep_indices.append(i)
+                        
+                        # 把不需要的 index 濾掉
+                        filtered_src_list = [src_list[i] for i in keep_indices]
+                        item[src_col] = filtered_src_list if filtered_src_list else None
+                        
+                        for r_col in related_cols:
+                            if item.get(r_col) and isinstance(item[r_col], list):
+                                r_list = item[r_col]
+                                filtered_r_list = [r_list[i] for i in keep_indices if i < len(r_list)]
+                                item[r_col] = filtered_r_list if filtered_r_list else None
+
             # 處理觸發紀錄，只留最後一筆
             for col in trigger_columns:
                 if col in item and isinstance(item[col], list):

@@ -499,11 +499,11 @@ export default function TaskDetail({ task, open, onClose }) {
                       <TextField
                         size="small"
                         label="排除IP"
-                        placeholder="請填入排除ip，以逗點分隔，例如：1.1.1.1, 2001:db8::1"
+                        placeholder="請填入排除ip，以逗點分隔，支援萬用字元(*)，例如：1.1.1.1, 1.2.3.*"
                         value={pendingFilters.filterIp || ''}
                         onChange={(e) => {
-                          // 只允許 IPv4（數字、點）、IPv6（數字、a-f/A-F、冒號）、逗點與空白
-                          const sanitized = e.target.value.replace(/[^0-9a-fA-F.:, ]/g, '');
+                          // 只允許 IPv4（數字、點）、IPv6（數字、a-f/A-F、冒號）、星號與逗點和空白
+                          const sanitized = e.target.value.replace(/[^0-9a-fA-F.:,* ]/g, '');
                           setPendingFilters({ ...pendingFilters, filterIp: sanitized });
                         }}
                         InputLabelProps={{ shrink: true }}
