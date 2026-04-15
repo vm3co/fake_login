@@ -28,6 +28,10 @@ import {
     Accordion,
     AccordionSummary,
     AccordionDetails,
+    Stepper,
+    Step,
+    StepLabel,
+    Switch,
 } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import UploadIcon from '@mui/icons-material/Upload';
@@ -80,6 +84,8 @@ const CreateUrl = ({ user, isAdmin }) => {
     const [aiImage, setAiImage] = useState(null);
     const [aiPageType, setAiPageType] = useState('field'); // 'field' 欄位觸發 | 'download' 下載按鍵觸發
     const [generating, setGenerating] = useState(false);
+    const [aiProgress, setAiProgress] = useState(null);
+    const [useDesign, setUseDesign] = useState(false);
 
 
     // 刪除確認視窗
@@ -364,9 +370,11 @@ const CreateUrl = ({ user, isAdmin }) => {
                     abortControllerRef.current.abort();
                 }
                 setOpenAiDialog(false);
+                setAiProgress(null);
             }
         } else {
             setOpenAiDialog(false);
+            setAiProgress(null);
         }
     };
 
@@ -377,26 +385,19 @@ const CreateUrl = ({ user, isAdmin }) => {
         }
 
         setGenerating(true);
+        setAiProgress({ stage: 'starting', message: '準備中...' });
+
         const formData = new FormData();
         formData.append('prompt', aiPrompt);
         formData.append('pageType', aiPageType);
-        if (aiRefUrl) {
-            formData.append('refUrl', aiRefUrl);
-        }
-        if (aiImage) {
-            formData.append('image', aiImage);
-        }
+        formData.append('aiModel', aiModel);
+        formData.append('useDesign', useDesign);
+        if (aiRefUrl) formData.append('refUrl', aiRefUrl);
+        if (aiImage) formData.append('image', aiImage);
 
-        // 建立新的 AbortController
         abortControllerRef.current = new AbortController();
 
-        // 決定 API Endpoint
-        let endpoint = '/api/trigger_page/generate_with_gemini';
-        if (aiModel === 'gpt') {
-            endpoint = '/api/trigger_page/generate_with_gpt';
-        } else if (aiModel === 'litellm') {
-            endpoint = '/api/trigger_page/generate_with_litellm';
-        }
+        let endpoint = '/api/trigger_page/generate_with_ai_stream';
 
         try {
             const accessToken = window.localStorage.getItem("accessToken");
@@ -414,29 +415,57 @@ const CreateUrl = ({ user, isAdmin }) => {
                 throw new Error(result.detail || '生成失敗');
             }
 
-            const htmlContent = await response.text();
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
 
-            // 成功生成後，關閉 AI Dialog，開啟 Upload Dialog，並將內容轉換為檔案
-            setOpenAiDialog(false);
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
 
-            // 建立一個 File 物件
-            const blob = new Blob([htmlContent], { type: 'text/html' });
-            const timestamp = new Date().getTime();
-            const fileName = `ai_generated_${timestamp}.html`;
-            const file = new File([blob], fileName, { type: 'text/html' });
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n\n');
+                buffer = lines.pop(); // 保留不完整的部分
 
-            // 預設一些欄位
-            setEditMode(null);
-            setPageLabel(`AI 生成頁面 ${new Date().toLocaleTimeString()}`);
-            setPageValue(`ai_${timestamp}`);
-            setOldPageValue('');
-            setSelectedFile(file);
+                for (const line of lines) {
+                    if (line.startsWith('data: ')) {
+                        const dataStr = line.slice(6);
+                        if (!dataStr) continue;
 
-            // 開啟上傳視窗確認
-            setOpenUploadDialog(true);
+                        const data = JSON.parse(dataStr);
 
-            enqueueSnackbar('AI 生成成功！請確認並儲存頁面。', { variant: 'success' });
+                        if (data.type === 'progress') {
+                            setAiProgress(data.data);
+                        } else if (data.type === 'complete') {
+                            setAiProgress(data.data);
+                            const htmlContent = data.data.html;
 
+                            // 成功生成後，關閉 AI Dialog，開啟 Upload Dialog，並將內容轉換為檔案
+                            setOpenAiDialog(false);
+
+                            // 建立一個 File 物件
+                            const blob = new Blob([htmlContent], { type: 'text/html' });
+                            const timestamp = new Date().getTime();
+                            const fileName = `ai_generated_${timestamp}.html`;
+                            const file = new File([blob], fileName, { type: 'text/html' });
+
+                            // 預設一些欄位
+                            setEditMode(null);
+                            setPageLabel(`AI 生成頁面 ${new Date().toLocaleTimeString()}`);
+                            setPageValue(`ai_${timestamp}`);
+                            setOldPageValue('');
+                            setSelectedFile(file);
+
+                            // 開啟上傳視窗確認
+                            setOpenUploadDialog(true);
+
+                            enqueueSnackbar('AI 生成成功！請確認並儲存頁面。', { variant: 'success' });
+                        } else if (data.type === 'error') {
+                            throw new Error(data.data.message);
+                        }
+                    }
+                }
+            }
         } catch (err) {
             if (err.name === 'AbortError') {
                 console.log('AI生成頁面 已取消');
@@ -447,6 +476,7 @@ const CreateUrl = ({ user, isAdmin }) => {
             }
         } finally {
             setGenerating(false);
+            setAiProgress(null);
             abortControllerRef.current = null;
         }
     };
@@ -1267,8 +1297,28 @@ const CreateUrl = ({ user, isAdmin }) => {
                             value={aiRefUrl}
                             onChange={(e) => setAiRefUrl(e.target.value)}
                             disabled={generating}
-                            helperText="提供網址可協助 AI 更精確還原該網站的設計風格"
+                            helperText="提供網址可協助 AI 更精確還原該網站的文字內容"
                         />
+
+                        {aiRefUrl && (
+                            <FormControlLabel
+                                control={
+                                    <Switch
+                                        checked={useDesign}
+                                        onChange={(e) => setUseDesign(e.target.checked)}
+                                        disabled={generating}
+                                        color="primary"
+                                    />
+                                }
+                                label={
+                                    <Box>
+                                        <Typography variant="body1">啟用自動化設計解析 (DESIGN.md)</Typography>
+                                        <Typography variant="caption" color="text.secondary">開啟後將啟動系統爬蟲擷取目標網址的色系、字體與圓角外觀。會需要較長的處理時間。</Typography>
+                                    </Box>
+                                }
+                                sx={{ ml: 0, '& .MuiFormControlLabel-label': { ml: 1 } }}
+                            />
+                        )}
 
                         <Button
                             variant="outlined"
@@ -1298,6 +1348,37 @@ const CreateUrl = ({ user, isAdmin }) => {
                                     <CloseIcon fontSize="small" />
                                 </IconButton>
                             </Stack>
+                        )}
+
+                        {generating && aiProgress && (
+                            <Box sx={{ mt: 2, p: 2, border: '1px solid #eee', borderRadius: 2, backgroundColor: '#fafafa' }}>
+                                <Stepper
+                                    activeStep={
+                                        aiProgress.stage === 'extracting' ? 0 :
+                                            aiProgress.stage === 'extracted' ? 1 :
+                                                aiProgress.stage === 'generating' ? 1 :
+                                                    aiProgress.stage === 'done' ? 2 : 0
+                                    }
+                                    alternativeLabel
+                                >
+                                    <Step completed={['extracted', 'generating', 'done'].includes(aiProgress.stage)}>
+                                        <StepLabel>解析目標網站</StepLabel>
+                                    </Step>
+                                    <Step completed={['done'].includes(aiProgress.stage)}>
+                                        <StepLabel>AI 生成頁面</StepLabel>
+                                    </Step>
+                                    <Step completed={aiProgress.stage === 'done'}>
+                                        <StepLabel>完成</StepLabel>
+                                    </Step>
+                                </Stepper>
+
+                                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', mt: 3, gap: 1.5 }}>
+                                    {aiProgress.stage !== 'done' && <CircularProgress size={20} />}
+                                    <Typography variant="body2" color="text.secondary">
+                                        {aiProgress.message}
+                                    </Typography>
+                                </Box>
+                            </Box>
                         )}
                     </Stack>
                 </DialogContent>

@@ -17,7 +17,9 @@ from fastapi import (
     Request,
     Query
 )
-from fastapi.responses import JSONResponse, PlainTextResponse, FileResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, FileResponse, StreamingResponse
+import asyncio
+import json
 from openai import OpenAI
 import google.generativeai as genai
 import base64
@@ -30,6 +32,7 @@ from backend.repository.db_controller import db_controller
 from sqlalchemy import select, update, delete, insert
 from backend.services.db_user import DBUser
 from backend.api.user_api import get_current_user
+from backend.services.design_generator import get_design_context
 
 logger = Logger().get_logger()
 
@@ -980,6 +983,139 @@ def get_router(db_user: DBUser):
         except Exception as e:
             logger.error(f"Gemini 生成失敗: {e}")
             raise HTTPException(status_code=500, detail=f"Gemini 生成失敗: {str(e)}")
+
+    async def call_llm(model: str, system_instructions: str, user_prompt: str, ref_url: str = None, image: UploadFile = None, screenshot_b64: str = None) -> str:
+        # 建構 user message
+        prompt_suffix = f"使用者的需求：{user_prompt}"
+        if ref_url:
+            prompt_suffix += f"\n\n[參考網址]\n使用者提供了一個參考網址：{ref_url}\n請參考該網站的設計。"
+        
+        if model == "gemini":
+            gemini_api_key = os.getenv("GEMINI_APY_KEY")
+            if not gemini_api_key:
+                raise Exception("未提供 Gemini API Key")
+            genai.configure(api_key=gemini_api_key)
+            genai_model = genai.GenerativeModel("gemini-2.5-flash")
+            full_prompt = f"{system_instructions}\n\n{prompt_suffix}"
+            contents = [full_prompt]
+            if image:
+                file_bytes = await image.read()
+                pil_image = Image.open(io.BytesIO(file_bytes))
+                contents.append(pil_image)
+            if screenshot_b64:
+                # remove data:image/png;base64,
+                header, encoded = screenshot_b64.split(",", 1)
+                img_data = base64.b64decode(encoded)
+                pil_image = Image.open(io.BytesIO(img_data))
+                contents.append(pil_image)
+            
+            response = await genai_model.generate_content_async(contents)
+            generated_text = response.text
+        else:
+            base_url = None
+            api_key = None
+            model_name = "gpt-5.2"
+            if model == "litellm":
+                api_key = os.getenv("LITELLM_API_KEY")
+                server_ip = os.getenv("LITELLM_SERVER_IP")
+                if not api_key or not server_ip:
+                    raise Exception("未設定 LiteLLM 環境變數")
+                base_url = f"http://{server_ip}/v1"
+                model_name = "gemma-27b"
+            else:
+                api_key = os.getenv("OPENAI_API_KEY")
+                if not api_key:
+                    raise Exception("未設定 OPENAI_API_KEY")
+
+            client = OpenAI(api_key=api_key, base_url=base_url)
+            
+            user_content = [{"type": "text", "text": prompt_suffix}]
+            if image and model != "litellm":
+                file_bytes = await image.read()
+                b64 = base64.b64encode(file_bytes).decode('utf-8')
+                mime_type = image.content_type or "image/jpeg"
+                user_content.append({"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64}"}})
+            
+            if screenshot_b64 and model != "litellm":
+                user_content.append({"type": "image_url", "image_url": {"url": screenshot_b64}})
+
+            messages = [
+                {"role": "system", "content": system_instructions},
+                {"role": "user", "content": user_content}
+            ]
+            response = client.chat.completions.create(model=model_name, messages=messages, stream=False)
+            generated_text = response.choices[0].message.content
+
+        return generated_text.replace("```html", "").replace("```", "").strip()
+
+    @router.post("/generate_with_ai_stream", summary="使用 AI 生成頁面（SSE 串流進度）", tags=["trigger page"])
+    async def generate_page_with_ai_stream(
+        prompt: str = Form(..., description="使用者的提示詞"),
+        refUrl: str = Form(None, description="參考網址 (可選)"),
+        image: UploadFile = File(None, description="參考圖片 (可選)"),
+        pageType: str = Form("field", description="網頁類型: 'field' 欄位觸發 | 'download' 下載按鍵觸發"),
+        aiModel: str = Form("gemini", description="AI 模型選擇"),
+        useDesign: bool = Form(False, description="是否啟用 DESIGN.md 分析"),
+        current_user: dict = Depends(get_current_user)
+    ):
+        async def event_generator():
+            def sse_event(event_type: str, data: dict) -> str:
+                return f"data: {json.dumps({'type': event_type, 'data': data})}\n\n"
+
+            design_context = {}
+            try:
+                # 階段 1：設計解析
+                if refUrl and useDesign:
+                    yield sse_event("progress", {"stage": "extracting", "message": "正在解析目標網站設計風格..."})
+                    
+                    try:
+                        design_context = await get_design_context(refUrl)
+                        yield sse_event("progress", {
+                            "stage": "extracted",
+                            "message": f"設計解析完成",
+                            "source": design_context.get("source")
+                        })
+                    except Exception as e:
+                        logger.error(f"提取設計解析失敗: {e}")
+                        yield sse_event("progress", {
+                            "stage": "extracted",
+                            "message": f"設計解析失敗，改用預設規範",
+                            "source": "fallback"
+                        })
+                
+                # 階段 2：LLM 生成
+                yield sse_event("progress", {"stage": "generating", "message": "正在使用 AI 生成網頁程式碼..."})
+                
+                system_instructions = get_system_prompt(pageType)
+                if refUrl and design_context.get("design_md"):
+                    system_instructions += f"\n\n<design_system>\n{design_context['design_md']}\n</design_system>"
+                    system_instructions += "\n\n[嚴格要求] 你必須完全遵守上方 <design_system> 中的設計規範來撰寫HTML/CSS。"
+                
+                html_content = await call_llm(
+                    model=aiModel,
+                    system_instructions=system_instructions,
+                    user_prompt=prompt,
+                    ref_url=refUrl,
+                    image=image,
+                    screenshot_b64=design_context.get("screenshot_b64") if refUrl else None
+                )
+                
+                # 階段 3：完成
+                yield sse_event("complete", {"stage": "done", "message": "生成完成！", "html": html_content})
+                
+            except Exception as e:
+                logger.error(f"生成流程失敗: {e}")
+                yield sse_event("error", {"stage": "error", "message": f"處理失敗: {str(e)}"})
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no"
+            }
+        )
 
     return router
 
