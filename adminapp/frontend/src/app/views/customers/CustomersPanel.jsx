@@ -13,6 +13,13 @@ import {
   InputLabel,
   Select,
   MenuItem,
+  Chip,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
 } from '@mui/material';
 import Accordion from '@mui/material/Accordion';
 import AccordionActions from '@mui/material/AccordionActions';
@@ -67,19 +74,138 @@ const parseTasks = (tasksData) => {
   return []; // 對於其他類型，回傳空陣列
 };
 
+// --- 專案狀態工具函式 ---
+const getProjectStatusText = (status) => {
+  switch (status) {
+    case 'created': return '已建立';
+    case 'active': return '執行中';
+    case 'stopped': return '已停止';
+    case 'deleted': return '已刪除';
+    default: return status;
+  }
+};
+
+const getProjectStatusColor = (status) => {
+  switch (status) {
+    case 'created': return { bg: '#dbeafe', color: '#1e40af' };
+    case 'active': return { bg: '#dcfce7', color: '#166534' };
+    case 'stopped': return { bg: '#fed7aa', color: '#9a3412' };
+    case 'deleted': return { bg: '#f1f5f9', color: '#64748b' };
+    default: return { bg: '#f1f5f9', color: '#64748b' };
+  }
+};
+
+// --- 客戶專案列表子元件（純展示） ---
+function CustomerProjectsSection({ acctUuid, cache, setCache }) {
+  const [projects, setProjects] = useState(cache[acctUuid] || null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (cache[acctUuid]) {
+      setProjects(cache[acctUuid]);
+      return;
+    }
+    if (!acctUuid) return;
+
+    const fetchProjects = async () => {
+      setLoading(true);
+      try {
+        const res = await axios.get(`/api/task/get_customer_tasks?acct_uuid=${acctUuid}`);
+        if (res.data?.status === 'success') {
+          const data = res.data.data || [];
+          setProjects(data);
+          setCache(prev => ({ ...prev, [acctUuid]: data }));
+        }
+      } catch (err) {
+        console.error('取得客戶專案列表失敗:', err);
+        setProjects([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchProjects();
+  }, [acctUuid, cache, setCache]);
+
+  if (loading) {
+    return (
+      <Box sx={{ mb: 2, p: 1.5, display: 'flex', alignItems: 'center', gap: 1 }}>
+        <CircularProgress size={16} />
+        <Typography variant="body2">載入專案列表中...</Typography>
+      </Box>
+    );
+  }
+
+  if (!projects || projects.filter(p => p.status !== 'deleted').length === 0) {
+    return (
+      <Box sx={{ mb: 2, p: 1.5, bgcolor: 'grey.50', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+        <Typography variant="body2" color="text.secondary">此客戶尚未建立任何專案</Typography>
+      </Box>
+    );
+  }
+
+  return (
+    <Box sx={{ mb: 2, p: 1.5, bgcolor: '#f8fafc', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
+      <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 700 }}>
+        📋 客戶建立的專案 ({projects.filter(p => p.status !== 'deleted').length})
+      </Typography>
+      <TableContainer>
+        <Table size="small">
+          <TableHead>
+            <TableRow sx={{ '& th': { fontWeight: 700, fontSize: '0.75rem', color: '#475569', py: 0.5 } }}>
+              <TableCell>專案名稱</TableCell>
+              <TableCell>類型</TableCell>
+              <TableCell>狀態</TableCell>
+              <TableCell>建立時間</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {projects.filter(p => p.status !== 'deleted').map((project) => {
+              const statusStyle = getProjectStatusColor(project.status);
+              return (
+                <TableRow key={project.testcase_uuid} sx={{ '& td': { py: 0.5, fontSize: '0.8rem' } }}>
+                  <TableCell>{project.task_name}</TableCell>
+                  <TableCell>
+                    <Chip
+                      label={project.task_type === 'pre' ? '前測' : '正式'}
+                      size="small"
+                      sx={{ fontWeight: 600, fontSize: '0.65rem', height: 20 }}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    <Chip
+                      label={getProjectStatusText(project.status)}
+                      size="small"
+                      sx={{ fontWeight: 600, fontSize: '0.65rem', height: 20, bgcolor: statusStyle.bg, color: statusStyle.color }}
+                    />
+                  </TableCell>
+                  <TableCell>
+                    {project.created_at ? new Date(project.created_at).toLocaleString('zh-TW') : '-'}
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Box>
+  );
+}
+
 export default function CustomersPanel() {
   const { enqueueSnackbar } = useSnackbar();
 
   const { customers, loading, deleteCustomer, updateCustomerSendtasks, updateCustomerTaskCreation } = useContext(CustomersContext);
   const { tasksData } = useContext(SendtaskListContext);
-  const [selectedCustomers, setSelectedCustomers] = useState([]);  // 勾選客戶
-  // 為每個客戶管理選中的 sendtasks
+  const [selectedCustomers, setSelectedCustomers] = useState([]);
   const [customerSendtasks, setCustomerSendtasks] = useState({});
   const [savingCustomer, setSavingCustomer] = useState(null);
 
   // 組織清單與建立任務開關暫存狀態
   const [orgsData, setOrgsData] = useState([]);
-  const [localTaskCreation, setLocalTaskCreation] = useState({}); // { [customerName]: { enabled: boolean, org_uuid: string } }
+  const [localTaskCreation, setLocalTaskCreation] = useState({});
+
+  // 客戶專案列表快取
+  const [customerProjectsCache, setCustomerProjectsCache] = useState({}); // { [customerName]: { enabled: boolean, org_uuid: string } }
 
   // 取得組織清單
   useEffect(() => {
@@ -337,6 +463,15 @@ export default function CustomersPanel() {
 
                 <AccordionDetails className="details">
                   <Box className="column helper">
+
+                    {/* ====== 客戶專案列表（純展示） ====== */}
+                    {customer.task_creation_enabled && (
+                      <CustomerProjectsSection
+                        acctUuid={customer.acct_uuid}
+                        cache={customerProjectsCache}
+                        setCache={setCustomerProjectsCache}
+                      />
+                    )}
                     <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2, p: 1.5, bgcolor: 'grey.50', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
                       <FormControlLabel
                         control={

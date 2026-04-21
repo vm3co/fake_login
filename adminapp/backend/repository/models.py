@@ -182,3 +182,16 @@ class SystemConfig(Base):
     config_key = Column(Text, unique=True, nullable=False, index=True)
     config_value = Column(Text, nullable=True)
     updated_at = Column(TIMESTAMP, server_default=func.now(), onupdate=func.now())
+
+class CustomerTask(Base):
+    """追蹤客戶建立的專案與任務狀態"""
+    __tablename__ = "customer_tasks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    acct_uuid = Column(String(36), nullable=False, index=True)       # 客戶 UUID
+    testcase_uuid = Column(String(36), unique=True, nullable=False)  # 專案 UUID
+    sendtask_uuid = Column(String(36), nullable=True)                # 任務 UUID（啟動後才有）
+    task_name = Column(String(255))                                   # 任務名稱
+    task_type = Column(String(20))                                    # pre / official
+    status = Column(String(20), default='created')                    # created / active / stopped / deleted
+    created_at = Column(TIMESTAMP, server_default=func.now())

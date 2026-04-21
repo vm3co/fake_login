@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Card,
@@ -19,8 +19,19 @@ import {
   DialogTitle,
   DialogContent,
   IconButton,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Divider,
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import StopIcon from '@mui/icons-material/Stop';
+import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
+import RefreshIcon from '@mui/icons-material/Refresh';
 import { useSnackbar } from 'notistack';
 import { styled } from '@mui/material/styles';
 import {
@@ -29,7 +40,9 @@ import {
   Search,
   FilterList,
   AddCircleOutline,
+  BuildCircle,
 } from '@mui/icons-material';
+import axios from 'axios';
 
 import useCustomer from 'app/hooks/useCustomer';
 import { useCheckSends } from "app/hooks/useCheckSends";
@@ -142,6 +155,27 @@ const formatDate = (timestamp, type = "datetime") => {
   return date.toLocaleString('zh-TW');
 };
 
+// 專案狀態文字與顏色
+const getProjectStatusText = (status) => {
+  switch (status) {
+    case 'created': return '已建立';
+    case 'active': return '執行中';
+    case 'stopped': return '已停止';
+    case 'deleted': return '已刪除';
+    default: return status;
+  }
+};
+
+const getProjectStatusColor = (status) => {
+  switch (status) {
+    case 'created': return { bg: '#dbeafe', color: '#1e40af' };
+    case 'active': return { bg: '#dcfce7', color: '#166534' };
+    case 'stopped': return { bg: '#fed7aa', color: '#9a3412' };
+    case 'deleted': return { bg: '#f1f5f9', color: '#64748b' };
+    default: return { bg: '#f1f5f9', color: '#64748b' };
+  }
+};
+
 export default function Customer() {
   const [customerData, setCustomerData] = useState({
     sendtasks: null,
@@ -166,6 +200,10 @@ export default function Customer() {
   // const [updatedUuids, setUpdatedUuids] = useState([]);
   const [cooldowns, setCooldowns] = useState({}); // 用於追蹤每個任務的冷卻時間
 
+  // 我的專案相關 state
+  const [myProjects, setMyProjects] = useState([]);
+  const [loadingProjects, setLoadingProjects] = useState(false);
+  const [operatingProject, setOperatingProject] = useState(null); // 正在操作的專案 UUID
 
   const { loading, error, sendtasksData, fetchCustomerSendtasksData } = useCustomer();
 
@@ -181,6 +219,71 @@ export default function Customer() {
       task_creation_enabled,
       task_creation_org_uuid
     });
+  };
+
+  // 取得客戶建立的專案列表
+  const fetchMyProjects = useCallback(async () => {
+    const acctUuid = getCookie('acct_uuid');
+    if (!acctUuid) return;
+    setLoadingProjects(true);
+    try {
+      const res = await axios.get(`/api/task/get_customer_tasks?acct_uuid=${acctUuid}`);
+      if (res.data?.status === 'success') {
+        setMyProjects(res.data.data || []);
+      }
+    } catch (err) {
+      console.error('取得專案列表失敗:', err);
+    } finally {
+      setLoadingProjects(false);
+    }
+  }, []);
+
+  // 啟動任務
+  const handleStartTask = async (testcaseUuid) => {
+    setOperatingProject(testcaseUuid);
+    try {
+      const res = await axios.post('/api/task/create_sendtask', { testcase_uuid: testcaseUuid });
+      if (res.data?.status === 'success') {
+        enqueueSnackbar('任務啟動成功！', { variant: 'success' });
+        fetchMyProjects();
+      }
+    } catch (err) {
+      enqueueSnackbar(err.response?.data?.detail || '啟動任務失敗', { variant: 'error' });
+    } finally {
+      setOperatingProject(null);
+    }
+  };
+
+  // 停止任務
+  const handleStopTask = async (sendtaskUuid) => {
+    setOperatingProject(sendtaskUuid);
+    try {
+      const res = await axios.post('/api/task/delete_sendtask', { sendtask_uuid: sendtaskUuid });
+      if (res.data?.status === 'success') {
+        enqueueSnackbar('任務已停止', { variant: 'success' });
+        fetchMyProjects();
+      }
+    } catch (err) {
+      enqueueSnackbar(err.response?.data?.detail || '停止任務失敗', { variant: 'error' });
+    } finally {
+      setOperatingProject(null);
+    }
+  };
+
+  // 刪除專案
+  const handleDeleteProject = async (testcaseUuid) => {
+    setOperatingProject(testcaseUuid);
+    try {
+      const res = await axios.post('/api/task/delete_testcase', { testcase_uuid: testcaseUuid });
+      if (res.data?.status === 'success') {
+        enqueueSnackbar('專案已刪除', { variant: 'success' });
+        fetchMyProjects();
+      }
+    } catch (err) {
+      enqueueSnackbar(err.response?.data?.detail || '刪除專案失敗', { variant: 'error' });
+    } finally {
+      setOperatingProject(null);
+    }
   };
 
   // 初始化更新 Hook
@@ -200,6 +303,13 @@ export default function Customer() {
       fetchCustomerSendtasksData();
     }
   }, [customerData.sendtasks]);
+
+  // 載入我的專案
+  useEffect(() => {
+    if (customerData.task_creation_enabled && customerData.acct_uuid) {
+      fetchMyProjects();
+    }
+  }, [customerData.task_creation_enabled, customerData.acct_uuid, fetchMyProjects]);
 
   // 處理冷卻時間
   useEffect(() => {
@@ -299,6 +409,12 @@ export default function Customer() {
       ...prev,
       [uuid]: Date.now()
     }));
+  };
+
+  // 建立任務成功回呼
+  const handleCreateSuccess = (testcaseUuid) => {
+    setCreateTaskOpen(false);
+    fetchMyProjects(); // 重新整理專案列表
   };
 
 
@@ -429,6 +545,127 @@ export default function Customer() {
           )}
         </Box>
 
+        {/* ====== 我的專案區塊 ====== */}
+        {customerData.task_creation_enabled && (
+          <Paper elevation={0} sx={{ mb: 3, p: 2, borderRadius: '12px', border: '1px solid #e0e7ff' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                <BuildCircle sx={{ color: '#6366f1' }} />
+                <Typography variant="h6" sx={{ fontWeight: 600 }}>
+                  我的專案
+                </Typography>
+                <Chip label={myProjects.filter(p => p.status !== 'deleted').length} size="small" color="primary" />
+              </Box>
+              <IconButton size="small" onClick={fetchMyProjects} disabled={loadingProjects}>
+                <RefreshIcon sx={{ fontSize: 20 }} />
+              </IconButton>
+            </Box>
+
+            {loadingProjects ? (
+              <Box display="flex" alignItems="center" justifyContent="center" py={2}>
+                <CircularProgress size={20} />
+                <Typography sx={{ ml: 1 }} variant="body2">載入中...</Typography>
+              </Box>
+            ) : myProjects.filter(p => p.status !== 'deleted').length === 0 ? (
+              <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
+                尚未建立任何專案，點擊「新增任務」開始建立
+              </Typography>
+            ) : (
+              <TableContainer>
+                <Table size="small">
+                  <TableHead>
+                    <TableRow sx={{ '& th': { fontWeight: 700, color: '#475569', bgcolor: '#f8fafc' } }}>
+                      <TableCell>專案名稱</TableCell>
+                      <TableCell>類型</TableCell>
+                      <TableCell>狀態</TableCell>
+                      <TableCell>建立時間</TableCell>
+                      <TableCell align="right">操作</TableCell>
+                    </TableRow>
+                  </TableHead>
+                  <TableBody>
+                    {myProjects.filter(p => p.status !== 'deleted').map((project) => {
+                      const statusStyle = getProjectStatusColor(project.status);
+                      const isOperating = operatingProject === project.testcase_uuid || operatingProject === project.sendtask_uuid;
+                      return (
+                        <TableRow key={project.testcase_uuid} sx={{ '&:hover': { bgcolor: '#f8fafc' } }}>
+                          <TableCell>
+                            <Typography variant="body2" fontWeight={600}>{project.task_name}</Typography>
+                          </TableCell>
+                          <TableCell>
+                            <Chip
+                              label={project.task_type === 'pre' ? '前測' : '正式'}
+                              size="small"
+                              sx={{ fontWeight: 600, fontSize: '0.7rem' }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Chip
+                              label={getProjectStatusText(project.status)}
+                              size="small"
+                              sx={{ fontWeight: 600, fontSize: '0.7rem', bgcolor: statusStyle.bg, color: statusStyle.color }}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Typography variant="caption" color="text.secondary">
+                              {project.created_at ? new Date(project.created_at).toLocaleString('zh-TW') : '-'}
+                            </Typography>
+                          </TableCell>
+                          <TableCell align="right">
+                            <Box sx={{ display: 'flex', gap: 0.5, justifyContent: 'flex-end' }}>
+                              {/* 啟動任務按鈕：只有 created 狀態可按 */}
+                              {project.status === 'created' && (
+                                <Button
+                                  size="small"
+                                  variant="contained"
+                                  color="success"
+                                  startIcon={isOperating ? <CircularProgress size={14} color="inherit" /> : <PlayArrowIcon />}
+                                  onClick={() => handleStartTask(project.testcase_uuid)}
+                                  disabled={isOperating}
+                                  sx={{ fontSize: '0.75rem', minWidth: 0, px: 1.5 }}
+                                >
+                                  啟動
+                                </Button>
+                              )}
+                              {/* 停止任務按鈕：只有 active 狀態可按 */}
+                              {project.status === 'active' && (
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  color="warning"
+                                  startIcon={isOperating ? <CircularProgress size={14} /> : <StopIcon />}
+                                  onClick={() => handleStopTask(project.sendtask_uuid)}
+                                  disabled={isOperating}
+                                  sx={{ fontSize: '0.75rem', minWidth: 0, px: 1.5 }}
+                                >
+                                  停止
+                                </Button>
+                              )}
+                              {/* 刪除專案按鈕：created 或 stopped 狀態可按 */}
+                              {(project.status === 'created' || project.status === 'stopped') && (
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  color="error"
+                                  startIcon={isOperating ? <CircularProgress size={14} /> : <DeleteOutlineIcon />}
+                                  onClick={() => handleDeleteProject(project.testcase_uuid)}
+                                  disabled={isOperating}
+                                  sx={{ fontSize: '0.75rem', minWidth: 0, px: 1.5 }}
+                                >
+                                  刪除
+                                </Button>
+                              )}
+                            </Box>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </TableContainer>
+            )}
+          </Paper>
+        )}
+
         {error && (
           <Alert severity="error" sx={{ mb: 2, borderRadius: '12px' }}>
             {error}
@@ -493,34 +730,6 @@ export default function Customer() {
                       </Typography>
                     </Box>
 
-                    {/* <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                      {taskStatus.triggered &&
-                      <Chip 
-                      label={`觸發率: ${task.totalsuccess > 0 ? ((task.totaltriggered / task.totalplanned) * 100).toFixed(1) : 0}%`}
-                      color="warning"
-                      size="small"
-                      />
-                      }
-                      <Chip 
-                      label={`總信件數: ${task.totalplanned || 0}`}
-                      color="info"
-                      size="small"
-                      />
-                      {taskStatus.send && 
-                      <Chip 
-                      label={`已寄出: ${task.totalsuccess + task.totalfailed || 0}`}
-                      color="secondary"
-                      size="small"
-                      />
-                      }
-                      {taskStatus.triggered &&
-                      <Chip 
-                      label={`已觸發: ${task.totaltriggered || 0}`}
-                      color="error"
-                      size="small"
-                      />
-                      }
-                    </Box> */}
                     {taskStatus && (
                       <Box sx={{ mt: 1.5 }}>
                         {/* 總數徽章 */}
@@ -641,7 +850,7 @@ export default function Customer() {
           </IconButton>
         </DialogTitle>
         <DialogContent>
-          <CreateTask />
+          <CreateTask onSuccess={handleCreateSuccess} />
         </DialogContent>
       </Dialog>
     </MainContainer>

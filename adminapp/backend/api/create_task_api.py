@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 from typing import List, Optional
 from dateutil import parser
@@ -7,6 +7,8 @@ import io
 
 from backend.services.create_se_tasks import se_task_service
 from backend.services.log_manager import Logger
+from backend.repository.db_controller import db_controller
+from backend.repository.models import CustomerTask
 
 logger = Logger().get_logger()
 router = APIRouter()
@@ -22,6 +24,7 @@ class CreateTaskRequest(BaseModel):
     participant_data: str
     template_uuids: List[str]
     unit_uuid: str
+    acct_uuid: str  # 客戶 UUID，用於追蹤
 
 class SendtaskRequest(BaseModel):
     """啟動任務的請求模型"""
@@ -74,8 +77,8 @@ def process_participant_data(csv_text: str) -> tuple[int, str]:
 
 @router.post("/task/create_testcase")
 async def create_testcase(request: CreateTaskRequest):
-    """建立專案與任務"""
-    logger.info(f"Received create task request: {request.task_name}")
+    """建立專案"""
+    logger.info(f"收到建立專案請求: {request.task_name}")
     
     pre_test_enable = (request.task_type == 'pre')
     
@@ -106,6 +109,15 @@ async def create_testcase(request: CreateTaskRequest):
         )
         
         if uuid:
+            # 寫入 DB 追蹤記錄
+            await db_controller.create(CustomerTask, {
+                "acct_uuid": request.acct_uuid,
+                "testcase_uuid": uuid,
+                "task_name": request.task_name,
+                "task_type": request.task_type,
+                "status": "created"
+            })
+
             return {
                 "status": "success",
                 "message": "專案建立成功",
@@ -142,6 +154,12 @@ async def create_sendtask(request: SendtaskRequest):
         )
 
         if state:
+            # 更新 DB 狀態為 active，並記錄 sendtask_uuid
+            await db_controller.update(
+                CustomerTask,
+                {"testcase_uuid": request.testcase_uuid},
+                {"status": "active", "sendtask_uuid": request.testcase_uuid}
+            )
             return {
                 "status": "success",
                 "message": "任務啟動成功",
@@ -157,7 +175,7 @@ async def create_sendtask(request: SendtaskRequest):
 
 @router.post("/task/delete_sendtask")
 async def delete_sendtask(request: DeleteSendtaskRequest):
-    """刪除（停止）任務"""
+    """停止（刪除）任務"""
     logger.info(f"收到刪除任務請求: {request.sendtask_uuid}")
 
     try:
@@ -166,6 +184,12 @@ async def delete_sendtask(request: DeleteSendtaskRequest):
         )
 
         if state:
+            # 更新 DB 狀態為 stopped
+            await db_controller.update(
+                CustomerTask,
+                {"sendtask_uuid": request.sendtask_uuid},
+                {"status": "stopped"}
+            )
             return {
                 "status": "success",
                 "message": "任務刪除成功",
@@ -190,6 +214,12 @@ async def delete_testcase(request: DeleteTestcaseRequest):
         )
 
         if state:
+            # 更新 DB 狀態為 deleted
+            await db_controller.update(
+                CustomerTask,
+                {"testcase_uuid": request.testcase_uuid},
+                {"status": "deleted"}
+            )
             return {
                 "status": "success",
                 "message": "專案刪除成功",
@@ -202,3 +232,35 @@ async def delete_testcase(request: DeleteTestcaseRequest):
     except Exception as e:
         logger.error(f"刪除專案時發生錯誤: {e}")
         raise HTTPException(status_code=500, detail=f"後端處理時發生錯誤: {e}")
+
+
+# --- 查詢端點 ---
+
+@router.get("/task/get_customer_tasks")
+async def get_customer_tasks(acct_uuid: str = Query(..., description="客戶 UUID")):
+    """取得指定客戶的所有專案/任務記錄"""
+    try:
+        tasks = await db_controller.get(
+            CustomerTask,
+            {"acct_uuid": acct_uuid},
+            order_by=CustomerTask.created_at.desc()
+        )
+        return {
+            "status": "success",
+            "data": [
+                {
+                    "id": t.id,
+                    "acct_uuid": t.acct_uuid,
+                    "testcase_uuid": t.testcase_uuid,
+                    "sendtask_uuid": t.sendtask_uuid,
+                    "task_name": t.task_name,
+                    "task_type": t.task_type,
+                    "status": t.status,
+                    "created_at": t.created_at.isoformat() if t.created_at else None,
+                }
+                for t in tasks
+            ]
+        }
+    except Exception as e:
+        logger.error(f"查詢客戶任務失敗: {e}")
+        raise HTTPException(status_code=500, detail=f"查詢失敗: {e}")

@@ -14,7 +14,7 @@ from backend.repository.database import async_session
 from backend.services.log_manager import Logger
 from backend.repository.models import (
     User, SendTask, SendLogDetail, SendLogStats, Acct, 
-    CustomerAcct, Mtmpl, Notification, LoginLog, TriggerPage
+    CustomerAcct, Mtmpl, Notification, LoginLog, TriggerPage, CustomerTask
 )
 
 logger = Logger().get_logger()
@@ -36,7 +36,8 @@ class DBController:
         "mtmpl": Mtmpl,
         "notifications": Notification,
         "login_logs": LoginLog,
-        "trigger_pages": TriggerPage
+        "trigger_pages": TriggerPage,
+        "customer_tasks": CustomerTask,
     }
 
     def get_session(self) -> AsyncSession:

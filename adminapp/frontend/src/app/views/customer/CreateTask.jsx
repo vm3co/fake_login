@@ -143,6 +143,7 @@ export default function CreateTask({ onSuccess }) {
       }
 
       const orgUuid = getCookie('task_creation_org_uuid');
+      const acctUuid = getCookie('acct_uuid');
 
       const payload = {
         task_name: taskName.trim(),
@@ -152,7 +153,8 @@ export default function CreateTask({ onSuccess }) {
         stop_date: stopDate || null,
         participant_data: participantData,
         template_uuids: selectedTemplates,
-        unit_uuid: orgUuid || ''
+        unit_uuid: orgUuid || '',
+        acct_uuid: acctUuid || ''
       };
 
       const res = await axios.post('/api/task/create_testcase', payload, {
@@ -160,7 +162,7 @@ export default function CreateTask({ onSuccess }) {
       });
 
       if (res.data.status === 'success') {
-        enqueueSnackbar('任務建立成功！', { variant: 'success' });
+        enqueueSnackbar('專案建立成功！', { variant: 'success' });
         // 清空表單
         setTaskName('');
         setTaskType('pre');
@@ -169,7 +171,7 @@ export default function CreateTask({ onSuccess }) {
         setStopDate('');
         setParticipantFile(null);
         setSelectedTemplates([]);
-        if (onSuccess) onSuccess();
+        if (onSuccess) onSuccess(res.data.testcase_uuid);
       } else {
         setError(res.data.message || '建立任務失敗');
       }
