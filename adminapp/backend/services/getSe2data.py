@@ -181,6 +181,22 @@ class getSe2data:
         all_data = await self._fetch_with_fallback(self._handle_pagination, url=url, payload_template=payload_template)
         return None if not all_data else pd.DataFrame(all_data)
 
+    async def get_tags(self) -> dict | None:
+        '''抓取郵件範本標籤清單'''
+        logger.info("Fetching tags...")
+        url = self.url + "/api/editor/get_tags"
+        payload = {}
+        data = await self._send_post(url, payload)
+        return data.get("data") if data else None
+
+    async def get_attachedfile_list(self) -> list[dict] | None:
+        '''抓取附件檔案清單'''
+        logger.info("Fetching attached file list...")
+        url = self.url + "/api/attachedfile/get_attachedfile_list"
+        payload = {"just_query": 1}
+        data = await self._send_post(url, payload)
+        return data.get("data") if data else None
+
     async def get_mtmpl_subject_list(self) -> pd.DataFrame | None:
         '''抓取郵件樣板（舊版，僅供向下相容）'''
         logger.info("Fetching mtemplate subject list (legacy)...")

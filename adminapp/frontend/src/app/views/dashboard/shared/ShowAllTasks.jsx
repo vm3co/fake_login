@@ -245,6 +245,52 @@ export default function ShowAllTasks() {
     }
   };
 
+  const handleExportJessSelected = async () => {
+    if (selectedUuids.length === 0) {
+      enqueueSnackbar("請先勾選要匯出的任務", { variant: 'warning' });
+      return;
+    }
+
+    if (!window.confirm("此功能資料來源為dashboard，非Se2系統即時資料，請確認該任務是否更新過，以及郵件樣板列表是否更新過(網頁右上角可點選更新)")) {
+      return;
+    }
+
+    setIsExporting(true);
+    setProgress(0);
+
+    try {
+      for (let i = 0; i < selectedUuids.length; i++) {
+        const uuid = selectedUuids[i];
+        const task = tasksData?.find((t) => t.sendtask_uuid === uuid);
+        const name = task ? task.sendtask_id : "export";
+
+        setProgress(Math.round((i / selectedUuids.length) * 100));
+
+        const response = await axios.post(
+          "/api/download_sendlog_jess",
+          { sendtask_uuid: uuid, name: name },
+          { responseType: "blob" }
+        );
+
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement("a");
+        link.href = url;
+        link.setAttribute("download", `${name}_jess.xlsx`);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+      }
+      setProgress(100);
+      enqueueSnackbar("匯出成功", { variant: "success" });
+    } catch (error) {
+      enqueueSnackbar(`匯出任務時發生錯誤：${error}`, { variant: 'warning' });
+    } finally {
+      setIsExporting(false);
+      setProgress(0);
+    }
+  };
+
   // 動態「...」效果
   useEffect(() => {
     const interval = setInterval(() => {
@@ -329,6 +375,16 @@ export default function ShowAllTasks() {
             size="small"
           >
             {isExporting ? "資料匯出中" : "匯出勾選任務"}
+          </Button>
+          <Button
+            variant="contained"
+            color="success"
+            startIcon={<DownloadIcon />}
+            disabled={selectedUuids.length === 0 || isCheckingSends || isExporting}
+            onClick={handleExportJessSelected}
+            size="small"
+          >
+            匯出勾選任務(Se2系統格式)
           </Button>
           <Button
             variant="contained"

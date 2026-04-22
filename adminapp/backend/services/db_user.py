@@ -94,14 +94,16 @@ ACCTS_COLUMNS = ["acct_uuid", "acct_id", "acct_full_name", "acct_full_name_2nd",
                  "acct_email", "acct_activate", "orgs"]
 
 SENDTASKS_COLUMNS = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "person_count",
-                     "pre_test_end_ut", "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", 
-                     "test_end_ut", "test_start_ut", "is_pause", "pre_test_enable", "stop_time_new"]
+                     "pre_test_end_ut", "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut",
+                     "test_end_ut", "test_start_ut", "is_pause", "pre_test_enable", "stop_time_new",
+                     "send_end_ut", "sendtask_public", "server_url"]
 
 
 
 SENDLOG_COLUMNS = ["uuid", "target_email", "person_info", "template_uuid", "plan_time",
                    "send_time", "send_res", "access_time", "access_src", "access_dev",
-                   "click_time", "click_src", "click_dev", "file_time", "file_src", "file_dev"]
+                   "click_time", "click_src", "click_dev", "file_time", "file_src", "file_dev",
+                   "order_no", "template_order", "template_selection", "trigger_man"]
 
 
 class DBUser:

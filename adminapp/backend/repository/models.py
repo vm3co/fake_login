@@ -24,6 +24,9 @@ class SendTask(Base):
     is_pause = Column(Boolean)
     pre_test_enable = Column(Boolean)
     is_archived = Column(Boolean, default=False)
+    send_end_ut     = Column(BigInteger, nullable=True)
+    sendtask_public = Column(Boolean, nullable=True)
+    server_url      = Column(Text, nullable=True)
 
 class SendLogDetail(Base):
     __tablename__ = "send_log_details"
@@ -59,6 +62,10 @@ class SendLogDetail(Base):
     second_input_src = Column(PG_ARRAY(Text))
     second_input_dev = Column(PG_ARRAY(Text))
     second_input_info = Column(PG_ARRAY(Text))
+    order_no           = Column(Integer, nullable=True)
+    template_order     = Column(Integer, nullable=True)
+    template_selection = Column(Integer, nullable=True)
+    trigger_man        = Column(Integer, nullable=True)
 
 class SendLogStats(Base):
     __tablename__ = "sendlog_stats"

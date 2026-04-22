@@ -49,6 +49,67 @@ def normalize(data):
     # 將每一筆 dict 轉成排序後的 tuple，然後整個 list 排序
     return sorted(tuple(sorted(d.items())) for d in data)
 
+_CN_DIGITS = ["", "一", "二", "三", "四", "五", "六", "七", "八", "九"]
+
+
+def _parse_person_info(person_info: str) -> tuple[str, str, str]:
+    """解析 'Name / (Group-Sub)' → (name, group, subgroup)。"""
+    if not person_info:
+        return ("", "", "")
+    if " / " not in person_info:
+        return (person_info.strip(), "", "")
+    name_part, rest = person_info.split(" / ", 1)
+    name = name_part.strip()
+    rest = rest.strip()
+    if rest.startswith("(") and rest.endswith(")"):
+        inner = rest[1:-1]
+        if "-" in inner:
+            group, subgroup = inner.split("-", 1)
+            return (name, group.strip(), subgroup.strip())
+        return (name, inner.strip(), "")
+    return (name, rest, "")
+
+
+def _fmt_ts(ts) -> str:
+    """單一 timestamp → 'yyyy-mm-dd hh:mm:ss'，空值回空字串。"""
+    from backend.services.time_utils import format_datetime
+    if not ts:
+        return ""
+    return format_datetime(ts)
+
+
+def _fmt_ts_list(arr) -> str:
+    """list[int] → 每筆 format_datetime 後以換行合併。"""
+    if not arr:
+        return ""
+    return "\n".join(_fmt_ts(ts) for ts in arr if ts)
+
+
+def _join_list(arr) -> str:
+    """list[str] → 換行合併；空/None 回空字串。"""
+    if not arr:
+        return ""
+    return "\n".join(str(v) for v in arr if v is not None)
+
+
+def _alias(i: int) -> str:
+    """依序產生 '信件一'、'信件二'... 最多支援到九十九，超過則 fallback 阿拉伯數字。"""
+    num = i + 1
+    if num <= 9:
+        cn = _CN_DIGITS[num]
+    elif num == 10:
+        cn = "十"
+    elif num < 20:
+        cn = "十" + _CN_DIGITS[num % 10]
+    elif num <= 99:
+        tens = num // 10
+        ones = num % 10
+        cn = _CN_DIGITS[tens] + "十" + _CN_DIGITS[ones]
+    else:
+        cn = str(num)
+    return f"信件{cn}"
+
+
 def process_data_for_excel(data: List[dict]) -> List[dict]:
     """
     處理撈出的原始資料，特別是 _time 結尾的欄位。
@@ -685,6 +746,222 @@ def get_router(db_user):
             
             return StreamingResponse(
                 io.BytesIO(error_message.encode('utf-8')), 
+                status_code=500,
+                media_type="text/plain; charset=utf-8"
+            )
+
+    class DownloadJessRequest(BaseModel):
+        sendtask_uuid: str
+        name: str
+
+    @router.post("/download_sendlog_jess")
+    async def api_download_sendlog_jess(request: DownloadJessRequest):
+        """
+        下載 JESS 格式報告，包含五個分頁：
+        - log:      寄送紀錄明細 (橫向欄位)
+        - info:     任務基本資訊 (直向鍵值)
+        - template: 樣板資訊 (橫向欄位)
+        - member:   (保留空白)
+        - overflow: (保留空白)
+        """
+        try:
+            # --- A. 獲取資料 ---
+            task = await db_controller.get_one(SendTask, {"sendtask_uuid": request.sendtask_uuid})
+            if not task:
+                return StreamingResponse(
+                    io.BytesIO(b"No sendtask found for this uuid."),
+                    status_code=404,
+                    media_type="text/plain"
+                )
+
+            detail_rows = await db_controller.get(SendLogDetail, filters={"sendtask_uuid": request.sendtask_uuid})
+            details = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in detail_rows]
+
+            # 取得實際使用到的 template_uuid（去重）
+            used_template_uuids = list({d["template_uuid"] for d in details if d.get("template_uuid")})
+            mtmpl_rows = await db_controller.get(Mtmpl, filters={"mtmpl_uuid": used_template_uuids}) if used_template_uuids else []
+            mtmpl_map = {getattr(r, "mtmpl_uuid"): r for r in mtmpl_rows}
+
+            # SE2 輔助資料（失敗時 fallback 空 dict/list）
+            tags_map: dict = {}
+            try:
+                tags_result = await get_se2_data.get_tags()
+                if isinstance(tags_result, dict):
+                    tags_map = tags_result
+            except Exception:
+                pass
+
+            attached_map: dict = {}
+            try:
+                attached_list = await get_se2_data.get_attachedfile_list()
+                if isinstance(attached_list, list):
+                    for item in attached_list:
+                        key = item.get("attachedfile_uuid")
+                        name = item.get("attachedfile_display_name")
+                        if key:
+                            attached_map[str(key)] = name
+            except Exception:
+                pass
+
+            # --- B.1 組裝 log 分頁資料 ---
+            is_test = bool(task.pre_test_enable)
+            test_type = "test" if is_test else "pretest"
+
+            log_data: list[dict] = []
+            for d in details:
+                name, group, subgroup = _parse_person_info(d.get("person_info", ""))
+                mtmpl = mtmpl_map.get(d.get("template_uuid", ""))
+                subject = getattr(mtmpl, "mtmpl_title", "") if mtmpl else ""
+                log_data.append({
+                    "TestType":      test_type,
+                    "Group":         group,
+                    "Sub-group":     subgroup,
+                    "Name":          name,
+                    "EMail":         d.get("target_email", ""),
+                    "Order":         d.get("order_no", ""),
+                    "Subject":       subject,
+                    "EstimatedTime": _fmt_ts(d.get("plan_time")),
+                    "SendTime":      _fmt_ts(d.get("send_time")),
+                    "SendRes":       d.get("send_res", ""),
+                    "Method":        d.get("trigger_man", ""),
+                    "Selection":     d.get("template_selection", ""),
+                    "AccessTime":    _fmt_ts_list(d.get("access_time")),
+                    "AccessSrc":     _join_list(d.get("access_src")),
+                    "AccessDev":     _join_list(d.get("access_dev")),
+                    "ClickLinkTime": _fmt_ts_list(d.get("click_time")),
+                    "ClickLinkSrc":  _join_list(d.get("click_src")),
+                    "ClickLinkDev":  _join_list(d.get("click_dev")),
+                    "OpenFileTime":  _fmt_ts_list(d.get("file_time")),
+                    "OpenFileSrc":   _join_list(d.get("file_src")),
+                    "OpenFileDev":   _join_list(d.get("file_dev")),
+                    "SubjectID":     d.get("template_uuid", ""),
+                    "EMailID":       d.get("sendtask_uuid", ""),
+                })
+
+            # --- B.2 組裝 info 分頁資料 ---
+            if task.pre_test_enable:
+                start_ts = task.test_start_ut
+                end_ts   = task.test_end_ut
+                sent_end_ts = task.send_end_ut
+            else:
+                start_ts = task.pre_test_start_ut
+                end_ts   = task.pre_test_end_ut
+                sent_end_ts = task.pre_test_end_ut
+
+            # sent_date：同日取最早 timestamp
+            earliest_by_date: dict[str, int] = {}
+            for d in details:
+                pt = d.get("plan_time")
+                if not pt:
+                    continue
+                date_key = _fmt_ts(pt)[:10]  # "yyyy-mm-dd"
+                if date_key and (date_key not in earliest_by_date or pt < earliest_by_date[date_key]):
+                    earliest_by_date[date_key] = pt
+            sent_date_str = "[" + ", ".join(str(earliest_by_date[k]) for k in sorted(earliest_by_date)) + "]"
+
+            info_data: dict = {
+                "customer_name": "[customer_name]",
+                "project_name":  "[project_name]",
+                "doc_name":      "[doc_name]",
+                "doc_id":        "[doc_id]",
+                "version_id":    "V1.0",
+                "start_date":    _fmt_ts(start_ts),
+                "end_date":      _fmt_ts(end_ts),
+                "sent_end_date": _fmt_ts(sent_end_ts),
+                "sent_time":     "[]",
+                "sent_date":     sent_date_str,
+            }
+
+            # --- B.3 組裝 template 分頁資料 ---
+            template_data: list[dict] = []
+            for i, mtmpl_uuid in enumerate(used_template_uuids):
+                mtmpl = mtmpl_map.get(mtmpl_uuid)
+                if not mtmpl:
+                    continue
+
+                # tag：mtmpl_tag 陣列 → 查中文名稱 → 逗號分隔
+                raw_tags = getattr(mtmpl, "mtmpl_tag", None) or []
+                tag_names = []
+                for t in raw_tags:
+                    # tags_map 的 key 是 tag uuid/id，value 是中文名稱
+                    cn_name = tags_map.get(t, None) if isinstance(tags_map, dict) else None
+                    tag_names.append(cn_name if cn_name else t)
+                tag_str = ", ".join(tag_names)
+
+                # sender
+                mail_from = getattr(mtmpl, "mail_from", "") or ""
+                mail_from_addr = getattr(mtmpl, "mail_from_address", "") or ""
+                sender = f"{mail_from} {mail_from_addr}".strip()
+
+                # attachment：mtmpl_mail_attached 陣列 → 查中文檔名 → 逗號分隔
+                raw_attached = getattr(mtmpl, "mtmpl_mail_attached", None) or []
+                att_names = [attached_map.get(str(a), str(a)) for a in raw_attached]
+                attachment_str = ", ".join(att_names)
+
+                template_data.append({
+                    "tag":        tag_str,
+                    "subject":    getattr(mtmpl, "mtmpl_title", "") or "",
+                    "sender":     sender,
+                    "attachment": attachment_str,
+                    "alias":      _alias(i),
+                    "subjectId":  mtmpl_uuid,
+                })
+
+            # --- C. 建立各分頁 DataFrame ---
+            log_columns = [
+                "TestType", "Group", "Sub-group", "Name", "EMail", "Order",
+                "Subject", "EstimatedTime", "SendTime", "SendRes", "Method",
+                "Selection", "AccessTime", "AccessSrc", "AccessDev",
+                "ClickLinkTime", "ClickLinkSrc", "ClickLinkDev",
+                "OpenFileTime", "OpenFileSrc", "OpenFileDev",
+                "SubjectID", "EMailID"
+            ]
+            info_keys = [
+                "customer_name", "project_name", "doc_name", "doc_id",
+                "version_id", "start_date", "end_date",
+                "sent_end_date", "sent_time", "sent_date"
+            ]
+            template_columns = [
+                "tag", "subject", "sender", "attachment", "alias", "subjectId"
+            ]
+
+            df_log = pd.DataFrame(log_data, columns=log_columns) if log_data else pd.DataFrame(columns=log_columns)
+            df_info = pd.DataFrame([{"欄位": k, "值": info_data.get(k, "")} for k in info_keys])
+            df_template = pd.DataFrame(template_data, columns=template_columns) if template_data else pd.DataFrame(columns=template_columns)
+
+            # member / overflow 分頁：保留空白
+            df_member = pd.DataFrame()
+            df_overflow = pd.DataFrame()
+
+            # --- D. 寫入 Excel (多分頁) ---
+            output_buffer = io.BytesIO()
+            with pd.ExcelWriter(output_buffer, engine="openpyxl") as writer:
+                df_log.to_excel(writer, sheet_name="log", index=False)
+                df_info.to_excel(writer, sheet_name="info", index=False)
+                df_template.to_excel(writer, sheet_name="template", index=False)
+                df_member.to_excel(writer, sheet_name="member", index=False)
+                df_overflow.to_excel(writer, sheet_name="overflow", index=False)
+            output_buffer.seek(0)
+
+            # --- E. 回傳檔案串流 ---
+            filename = urllib.parse.quote(f"{request.name}.xlsx")
+            headers = {
+                "Content-Disposition": (
+                    f'attachment; filename="{request.sendtask_uuid}_jess.xlsx"; '
+                    f"filename*=UTF-8''{filename}"
+                )
+            }
+            return StreamingResponse(
+                output_buffer,
+                media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                headers=headers
+            )
+
+        except Exception as e:
+            error_message = f"Error generating JESS file: {e}"
+            print(f"下載 JESS Excel 失敗: {error_message}", file=sys.stderr)
+            return StreamingResponse(
+                io.BytesIO(error_message.encode("utf-8")),
                 status_code=500,
                 media_type="text/plain; charset=utf-8"
             )
