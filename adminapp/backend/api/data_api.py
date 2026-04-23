@@ -216,78 +216,24 @@ def get_router(db_user):
         3. 新增及刪除到sendtask資料庫
         """
         try:
-            if request.orgs and request.orgs != ["admin"]:
-                sendtasks_columns = None # get_se2_sendtasks handles this inside or we filter after
-            
-            # get_se2_sendtasks implementation in db_user might need to be checked if it supports column_names
-            # It seems it does.
-            sendtasks_columns = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "person_count",
-                                "pre_test_end_ut", "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", 
-                                "test_end_ut", "test_start_ut", "is_pause", "pre_test_enable", "stop_time_new"]
-            
-            all_tasksname_list = await db_user.get_se2_sendtasks(column_names=sendtasks_columns)
-
-            tasks = await db_controller.get(SendTask)
-            my_tasksname_list = []
-            for t in tasks:
-                # Filter attributes to match sendtasks_columns for consistent diff
-                t_dict = {c: getattr(t, c) for c in sendtasks_columns if hasattr(t, c)}
-                my_tasksname_list.append(t_dict)
-
-            if request.orgs and request.orgs != ["admin"]:
-                all_tasksname_list = [
-                    task for task in all_tasksname_list
-                    if has_common_orgs(task.get("sendtask_owner_gid", []), request.orgs)
-                ]
-                my_tasksname_list = [
-                    task for task in my_tasksname_list
-                    if has_common_orgs(task.get("sendtask_owner_gid", []), request.orgs)
-                ]
-
-            all_set = set(dict_to_hashable(d) for d in all_tasksname_list)
-            my_set = set(dict_to_hashable(d) for d in my_tasksname_list)
-            # 找出差異
-            added = all_set - my_set
-            removed = my_set - all_set
-
-            # 再轉回 list[dict] 格式
-            added_list = [hashable_to_dict(t) for t in added]
-            removed_list = [hashable_to_dict(t) for t in removed]
+            result = await db_user.sync_sendtasks(orgs=request.orgs)
 
             sendlog_stats_status = {}
-            # 新增
-            if added_list:
-                refresh_list = []
-            if added_list:
-                refresh_list = [task["sendtask_uuid"] for task in added_list]
-                await db_controller.upsert(
-                    SendTask,
-                    added_list,
-                    index_elements=['sendtask_uuid']
+            if result["added"]:
+                refresh_list = [task["sendtask_uuid"] for task in result["added"]]
+                sendlog_stats_status = await db_user.refresh_sendlog_stats(
+                    refresh_list,
+                    ignore_archived=True,
+                    skip_sendtask_sync=True,
                 )
 
-                sendlog_stats_status = await db_user.refresh_sendlog_stats(refresh_list)
-
-            # 處理移除或封存
-            for item in removed_list:
-                uuid = item["sendtask_uuid"]
-                
-                # 智慧檢查: 確認是否真的已刪除 (404)
-                data = await get_se2_data.get_sendtask(uuid)
-                
-                if data and data.get("error", {}).get("code") == 404:
-                    # sendtasks刪除資料
-                    await db_controller.delete(SendTask, {"sendtask_uuid": uuid})
-                    # sendlog_stats 刪除資料
-                    await db_controller.delete(SendLogStats, {"sendtask_uuid": uuid})
-                elif data is None:
-                    # API 回傳 None = 網路問題或 Token 失效，跳過，不做任何封存或刪除
-                    logger.warning(f"SE2 API returned None for {uuid}, skipping (possible network/token issue).")
-                else:
-                    # 任務仍存在於 SE2（只是本地資料有差異），僅封存
-                    await db_controller.update(SendTask, {"sendtask_uuid": uuid}, {"is_archived": True})
-
-            data = {"added": added_list, "removed": removed_list, "sendlog_stats_status": sendlog_stats_status}
+            data = {
+                "added": result["added"],
+                "changed": result["changed"],
+                "archived": result["archived"],
+                "removed": result["deleted"],
+                "sendlog_stats_status": sendlog_stats_status,
+            }
             return {"status": "success", "data": data}
         except Exception as e:
             logger.error(f"Error in check_sendtasks: {str(e)}")

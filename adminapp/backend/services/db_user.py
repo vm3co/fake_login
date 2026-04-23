@@ -202,50 +202,72 @@ class DBUser:
 
     async def _fetch_and_apply_metadata(self, sendtasks_df: pd.DataFrame) -> pd.DataFrame:
         """
-        輔助函式
-        獲取並套用 sendtask 的 metadata(get_sendtasks的api不會有metadata資料)
-        :param sendtasks_df: 包含 sendtask 資料的 DataFrame
-        :return: 已加上 metadata 的 DataFrame
+        對 list API 的 DataFrame 補齊 metadata 3 欄（is_pause, stop_time_new, person_count）。
+        pre_test_enable 不再從 metadata 補（list API 的 data 區塊已有此欄位）。
         """
         logger.info("Fetching metadata for sendtasks...")
         for index, row in sendtasks_df.iterrows():
             uuid = row["sendtask_uuid"]
-            data = await get_se2_data.get_sendtask(uuid)
-            metadata = data.get("metadata") if data else None
+            resp = await get_se2_data.get_sendtask(uuid)
+            metadata = (resp or {}).get("metadata") or {}
+            summary = metadata.get("summary") or {}
             if metadata:
                 sendtasks_df.at[index, "is_pause"] = metadata.get("pause", False)
                 sendtasks_df.at[index, "stop_time_new"] = metadata.get("stop_time_new", -1)
-                sendtasks_df.at[index, "person_count"] = metadata.get("summary", {}).get("person_count", 0)
-                sendtasks_df.at[index, "pre_test_enable"] = metadata.get("summary", {}).get("pre_test_enable", False)
-            else: # 預設值
-                sendtasks_df.loc[index, ["is_pause", "stop_time_new", "person_count", "pre_test_enable"]] = [False, -1, 0, False]
+                sendtasks_df.at[index, "person_count"] = summary.get("person_count", 0)
+            else:
+                sendtasks_df.loc[index, ["is_pause", "stop_time_new", "person_count"]] = [False, -1, 0]
         
         logger.info("Metadata fetched and applied successfully.")
         return sendtasks_df
 
-    async def _update_task_metadata(self, uuid: str):
+    async def _build_sendtask_record_from_detail(self, uuid: str) -> dict | None:
         """
-        從 SE2 API 取得單一任務的 metadata，更新 SendTask 表中的相關欄位
+        從 SE2 get_sendtask 單筆 API 組出符合 SENDTASKS_COLUMNS 的完整 dict。
+        回傳 None 表示 404 或 API 失敗。
         """
-        data = await get_se2_data.get_sendtask(uuid)
-        metadata = data.get("metadata") if data else None
+        resp = await get_se2_data.get_sendtask(uuid)
+        if not resp:
+            return None
+        if resp.get("error", {}).get("code") == 404:
+            return None
 
-        if metadata:
-            update_data = {
-                "is_pause": metadata.get("pause", False),
-                "stop_time_new": metadata.get("stop_time_new", -1),
-                "person_count": metadata.get("summary", {}).get("person_count", 0),
-                "pre_test_enable": metadata.get("summary", {}).get("pre_test_enable", False),
-            }
-        else:
-            update_data = {
-                "is_pause": False,
-                "stop_time_new": -1,
-                "person_count": 0,
-                "pre_test_enable": False,
-            }
+        data = resp.get("data") or {}
+        metadata = resp.get("metadata") or {}
+        summary = metadata.get("summary") or {}
 
-        await db_controller.update(SendTask, {"sendtask_uuid": uuid}, update_data)
+        return {
+            # from data
+            "sendtask_uuid": data.get("sendtask_uuid", uuid),
+            "sendtask_id": data.get("sendtask_id"),
+            "sendtask_owner_gid": data.get("sendtask_owner_gid"),
+            "sendtask_create_ut": data.get("sendtask_create_ut"),
+            "pre_test_enable": data.get("pre_test_enable", False),  # 從 data 取
+            "pre_test_start_ut": data.get("pre_test_start_ut"),
+            "pre_test_end_ut": data.get("pre_test_end_ut"),
+            "pre_send_end_ut": data.get("pre_send_end_ut"),
+            "test_start_ut": data.get("test_start_ut"),
+            "test_end_ut": data.get("test_end_ut"),
+            "send_end_ut": data.get("send_end_ut"),
+            "sendtask_public": data.get("sendtask_public"),
+            "server_url": data.get("server_url"),
+            # from metadata
+            "is_pause": metadata.get("pause", False),
+            "stop_time_new": metadata.get("stop_time_new", -1),
+            "person_count": summary.get("person_count", 0),
+        }
+
+    async def _sync_sendtask_from_se2(self, uuid: str) -> bool:
+        """
+        從 SE2 取單筆，更新 SendTask 全欄位。
+        回傳 True 成功 / False 表示 404 或 API 失敗。
+        不會覆寫 is_archived（不在 SENDTASKS_COLUMNS 中）。
+        """
+        record = await self._build_sendtask_record_from_detail(uuid)
+        if record is None:
+            return False
+        await db_controller.update(SendTask, {"sendtask_uuid": uuid}, record)
+        return True
 
     async def get_se2_sendtasks(self, column_names=None, days=7) -> list[dict]:
         """
@@ -275,6 +297,96 @@ class DBUser:
             sendtasks_list = filtered_df[column_names].to_dict(orient="records")
             return sendtasks_list
         return []
+
+    async def sync_sendtasks(self, orgs: list[str] | None = None) -> dict:
+        """
+        檢查 7 天內 SendTask 清單，只對「內容有變動」的 row upsert。
+        1. 從 SE2 list API 拿 7 天內任務（_fetch_and_apply_metadata 補 metadata 3 欄）
+        2. 依 orgs 過濾
+        3. 與本地 SendTask 做 dict-level diff：
+           - added：SE2 有但本地沒有的 uuid（全新任務）
+           - changed：SE2 與本地同 uuid 但欄位值不同
+           - removed：本地有但 SE2 7 天窗口內沒有的 uuid
+        4. (added + changed) → upsert SendTask
+        5. removed → 逐一確認 404/archive
+        回傳: {"added": [...], "changed": [...], "archived": N, "deleted": N}
+        """
+        from backend.api.data_api import has_common_orgs
+
+        remote_tasks = await self.get_se2_sendtasks(SENDTASKS_COLUMNS)
+        if orgs and orgs != ["admin"]:
+            remote_tasks = [t for t in remote_tasks
+                            if has_common_orgs(t.get("sendtask_owner_gid", []), orgs)]
+
+        # 本地 SendTask（只取 SENDTASKS_COLUMNS 的欄位做比對，並加入 is_archived 給封存邏輯用）
+        local_rows = await db_controller.get(SendTask)
+        local_map = {}
+        for row in local_rows:
+            local_map[row.sendtask_uuid] = {
+                c: getattr(row, c, None) for c in SENDTASKS_COLUMNS
+            }
+            local_map[row.sendtask_uuid]["is_archived"] = getattr(row, "is_archived", False)
+
+        remote_map = {t["sendtask_uuid"]: t for t in remote_tasks}
+
+        # 判斷有變動的 row（含全新 + 欄位值改變）
+        def normalize(v):
+            if pd.isna(v):  # 處理 NaN 等同 None
+                return None
+            return tuple(v) if isinstance(v, list) else v
+
+        def row_changed(remote: dict, local: dict | None) -> bool:
+            if local is None:
+                return True  # 新任務
+            for col in SENDTASKS_COLUMNS:
+                if normalize(remote.get(col)) != normalize(local.get(col)):
+                    return True
+            return False
+
+        added_list = []
+        changed_list = []
+        for uuid, remote in remote_map.items():
+            local = local_map.get(uuid)
+            if local is None:
+                added_list.append(remote)
+            elif row_changed(remote, local):
+                changed_list.append(remote)
+
+        upsert_list = added_list + changed_list
+        if upsert_list:
+            update_cols = [c for c in SENDTASKS_COLUMNS if c != "sendtask_uuid"]
+            await db_controller.upsert(
+                SendTask,
+                upsert_list,
+                index_elements=["sendtask_uuid"],
+                update_columns=update_cols,
+            )
+
+        # removed：本地有但遠端 7 天窗口內沒有
+        missing_uuids = set(local_map.keys()) - set(remote_map.keys())
+        del_count = archive_count = 0
+        for uuid in missing_uuids:
+            data = await get_se2_data.get_sendtask(uuid)
+            if data and data.get("error", {}).get("code") == 404:
+                await db_controller.delete(SendTask, {"sendtask_uuid": uuid})
+                await db_controller.delete(SendLogStats, {"sendtask_uuid": uuid})
+                await db_controller.delete(SendLogDetail, {"sendtask_uuid": uuid})
+                del_count += 1
+            elif data is None:
+                logger.warning(f"SE2 returned None for {uuid}, skipping.")
+            else:
+                # 只 archive 還沒被 archive 的
+                local = local_map.get(uuid)
+                if not local.get("is_archived"):
+                    await db_controller.update(SendTask, {"sendtask_uuid": uuid}, {"is_archived": True})
+                    archive_count += 1
+
+        return {
+            "added": added_list,
+            "changed": changed_list,
+            "archived": archive_count,
+            "deleted": del_count,
+        }
     
     # Mtmpl model 允許的欄位名稱
     _MTMPL_FIELDS = {
@@ -471,7 +583,7 @@ class DBUser:
 
         return sendlog_status
 
-    async def refresh_sendlog_stats(self, uuids: list[str] = None, ignore_archived: bool = False) -> dict:
+    async def refresh_sendlog_stats(self, uuids: list[str] = None, ignore_archived: bool = False, skip_sendtask_sync: bool = False) -> dict:
         """
         刷新 sendlog_stats 資料
         :param uuid: 如果提供，則僅刷新指定的 sendtask_uuid；如果為 None，則刷新所有 sendtask 的統計資料
@@ -501,8 +613,9 @@ class DBUser:
         for uuid in [u for u in uuids_and_create_time.keys() if check_statuses.get(u) not in ["deleted", "error"]]:
             # logger.info(f"Refreshing sendlog_stats for {uuid}")
 
-            # 同步 SE2 metadata（is_pause, stop_time_new 等）
-            await self._update_task_metadata(uuid)
+            # 同步 SE2 metadata（全欄位更新）
+            if not skip_sendtask_sync:
+                await self._sync_sendtask_from_se2(uuid)
 
             # 1. 獲取舊的統計數據
             old_stats = await db_controller.get_one(SendLogStats, {"sendtask_uuid": uuid})

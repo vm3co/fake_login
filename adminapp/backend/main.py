@@ -117,67 +117,8 @@ async def check_sendtasks_job():
     """
     logger.info("check_sendtasks_job 執行")
     try:
-        sendtasks_columns = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "person_count",
-                                "pre_test_end_ut", "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut", 
-                                "test_end_ut", "test_start_ut", "is_pause", "pre_test_enable", "stop_time_new"]
-        
-        all_tasksname_list = await db_user.get_se2_sendtasks(column_names=sendtasks_columns)
-
-        # 僅獲取尚未封存的任務進行比對
-        tasks = await db_controller.get(SendTask, {"is_archived": False})
-
-        my_tasksname_list = []
-        for t in tasks:
-            t_dict = {c: getattr(t, c) for c in sendtasks_columns if hasattr(t, c)}
-            my_tasksname_list.append(t_dict)
-
-        all_set = set(dict_to_hashable(d) for d in all_tasksname_list)
-        my_set = set(dict_to_hashable(d) for d in my_tasksname_list)
-        
-        added = all_set - my_set
-        removed = my_set - all_set
-
-        added_list = [hashable_to_dict(t) for t in added]
-        removed_list = [hashable_to_dict(t) for t in removed]
-
-        if added_list:
-            refresh_list = [task["sendtask_uuid"] for task in added_list]
-            await db_controller.upsert(
-                SendTask,
-                added_list,
-                index_elements=['sendtask_uuid']
-            )
-
-            sendlog_stats_status = await db_user.refresh_sendlog_stats(refresh_list)
-            logger.info(f"新增了 {len(refresh_list)} 個任務") # simplified count
-
-        del_count = 0
-        archive_count = 0
-        if removed_list:
-            # 確認是否真的已刪除 (404)
-            for item in removed_list:
-                uuid = item["sendtask_uuid"]
-                data = await get_se2_data.get_sendtask(uuid)
-                
-                if data and data.get("error", {}).get("code") == 404:
-                    # sendtasks刪除資料
-                    await db_controller.delete(SendTask, {"sendtask_uuid": uuid})
-                    # sendlog_stats 刪除資料
-                    await db_controller.delete(SendLogStats, {"sendtask_uuid": uuid})
-                    del_count += 1
-                elif data is None:
-                    # 避免 API 無回應時錯誤封存
-                    logger.warning(f"SE2 API returned None for {uuid}, skipping check.")
-                    continue
-                else:
-                    # 僅封存
-                    await db_controller.update(SendTask, {"sendtask_uuid": uuid}, {"is_archived": True})
-                    archive_count += 1
-            
-            logger.info(f"刪除 {del_count} 個任務，封存 {archive_count} 個任務")
-
-        logger.info(f"check_sendtasks_job 完成 - 新增: {len(added_list)}, 刪除: {del_count}, 封存: {archive_count}")
-
+        result = await db_user.sync_sendtasks()
+        logger.info(f"check_sendtasks_job 完成 - 新增: {len(result['added'])}, 變更: {len(result['changed'])}, 刪除: {result['deleted']}, 封存: {result['archived']}")
     except Exception as e:
         logger.error(f"check_sendtasks_job 執行失敗: {str(e)}")
 
