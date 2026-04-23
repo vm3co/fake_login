@@ -892,7 +892,7 @@ def get_router(db_user):
             output_buffer = io.BytesIO()
             with pd.ExcelWriter(output_buffer, engine="openpyxl") as writer:
                 df_log.to_excel(writer, sheet_name="log", index=False)
-                df_info.to_excel(writer, sheet_name="info", index=False)
+                df_info.to_excel(writer, sheet_name="info", header=False, index=False)
                 df_template.to_excel(writer, sheet_name="template", index=False)
                 df_member.to_excel(writer, sheet_name="member", index=False)
                 df_overflow.to_excel(writer, sheet_name="overflow", index=False)
