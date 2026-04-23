@@ -355,7 +355,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
             onClick={handleExportSelected}
             size="small"
           >
-            {isExporting ? "資料匯出中" : "匯出勾選任務"}
+            {isExporting ? "資料匯出中" : "匯出勾選任務(來源為Se2)"}
           </Button>
           <Button
             variant="contained"
@@ -365,7 +365,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
             onClick={handleExportJessSelected}
             size="small"
           >
-            匯出勾選任務(Se2系統格式)
+            {isExporting ? "資料匯出中" : "匯出勾選任務(來源為dashboard)"}
           </Button>
           <Button
             variant="contained"
@@ -414,7 +414,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
           {isExporting && (
             <Box sx={{ width: "100%", mt: 2 }}>
               <Typography variant="body2" color="textSecondary">
-                {progress === 0 ? `從主系統匯出資料中${".".repeat(loadingDots)}` : `下載資料中${".".repeat(loadingDots)}`}
+                {progress === 0 ? `匯出資料中${".".repeat(loadingDots)}` : `下載資料中${".".repeat(loadingDots)}`}
               </Typography>
               <LinearProgress variant="determinate" value={progress} />
             </Box>

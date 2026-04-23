@@ -41,16 +41,15 @@ class getToken:
         '''
         獲取cookie
         :param word: 包含 cookie 的字串
-        :return: 包含 type1、type2、type3 的 cookie 字串
+        :return: 包含 type1、type2、type3 及 lang 的 cookie 字串
         '''
-        # 用 regex 擷取 type1、type2、type3 的 cookie 值
-        pattern = r'(type[123])=([^;]+)'
+        pattern = r'(type[123]|lang)=([^;]+)'
         matches = re.findall(pattern, word)
         
         result = ""
         for k, v in matches:
-            word = k + "=" + v + "; "
-            result += word
+            cookie_pair = f"{k}={v}; "
+            result += cookie_pair
             
         return result
 

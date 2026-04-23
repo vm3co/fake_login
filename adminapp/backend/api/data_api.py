@@ -750,8 +750,8 @@ def get_router(db_user):
                 pass
 
             # --- B.1 組裝 log 分頁資料 ---
-            is_test = bool(task.pre_test_enable)
-            test_type = "test" if is_test else "pretest"
+            is_pre_test = bool(task.pre_test_enable)
+            test_type = "pretest" if is_pre_test else "test"
 
             log_data: list[dict] = []
             for d in details:
@@ -785,14 +785,15 @@ def get_router(db_user):
                 })
 
             # --- B.2 組裝 info 分頁資料 ---
-            if task.pre_test_enable:
+            is_pre_test = bool(task.pre_test_enable)
+            if is_pre_test:
+                start_ts = task.pre_test_start_ut
+                end_ts   = task.pre_test_end_ut
+                sent_end_ts = getattr(task, "pre_send_end_ut", task.pre_test_end_ut)
+            else:
                 start_ts = task.test_start_ut
                 end_ts   = task.test_end_ut
                 sent_end_ts = task.send_end_ut
-            else:
-                start_ts = task.pre_test_start_ut
-                end_ts   = task.pre_test_end_ut
-                sent_end_ts = task.pre_test_end_ut
 
             # sent_date：同日取最早 timestamp
             earliest_by_date: dict[str, int] = {}
@@ -811,9 +812,9 @@ def get_router(db_user):
                 "doc_name":      "[doc_name]",
                 "doc_id":        "[doc_id]",
                 "version_id":    "V1.0",
-                "start_date":    _fmt_ts(start_ts),
-                "end_date":      _fmt_ts(end_ts),
-                "sent_end_date": _fmt_ts(sent_end_ts),
+                "start_date":    start_ts,
+                "end_date":      end_ts,
+                "sent_end_date": sent_end_ts,
                 "sent_time":     "[]",
                 "sent_date":     sent_date_str,
             }
@@ -837,7 +838,7 @@ def get_router(db_user):
                 # sender
                 mail_from = getattr(mtmpl, "mail_from", "") or ""
                 mail_from_addr = getattr(mtmpl, "mail_from_address", "") or ""
-                sender = f"{mail_from} {mail_from_addr}".strip()
+                sender = f"{mail_from} <{mail_from_addr}>".strip()
 
                 # attachment：mtmpl_mail_attached 陣列 → 查中文檔名 → 逗號分隔
                 raw_attached = getattr(mtmpl, "mtmpl_mail_attached", None) or []
@@ -870,14 +871,22 @@ def get_router(db_user):
             template_columns = [
                 "tag", "subject", "sender", "attachment", "alias", "subjectId"
             ]
+            member_columns = ["unit", "member"]
+            overflow_columns = [
+                "EmailID", "FieldName", "PartIndex", "Content"
+            ]
 
             df_log = pd.DataFrame(log_data, columns=log_columns) if log_data else pd.DataFrame(columns=log_columns)
             df_info = pd.DataFrame([{"欄位": k, "值": info_data.get(k, "")} for k in info_keys])
             df_template = pd.DataFrame(template_data, columns=template_columns) if template_data else pd.DataFrame(columns=template_columns)
 
-            # member / overflow 分頁：保留空白
-            df_member = pd.DataFrame()
-            df_overflow = pd.DataFrame()
+            # member / overflow 分頁：為定值固定不變
+            member = [
+                {'unit': 'OOO', 'member': '林OO'},
+                {'unit': 'OOO', 'member': '王OO'},
+            ]
+            df_member = pd.DataFrame(member, columns=member_columns)
+            df_overflow = pd.DataFrame(columns=overflow_columns)
 
             # --- D. 寫入 Excel (多分頁) ---
             output_buffer = io.BytesIO()
@@ -893,7 +902,7 @@ def get_router(db_user):
             filename = urllib.parse.quote(f"{request.name}.xlsx")
             headers = {
                 "Content-Disposition": (
-                    f'attachment; filename="{request.sendtask_uuid}_jess.xlsx"; '
+                    f'attachment; filename="{request.sendtask_uuid}_dashboard.xlsx"; '
                     f"filename*=UTF-8''{filename}"
                 )
             }
