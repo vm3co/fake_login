@@ -72,7 +72,6 @@ def _parse_person_info(person_info: str) -> tuple[str, str, str]:
 
 def _fmt_ts(ts) -> str:
     """單一 timestamp → 'yyyy-mm-dd hh:mm:ss'，空值回空字串。"""
-    from backend.services.time_utils import format_datetime
     if not ts:
         return ""
     return format_datetime(ts)

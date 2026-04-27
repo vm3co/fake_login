@@ -1,5 +1,8 @@
 import datetime
 
+# 定義台灣時區 (+8)
+TZ_TW = datetime.timezone(datetime.timedelta(hours=8))
+
 def format_datetime(
         timestamp: float, 
         format_str: str = "%Y-%m-%d %H:%M:%S"
@@ -14,7 +17,7 @@ def format_datetime(
     if not timestamp or not isinstance(timestamp, (int, float)) or timestamp == 0:
         return ""
     try:
-        dt_object = datetime.datetime.fromtimestamp(timestamp)
+        dt_object = datetime.datetime.fromtimestamp(timestamp, tz=TZ_TW)
         return dt_object.strftime(format_str)
     except (ValueError, TypeError, OSError):
         return ""
@@ -27,7 +30,7 @@ def get_current_time(
     :param format_str: (可選) 輸出的字串格式。
     :return: 格式化後的日期時間字串。
     """
-    current_time = datetime.datetime.now()
+    current_time = datetime.datetime.now(tz=TZ_TW)
     return current_time.strftime(format_str)
 
 def convert_str_to_timestamp(
@@ -47,6 +50,8 @@ def convert_str_to_timestamp(
     try:
         # 使用 strptime (string parse time) 將字串解析為 datetime 物件
         dt_object = datetime.datetime.strptime(datetime_str, format_str)        
+        # 明確指定為台灣時區 (+8)
+        dt_object = dt_object.replace(tzinfo=TZ_TW)
         # 使用 .timestamp() 將 datetime 物件轉為時間戳 (這會是 float)
         ts = dt_object.timestamp()        
         # 根據 as_integer 參數決定回傳類型
@@ -65,7 +70,7 @@ def get_current_timestamp(
     :param as_integer: (可選) 是否回傳整數（去除毫秒）。預設為 True。
     :return: Unix 時間戳 (int 或 float)。
     """
-    ts = datetime.datetime.now().timestamp()
+    ts = datetime.datetime.now(tz=TZ_TW).timestamp()
     return int(ts) if as_integer else ts
 
 # --- 程式執行範例 ---
