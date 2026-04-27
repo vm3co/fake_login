@@ -24,6 +24,7 @@ logger = Logger().get_logger()
 API_ENDPOINTS = {
     "get_sendtasks": "/api/case/get_sendtasks",
     "get_sendtask": "/api/case/get_sendtask",
+    "get_testcase": "/api/case/get_testcase",
     "get_sendlog": "/api/case/get_sendlog",
     "get_mtmpl_list": "/api/editor/get_mtmpl_subject_list",
     "get_mailtmpls": "/api/editor/get_mailtmpls",
@@ -160,6 +161,19 @@ class getSe2data:
         }
         data = await self._fetch_with_fallback(self._send_post, url=url, payload_template=payload_template)
         return data
+
+    async def get_testcase(self, uuid: str) -> dict | None:
+        '''
+        抓取專案資訊
+        :param uuid: 專案的 testcase_uuid
+        :return: 回傳 data 裡面的資料
+        '''
+        url = self.url + API_ENDPOINTS["get_testcase"]
+        payload_template = {
+            "testcase_uuid": uuid
+        }
+        data = await self._send_post(url, payload_template)
+        return data.get("data") if data else None
 
     async def get_sendlog(self, uuid: str) -> pd.DataFrame | None:
         '''抓取專案參與人員清單'''

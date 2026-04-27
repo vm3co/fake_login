@@ -794,16 +794,16 @@ def get_router(db_user):
                 end_ts   = task.test_end_ut
                 sent_end_ts = task.send_end_ut
 
-            # sent_date：同日取最早 timestamp
-            earliest_by_date: dict[str, int] = {}
-            for d in details:
-                pt = d.get("plan_time")
-                if not pt:
-                    continue
-                date_key = _fmt_ts(pt)[:10]  # "yyyy-mm-dd"
-                if date_key and (date_key not in earliest_by_date or pt < earliest_by_date[date_key]):
-                    earliest_by_date[date_key] = pt
-            sent_date_str = "[" + ", ".join(str(earliest_by_date[k]) for k in sorted(earliest_by_date)) + "]"
+            # sent_date：呼叫 get_testcase 取得 mail_delivery_d
+            sent_date_str = "[]"
+            try:
+                testcase_data = await get_se2_data.get_testcase(request.sendtask_uuid)
+                if testcase_data and "mail_delivery_d" in testcase_data:
+                    mail_delivery_d = testcase_data.get("mail_delivery_d", [])
+                    if isinstance(mail_delivery_d, list):
+                        sent_date_str = "[" + ", ".join(str(d) for d in mail_delivery_d) + "]"
+            except Exception as e:
+                logger.error(f"Error fetching mail_delivery_d for sent_date: {e}")
 
             info_data: dict = {
                 "customer_name": "[customer_name]",
