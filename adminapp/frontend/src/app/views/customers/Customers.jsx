@@ -1,6 +1,5 @@
 import styled from "@mui/material/styles/styled";
 import { SimpleCard } from "app/components";
-import { SendtaskListProvider } from "app/contexts/SendtaskListContext";
 import { CustomersProvider } from "app/contexts/CustomersContext";
 import CustomersPanel from "./CustomersPanel";
 import FormDialog from "./FormDialog";
@@ -20,16 +19,14 @@ const CustomersRoot = styled("div")(({ theme }) => ({
 
 export default function Customers() {
   return (
-    <SendtaskListProvider>
-      <CustomersProvider>
-        <CustomersRoot>
-          <FormDialog/>
+    <CustomersProvider>
+      <CustomersRoot>
+        <FormDialog />
 
-          <SimpleCard title="客戶帳號列表">
-            <CustomersPanel />
-          </SimpleCard>      
-        </CustomersRoot>
-      </CustomersProvider>
-    </SendtaskListProvider>
+        <SimpleCard title="客戶帳號列表">
+          <CustomersPanel />
+        </SimpleCard>
+      </CustomersRoot>
+    </CustomersProvider>
   );
 }

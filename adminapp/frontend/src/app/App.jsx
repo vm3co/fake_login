@@ -8,7 +8,6 @@ import { MatxTheme } from "./components";
 import SettingsProvider from "./contexts/SettingsContext";
 // import { AuthProvider } from "./contexts/FirebaseAuthContext";
 import { AuthProvider } from "./contexts/JWTAuthContext";
-import { SendtaskListProvider } from "./contexts/SendtaskListContext";
 import { JobProvider } from "./contexts/JobContext";
 // ROUTES
 import routes from "./routes";
@@ -28,14 +27,12 @@ export default function App() {
     >
       <SettingsProvider>
         <AuthProvider>
-          <SendtaskListProvider>
-            <JobProvider>
-              <MatxTheme>
-                <CssBaseline />
-                {content}
-              </MatxTheme>
-            </JobProvider>
-          </SendtaskListProvider>
+          <JobProvider>
+            <MatxTheme>
+              <CssBaseline />
+              {content}
+            </MatxTheme>
+          </JobProvider>
         </AuthProvider>
       </SettingsProvider>
     </SnackbarProvider>

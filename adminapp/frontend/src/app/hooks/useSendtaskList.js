@@ -21,13 +21,16 @@ export default function useSendtaskList() {
     const [statsData, setStatsData] = useState({}); // 存所有統計資料
     const [isCheckingSends, setIsCheckingSends] = useState(false); // 新增
     const { createController } = useAbortOnUnmount();  //控制網頁關閉時結束api
-    const { isAuthenticated } = useAuth();
+    const { isAuthenticated, user } = useAuth();
+
+    // 客戶帳號使用 useCustomer hook，不走此處的管理員 API
+    const isCustomer = user?.user_type === "customer";
 
     // 用於追蹤所有進行中的請求
     const activeRequestsRef = useRef(new Set());
 
     useEffect(() => {
-        if (isAuthenticated) {
+        if (isAuthenticated && !isCustomer) {
             setLoading(true);
             refresh();
         } else {
@@ -35,7 +38,7 @@ export default function useSendtaskList() {
             setStatsData({});
             setLoading(false);
         }
-    }, [isAuthenticated]);
+    }, [isAuthenticated, isCustomer]);
 
     const fetchStats = async (uuids) => {
         if (!uuids.length) return;

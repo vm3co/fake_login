@@ -281,22 +281,48 @@ def get_router(db_user):
     class CustomerGetSendtasksRequest(BaseModel):
         sendtask_uuids: list[str] = []
 
+    # 客戶端只需要看到的 sendtask 欄位（排除敏感資訊如 owner_gid、server_url 等）
+    CUSTOMER_SENDTASK_FIELDS = [
+        "sendtask_uuid", "sendtask_id", "test_start_ut", "test_end_ut",
+        "stop_time_new", "is_pause", "pre_test_enable",
+        "pre_test_start_ut", "pre_test_end_ut",
+    ]
+
     @router.post(
         "/customer_get_sendtasks",
         tags=["data"]
         )
-    async def get_sendtasks(request: CustomerGetSendtasksRequest):
+    async def customer_get_sendtasks(request: CustomerGetSendtasksRequest, current_user: dict = Depends(get_current_user)):
         sendtask_uuids = request.sendtask_uuids
         if not sendtask_uuids:
             return {"status": "error", "message": "未收到sendtask_uuid"}
 
         try:
-            # Use filters dict usually for equals, but for IN clause we need special handling or get_session
-            # DBController.get currently only supports simple equality filters or list for IN clause
-            # filters={'sendtask_uuid': sendtask_uuids} will generate IN clause
-            
+            # 客戶身份驗證：確認請求的 sendtask_uuids 屬於該客戶
+            if current_user.get("user_type") == "customer":
+                customer = await db_controller.get_one(
+                    CustomerAcct, {"customer_name": current_user.get("username")}
+                )
+                if not customer:
+                    return {"status": "error", "message": "找不到客戶帳號"}
+                # 從客戶帳號取得允許的 sendtask uuid 清單
+                allowed_uuids = {t["uuid"] for t in (customer.sendtasks or []) if isinstance(t, dict)}
+                # 過濾：只保留客戶有權查看的 uuid
+                sendtask_uuids = [u for u in sendtask_uuids if u in allowed_uuids]
+                if not sendtask_uuids:
+                    return {"status": "success", "data": []}
+
             rows = await db_controller.get(SendTask, filters={"sendtask_uuid": sendtask_uuids})
-            data = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in rows]
+
+            # 客戶身份：只回傳安全欄位；管理員/使用者：回傳全部欄位
+            if current_user.get("user_type") == "customer":
+                data = [
+                    {field: getattr(r, field) for field in CUSTOMER_SENDTASK_FIELDS if hasattr(r, field)}
+                    for r in rows
+                ]
+            else:
+                data = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in rows]
+
             return {"status": "success", "data": data}
         except Exception as e:
             logger.error(f"Error in customer_get_sendtasks: {str(e)}")
@@ -333,11 +359,17 @@ def get_router(db_user):
             logger.error(f"Error in refresh_sendlog_stats: {str(e)}")
             return {"status": "error", "message": str(e)}
 
+    # 客戶端只需要看到的 sendlog_stats 欄位
+    CUSTOMER_STATS_FIELDS = [
+        "sendtask_uuid", "totalplanned", "totalsend", "totalsuccess",
+        "totalfailed", "totaltriggered",
+    ]
+
     @router.post(
         "/get_sendlog_stats",
         tags=["data"]
         )
-    async def get_sendlog_stats_batch(request: SendLogRequest):
+    async def get_sendlog_stats_batch(request: SendLogRequest, current_user: dict = Depends(get_current_user)):
         """
         取得多個任務的統計資料
 
@@ -351,9 +383,30 @@ def get_router(db_user):
             sendtask_uuids = request.sendtask_uuids
             if not sendtask_uuids:
                 return {"status": "error", "message": "沒有收到 sendtask_uuids", "data": []}
-            
+
+            # 客戶身份驗證：確認請求的 sendtask_uuids 屬於該客戶
+            if current_user.get("user_type") == "customer":
+                customer = await db_controller.get_one(
+                    CustomerAcct, {"customer_name": current_user.get("username")}
+                )
+                if not customer:
+                    return {"status": "error", "message": "找不到客戶帳號", "data": []}
+                allowed_uuids = {t["uuid"] for t in (customer.sendtasks or []) if isinstance(t, dict)}
+                sendtask_uuids = [u for u in sendtask_uuids if u in allowed_uuids]
+                if not sendtask_uuids:
+                    return {"status": "success", "data": []}
+
             rows_obj = await db_controller.get(SendLogStats, filters={"sendtask_uuid": sendtask_uuids})
-            rows = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in rows_obj]
+
+            # 客戶身份：只回傳精簡欄位；管理員/使用者：回傳全部欄位
+            if current_user.get("user_type") == "customer":
+                rows = [
+                    {field: getattr(r, field) for field in CUSTOMER_STATS_FIELDS if hasattr(r, field)}
+                    for r in rows_obj
+                ]
+            else:
+                rows = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in rows_obj]
+
             return {"status": "success", "data": rows}
         except Exception as e:
             logger.error(f"Error in get_sendlog_stats_batch: {str(e)}")
