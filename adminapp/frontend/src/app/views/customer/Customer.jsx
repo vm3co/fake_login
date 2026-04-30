@@ -180,6 +180,7 @@ export default function Customer() {
   const [customerData, setCustomerData] = useState({
     sendtasks: null,
     acct_uuid: null,
+    customer_uuid: null,
     task_creation_enabled: false,
     task_creation_org_uuid: ''
   });
@@ -200,7 +201,7 @@ export default function Customer() {
   // const [updatedUuids, setUpdatedUuids] = useState([]);
   const [cooldowns, setCooldowns] = useState({}); // 用於追蹤每個任務的冷卻時間
 
-  // 我的專案相關 state
+  // 我的任務相關 state
   const [myProjects, setMyProjects] = useState([]);
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [operatingProject, setOperatingProject] = useState(null); // 正在操作的專案 UUID
@@ -211,11 +212,13 @@ export default function Customer() {
   const loadCustomerData = () => {
     const sendtasks = parseTasks(getCookie('sendtasks'));
     const acct_uuid = getCookie('acct_uuid');
+    const customer_uuid = getCookie('customer_uuid');
     const task_creation_enabled = getCookie('task_creation_enabled') === true || getCookie('task_creation_enabled') === 'true';
     const task_creation_org_uuid = getCookie('task_creation_org_uuid') || '';
     setCustomerData({
       sendtasks,
       acct_uuid,
+      customer_uuid,
       task_creation_enabled,
       task_creation_org_uuid
     });
@@ -223,11 +226,11 @@ export default function Customer() {
 
   // 取得客戶建立的專案列表
   const fetchMyProjects = useCallback(async () => {
-    const acctUuid = getCookie('acct_uuid');
-    if (!acctUuid) return;
+    const customerUuid = getCookie('customer_uuid');
+    if (!customerUuid) return;
     setLoadingProjects(true);
     try {
-      const res = await axios.get(`/api/task/get_customer_tasks?acct_uuid=${acctUuid}`);
+      const res = await axios.get(`/api/task/get_customer_tasks?customer_uuid=${customerUuid}`);
       if (res.data?.status === 'success') {
         setMyProjects(res.data.data || []);
       }
@@ -304,12 +307,12 @@ export default function Customer() {
     }
   }, [customerData.sendtasks]);
 
-  // 載入我的專案
+  // 載入我的任務
   useEffect(() => {
-    if (customerData.task_creation_enabled && customerData.acct_uuid) {
+    if (customerData.task_creation_enabled && customerData.customer_uuid) {
       fetchMyProjects();
     }
-  }, [customerData.task_creation_enabled, customerData.acct_uuid, fetchMyProjects]);
+  }, [customerData.task_creation_enabled, customerData.customer_uuid, fetchMyProjects]);
 
   // 處理冷卻時間
   useEffect(() => {
@@ -545,14 +548,14 @@ export default function Customer() {
           )}
         </Box>
 
-        {/* ====== 我的專案區塊 ====== */}
+        {/* ====== 我的任務區塊 ====== */}
         {customerData.task_creation_enabled && (
           <Paper elevation={0} sx={{ mb: 3, p: 2, borderRadius: '12px', border: '1px solid #e0e7ff' }}>
             <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                 <BuildCircle sx={{ color: '#6366f1' }} />
                 <Typography variant="h6" sx={{ fontWeight: 600 }}>
-                  我的專案
+                  我的任務
                 </Typography>
                 <Chip label={myProjects.filter(p => p.status !== 'deleted').length} size="small" color="primary" />
               </Box>
@@ -568,7 +571,7 @@ export default function Customer() {
               </Box>
             ) : myProjects.filter(p => p.status !== 'deleted').length === 0 ? (
               <Typography variant="body2" color="text.secondary" sx={{ py: 1 }}>
-                尚未建立任何專案，點擊「新增任務」開始建立
+                尚未建立任何任務，點擊「新增任務」開始建立
               </Typography>
             ) : (
               <TableContainer>

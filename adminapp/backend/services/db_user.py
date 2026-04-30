@@ -6,6 +6,7 @@ Database operations for user-related data, including sendlog management.
 # import asyncpg
 # import aiofiles
 import time
+import uuid
 import json
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
@@ -833,6 +834,7 @@ class DBUser:
         """
         try:
             new_customer = await db_controller.create(CustomerAcct, {
+                "customer_uuid": uuid.uuid4().hex,
                 "customer_name": data.get("customer_name"),
                 "customer_full_name": data.get("customer_full_name"),
                 "password_hash": data.get("password_hash"),

@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS users (
 -- customer accounts
 CREATE TABLE IF NOT EXISTS customer_accts (
     id SERIAL PRIMARY KEY,
+    customer_uuid VARCHAR(36) UNIQUE NOT NULL,  -- 客戶專屬 UUID（去連字號格式）
     customer_name TEXT UNIQUE NOT NULL,
     customer_full_name TEXT NOT NULL,
     password_hash TEXT NOT NULL,

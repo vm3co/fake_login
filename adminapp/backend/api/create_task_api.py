@@ -24,7 +24,7 @@ class CreateTaskRequest(BaseModel):
     participant_data: str
     template_uuids: List[str]
     unit_uuid: str
-    acct_uuid: str  # 客戶 UUID，用於追蹤
+    customer_uuid: str  # 客戶 UUID，用於追蹤
 
 class SendtaskRequest(BaseModel):
     """啟動任務的請求模型"""
@@ -111,7 +111,7 @@ async def create_testcase(request: CreateTaskRequest):
         if uuid:
             # 寫入 DB 追蹤記錄
             await db_controller.create(CustomerTask, {
-                "acct_uuid": request.acct_uuid,
+                "customer_uuid": request.customer_uuid,
                 "testcase_uuid": uuid,
                 "task_name": request.task_name,
                 "task_type": request.task_type,
@@ -237,12 +237,12 @@ async def delete_testcase(request: DeleteTestcaseRequest):
 # --- 查詢端點 ---
 
 @router.get("/task/get_customer_tasks")
-async def get_customer_tasks(acct_uuid: str = Query(..., description="客戶 UUID")):
+async def get_customer_tasks(customer_uuid: str = Query(..., description="客戶 UUID")):
     """取得指定客戶的所有專案/任務記錄"""
     try:
         tasks = await db_controller.get(
             CustomerTask,
-            {"acct_uuid": acct_uuid},
+            {"customer_uuid": customer_uuid},
             order_by=CustomerTask.created_at.desc()
         )
         return {
@@ -250,7 +250,7 @@ async def get_customer_tasks(acct_uuid: str = Query(..., description="客戶 UUI
             "data": [
                 {
                     "id": t.id,
-                    "acct_uuid": t.acct_uuid,
+                    "customer_uuid": t.customer_uuid,
                     "testcase_uuid": t.testcase_uuid,
                     "sendtask_uuid": t.sendtask_uuid,
                     "task_name": t.task_name,

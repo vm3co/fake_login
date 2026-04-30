@@ -96,25 +96,25 @@ const getProjectStatusColor = (status) => {
 };
 
 // --- 客戶專案列表子元件（純展示） ---
-function CustomerProjectsSection({ acctUuid, cache, setCache }) {
-  const [projects, setProjects] = useState(cache[acctUuid] || null);
+function CustomerProjectsSection({ customerUuid, cache, setCache }) {
+  const [projects, setProjects] = useState(cache[customerUuid] || null);
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (cache[acctUuid]) {
-      setProjects(cache[acctUuid]);
+    if (cache[customerUuid]) {
+      setProjects(cache[customerUuid]);
       return;
     }
-    if (!acctUuid) return;
+    if (!customerUuid) return;
 
     const fetchProjects = async () => {
       setLoading(true);
       try {
-        const res = await axios.get(`/api/task/get_customer_tasks?acct_uuid=${acctUuid}`);
+        const res = await axios.get(`/api/task/get_customer_tasks?customer_uuid=${customerUuid}`);
         if (res.data?.status === 'success') {
           const data = res.data.data || [];
           setProjects(data);
-          setCache(prev => ({ ...prev, [acctUuid]: data }));
+          setCache(prev => ({ ...prev, [customerUuid]: data }));
         }
       } catch (err) {
         console.error('取得客戶專案列表失敗:', err);
@@ -124,7 +124,7 @@ function CustomerProjectsSection({ acctUuid, cache, setCache }) {
       }
     };
     fetchProjects();
-  }, [acctUuid, cache, setCache]);
+  }, [customerUuid, cache, setCache]);
 
   if (loading) {
     return (
@@ -467,7 +467,7 @@ export default function CustomersPanel() {
                     {/* ====== 客戶專案列表（純展示） ====== */}
                     {customer.task_creation_enabled && (
                       <CustomerProjectsSection
-                        acctUuid={customer.acct_uuid}
+                        customerUuid={customer.customer_uuid}
                         cache={customerProjectsCache}
                         setCache={setCustomerProjectsCache}
                       />

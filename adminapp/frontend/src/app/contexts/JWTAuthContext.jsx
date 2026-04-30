@@ -50,10 +50,11 @@ const setUserCookies = (user) => {
     document.cookie = "sendtasks=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
 
   } else if (user.user_type === "customer") {
-    // 客戶：設定 sendtasks、acct_uuid 與 task_creation_enabled
+    // 客戶：設定 sendtasks、acct_uuid、customer_uuid 與 task_creation_enabled
     const sendtasks = user.sendtasks || [];
     document.cookie = `sendtasks=${encodeURIComponent(JSON.stringify(sendtasks))}; path=/;`;
     document.cookie = `acct_uuid=${encodeURIComponent(user.acct_uuid)}; path=/;`;
+    document.cookie = `customer_uuid=${encodeURIComponent(user.customer_uuid)}; path=/;`;
     document.cookie = `task_creation_enabled=${encodeURIComponent(user.task_creation_enabled || false)}; path=/;`;
     document.cookie = `task_creation_org_uuid=${encodeURIComponent(user.task_creation_org_uuid || '')}; path=/;`;
 
@@ -66,6 +67,7 @@ const setUserCookies = (user) => {
 const clearUserCookies = () => {
   document.cookie = "orgs=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
   document.cookie = "acct_uuid=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  document.cookie = "customer_uuid=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
   document.cookie = "sendtasks=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
   document.cookie = "task_creation_enabled=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
   document.cookie = "task_creation_org_uuid=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";

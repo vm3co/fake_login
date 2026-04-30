@@ -114,6 +114,7 @@ class CustomerAcct(Base):
     __tablename__ = "customer_accts"
 
     id = Column(Integer, primary_key=True, index=True)
+    customer_uuid = Column(String(36), unique=True, nullable=False, index=True)
     customer_name = Column(Text, unique=True, nullable=False, index=True)
     customer_full_name = Column(Text, nullable=False)
     password_hash = Column(Text, nullable=False)
@@ -195,7 +196,7 @@ class CustomerTask(Base):
     __tablename__ = "customer_tasks"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    acct_uuid = Column(String(36), nullable=False, index=True)       # 客戶 UUID
+    customer_uuid = Column(String(36), nullable=False, index=True)   # 客戶 UUID
     testcase_uuid = Column(String(36), unique=True, nullable=False)  # 專案 UUID
     sendtask_uuid = Column(String(36), nullable=True)                # 任務 UUID（啟動後才有）
     task_name = Column(String(255))                                   # 任務名稱

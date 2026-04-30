@@ -215,6 +215,7 @@ def get_router(db_user):
             })
             customer_obj = {
                 "acct_uuid": customer.acct_uuid,
+                "customer_uuid": customer.customer_uuid,  # 客戶 UUID
                 "name": customer.customer_name,
                 "sendtasks": customer.sendtasks or [],
                 "user_type": "customer",
@@ -319,6 +320,7 @@ def get_router(db_user):
                 
                 customer_obj = {
                     "acct_uuid": customer.acct_uuid,
+                    "customer_uuid": customer.customer_uuid,  # 客戶 UUID
                     "name": customer.customer_name,
                     "sendtasks": customer.sendtasks or [],
                     "user_type": "customer",

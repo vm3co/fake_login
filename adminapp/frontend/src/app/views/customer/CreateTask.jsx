@@ -143,7 +143,7 @@ export default function CreateTask({ onSuccess }) {
       }
 
       const orgUuid = getCookie('task_creation_org_uuid');
-      const acctUuid = getCookie('acct_uuid');
+      const customerUuid = getCookie('customer_uuid');
 
       const payload = {
         task_name: taskName.trim(),
@@ -154,7 +154,7 @@ export default function CreateTask({ onSuccess }) {
         participant_data: participantData,
         template_uuids: selectedTemplates,
         unit_uuid: orgUuid || '',
-        acct_uuid: acctUuid || ''
+        customer_uuid: customerUuid || ''
       };
 
       const res = await axios.post('/api/task/create_testcase', payload, {
