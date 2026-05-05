@@ -26,17 +26,9 @@ class CreateTaskRequest(BaseModel):
     unit_uuid: str
     customer_uuid: str  # 客戶 UUID，用於追蹤
 
-class SendtaskRequest(BaseModel):
-    """啟動任務的請求模型"""
-    testcase_uuid: str
-
-class DeleteSendtaskRequest(BaseModel):
-    """刪除(停止)任務的請求模型"""
+class SendtaskUuidRequest(BaseModel):
+    """通用的 sendtask_uuid 請求模型（啟動/停止/刪除共用）"""
     sendtask_uuid: str
-
-class DeleteTestcaseRequest(BaseModel):
-    """刪除專案的請求模型"""
-    testcase_uuid: str
 
 
 # --- 工具函式 ---
@@ -112,7 +104,7 @@ async def create_testcase(request: CreateTaskRequest):
             # 寫入 DB 追蹤記錄
             await db_controller.create(CustomerTask, {
                 "customer_uuid": request.customer_uuid,
-                "testcase_uuid": uuid,
+                "sendtask_uuid": uuid,
                 "task_name": request.task_name,
                 "task_type": request.task_type,
                 "status": "created"
@@ -121,9 +113,9 @@ async def create_testcase(request: CreateTaskRequest):
             return {
                 "status": "success",
                 "message": "專案建立成功",
-                "testcase_uuid": uuid,
+                "sendtask_uuid": uuid,
                 "data": {
-                    "testcase_uuid": uuid,
+                    "sendtask_uuid": uuid,
                     "id": request.task_name,
                     "task_type": request.task_type,
                     "start_date": request.start_date,
@@ -143,27 +135,27 @@ async def create_testcase(request: CreateTaskRequest):
 
 
 @router.post("/task/create_sendtask")
-async def create_sendtask(request: SendtaskRequest):
+async def create_sendtask(request: SendtaskUuidRequest):
     """啟動任務"""
-    logger.info(f"收到啟動任務請求: {request.testcase_uuid}")
+    logger.info(f"收到啟動任務請求: {request.sendtask_uuid}")
 
     try:
-        state = await se_task_service.create_sendtask(
-            testcase_uuid=request.testcase_uuid,
+        se2_response = await se_task_service.create_sendtask(
+            testcase_uuid=request.sendtask_uuid,
             to_scheduler=False
         )
 
-        if state:
-            # 更新 DB 狀態為 active，並記錄 sendtask_uuid
+        if se2_response:
+            # 更新 DB 狀態為 active
             await db_controller.update(
                 CustomerTask,
-                {"testcase_uuid": request.testcase_uuid},
-                {"status": "active", "sendtask_uuid": request.testcase_uuid}
+                {"sendtask_uuid": request.sendtask_uuid},
+                {"status": "active"}
             )
             return {
                 "status": "success",
                 "message": "任務啟動成功",
-                "sendtask_uuid": request.testcase_uuid
+                "sendtask_uuid": request.sendtask_uuid
             }
         else:
             raise HTTPException(status_code=500, detail="程式端啟動任務失敗，詳情請查看伺服器日誌。")
@@ -174,7 +166,7 @@ async def create_sendtask(request: SendtaskRequest):
         raise HTTPException(status_code=500, detail=f"後端處理時發生錯誤: {e}")
 
 @router.post("/task/delete_sendtask")
-async def delete_sendtask(request: DeleteSendtaskRequest):
+async def delete_sendtask(request: SendtaskUuidRequest):
     """停止（刪除）任務"""
     logger.info(f"收到刪除任務請求: {request.sendtask_uuid}")
 
@@ -204,26 +196,26 @@ async def delete_sendtask(request: DeleteSendtaskRequest):
         raise HTTPException(status_code=500, detail=f"後端處理時發生錯誤: {e}")
 
 @router.post("/task/delete_testcase")
-async def delete_testcase(request: DeleteTestcaseRequest):
+async def delete_testcase(request: SendtaskUuidRequest):
     """刪除專案"""
-    logger.info(f"收到刪除專案請求: {request.testcase_uuid}")
+    logger.info(f"收到刪除專案請求: {request.sendtask_uuid}")
 
     try:
         state = await se_task_service.delete_testcase(
-            testcase_uuid=request.testcase_uuid
+            testcase_uuid=request.sendtask_uuid
         )
 
         if state:
             # 更新 DB 狀態為 deleted
             await db_controller.update(
                 CustomerTask,
-                {"testcase_uuid": request.testcase_uuid},
+                {"sendtask_uuid": request.sendtask_uuid},
                 {"status": "deleted"}
             )
             return {
                 "status": "success",
                 "message": "專案刪除成功",
-                "testcase_uuid": request.testcase_uuid
+                "sendtask_uuid": request.sendtask_uuid
             }
         else:
             raise HTTPException(status_code=500, detail="程式端刪除專案失敗，詳情請查看伺服器日誌。")
@@ -251,7 +243,6 @@ async def get_customer_tasks(customer_uuid: str = Query(..., description="客戶
                 {
                     "id": t.id,
                     "customer_uuid": t.customer_uuid,
-                    "testcase_uuid": t.testcase_uuid,
                     "sendtask_uuid": t.sendtask_uuid,
                     "task_name": t.task_name,
                     "task_type": t.task_type,

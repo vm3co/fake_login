@@ -197,8 +197,7 @@ class CustomerTask(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     customer_uuid = Column(String(36), nullable=False, index=True)   # 客戶 UUID
-    testcase_uuid = Column(String(36), unique=True, nullable=False)  # 專案 UUID
-    sendtask_uuid = Column(String(36), nullable=True)                # 任務 UUID（啟動後才有）
+    sendtask_uuid = Column(String(36), unique=True, nullable=False)  # 任務/專案 UUID（testcase_uuid 與 sendtask_uuid 相同）
     task_name = Column(String(255))                                   # 任務名稱
     task_type = Column(String(20))                                    # pre / official
     status = Column(String(20), default='created')                    # created / active / stopped / deleted

@@ -171,12 +171,19 @@ export default function CreateTask({ onSuccess }) {
         setStopDate('');
         setParticipantFile(null);
         setSelectedTemplates([]);
-        if (onSuccess) onSuccess(res.data.testcase_uuid);
+        if (onSuccess) onSuccess(res.data.sendtask_uuid);
       } else {
         setError(res.data.message || '建立任務失敗');
       }
     } catch (err) {
-      setError(err.response?.data?.detail || err.message || '建立任務時發生錯誤');
+      let errorMsg = '建立任務時發生錯誤';
+      const detail = err.response?.data?.detail;
+      if (detail) {
+        errorMsg = typeof detail === 'string' ? detail : JSON.stringify(detail);
+      } else if (err.message) {
+        errorMsg = err.message;
+      }
+      setError(errorMsg);
     } finally {
       setSubmitting(false);
     }

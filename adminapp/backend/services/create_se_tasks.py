@@ -202,8 +202,8 @@ class SeTaskService:
         url = self.url + '/api/case/update_testcase'
         return await self._send_post_async(url, payload)
 
-    async def create_sendtask(self, testcase_uuid: str, server_url: str = "https://link.acsicook.info/", to_scheduler: bool = False) -> bool:
-        '''啟動專案(建立任務)'''
+    async def create_sendtask(self, testcase_uuid: str, server_url: str = "https://link.acsicook.info/", to_scheduler: bool = False) -> dict | None:
+        '''啟動專案(建立任務)，回傳 SE2 的完整回應資料'''
         logger.info(f"建立任務： {testcase_uuid}")
         url = self.url + '/api/case/create_sendtask'
         payload = {
@@ -213,10 +213,10 @@ class SeTaskService:
         }
         data = await self._send_post_async(url, payload)
         if data:
-            logger.info(f"建立任務成功 {testcase_uuid}")
-            return True
+            logger.info(f"建立任務成功 {testcase_uuid}, SE2 回傳: {data}")
+            return data
         logger.error(f"建立任務失敗 {testcase_uuid}")
-        return False
+        return None
 
     async def delete_testcase(self, testcase_uuid: str) -> bool:
         '''刪除專案'''
@@ -244,10 +244,21 @@ class SeTaskService:
     async def delete_sendtask(self, sendtasks_uuid: str) -> bool:
         '''刪除(停止)任務'''
         logger.info(f"刪除任務： {sendtasks_uuid}")
+        csrf_token, x_csrf_token = await get_token.get_csrftoken()
+        if not csrf_token or not x_csrf_token:
+            logger.error("取得 CSRF Token 失敗，無法刪除任務")
+            return False
+
+        cookie_with_csrf = get_token.get() + f"; csrf-token={csrf_token}"
+        x_headers = {
+            'X-Csrf-Token': x_csrf_token,
+            'cookie': cookie_with_csrf
+        }
+
         url = self.url + '/api/case/delete_sendtask'
         payload = {"sendtask_uuid": sendtasks_uuid}
         
-        data = await self._send_post_async(url, payload)
+        data = await self._send_post_async(url, payload, extra_headers=x_headers)
         if data:
             logger.info(f"刪除任務成功 {sendtasks_uuid}")
             return True

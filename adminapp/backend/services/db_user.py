@@ -332,9 +332,14 @@ class DBUser:
 
         # 判斷有變動的 row（含全新 + 欄位值改變）
         def normalize(v):
-            if pd.isna(v):  # 處理 NaN 等同 None
-                return None
-            return tuple(v) if isinstance(v, list) else v
+            if isinstance(v, list):
+                return tuple(v)
+            try:
+                if pd.isna(v):  # 處理 NaN 等同 None
+                    return None
+            except (ValueError, TypeError):
+                pass
+            return v
 
         def row_changed(remote: dict, local: dict | None) -> bool:
             if local is None:

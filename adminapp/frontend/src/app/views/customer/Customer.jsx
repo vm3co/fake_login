@@ -242,16 +242,18 @@ export default function Customer() {
   }, []);
 
   // 啟動任務
-  const handleStartTask = async (testcaseUuid) => {
-    setOperatingProject(testcaseUuid);
+  const handleStartTask = async (sendtaskUuid) => {
+    setOperatingProject(sendtaskUuid);
     try {
-      const res = await axios.post('/api/task/create_sendtask', { testcase_uuid: testcaseUuid });
+      const res = await axios.post('/api/task/create_sendtask', { sendtask_uuid: sendtaskUuid });
       if (res.data?.status === 'success') {
         enqueueSnackbar('任務啟動成功！', { variant: 'success' });
         fetchMyProjects();
       }
     } catch (err) {
-      enqueueSnackbar(err.response?.data?.detail || '啟動任務失敗', { variant: 'error' });
+      const detail = err.response?.data?.detail;
+      const errorMsg = typeof detail === 'string' ? detail : (detail ? JSON.stringify(detail) : '啟動任務失敗');
+      enqueueSnackbar(errorMsg, { variant: 'error' });
     } finally {
       setOperatingProject(null);
     }
@@ -267,23 +269,27 @@ export default function Customer() {
         fetchMyProjects();
       }
     } catch (err) {
-      enqueueSnackbar(err.response?.data?.detail || '停止任務失敗', { variant: 'error' });
+      const detail = err.response?.data?.detail;
+      const errorMsg = typeof detail === 'string' ? detail : (detail ? JSON.stringify(detail) : '停止任務失敗');
+      enqueueSnackbar(errorMsg, { variant: 'error' });
     } finally {
       setOperatingProject(null);
     }
   };
 
   // 刪除專案
-  const handleDeleteProject = async (testcaseUuid) => {
-    setOperatingProject(testcaseUuid);
+  const handleDeleteProject = async (sendtaskUuid) => {
+    setOperatingProject(sendtaskUuid);
     try {
-      const res = await axios.post('/api/task/delete_testcase', { testcase_uuid: testcaseUuid });
+      const res = await axios.post('/api/task/delete_testcase', { sendtask_uuid: sendtaskUuid });
       if (res.data?.status === 'success') {
         enqueueSnackbar('專案已刪除', { variant: 'success' });
         fetchMyProjects();
       }
     } catch (err) {
-      enqueueSnackbar(err.response?.data?.detail || '刪除專案失敗', { variant: 'error' });
+      const detail = err.response?.data?.detail;
+      const errorMsg = typeof detail === 'string' ? detail : (detail ? JSON.stringify(detail) : '刪除專案失敗');
+      enqueueSnackbar(errorMsg, { variant: 'error' });
     } finally {
       setOperatingProject(null);
     }
@@ -588,9 +594,9 @@ export default function Customer() {
                   <TableBody>
                     {myProjects.filter(p => p.status !== 'deleted').map((project) => {
                       const statusStyle = getProjectStatusColor(project.status);
-                      const isOperating = operatingProject === project.testcase_uuid || operatingProject === project.sendtask_uuid;
+                      const isOperating = operatingProject === project.sendtask_uuid;
                       return (
-                        <TableRow key={project.testcase_uuid} sx={{ '&:hover': { bgcolor: '#f8fafc' } }}>
+                        <TableRow key={project.sendtask_uuid} sx={{ '&:hover': { bgcolor: '#f8fafc' } }}>
                           <TableCell>
                             <Typography variant="body2" fontWeight={600}>{project.task_name}</Typography>
                           </TableCell>
@@ -622,7 +628,7 @@ export default function Customer() {
                                   variant="contained"
                                   color="success"
                                   startIcon={isOperating ? <CircularProgress size={14} color="inherit" /> : <PlayArrowIcon />}
-                                  onClick={() => handleStartTask(project.testcase_uuid)}
+                                  onClick={() => handleStartTask(project.sendtask_uuid)}
                                   disabled={isOperating}
                                   sx={{ fontSize: '0.75rem', minWidth: 0, px: 1.5 }}
                                 >
@@ -650,7 +656,7 @@ export default function Customer() {
                                   variant="outlined"
                                   color="error"
                                   startIcon={isOperating ? <CircularProgress size={14} /> : <DeleteOutlineIcon />}
-                                  onClick={() => handleDeleteProject(project.testcase_uuid)}
+                                  onClick={() => handleDeleteProject(project.sendtask_uuid)}
                                   disabled={isOperating}
                                   sx={{ fontSize: '0.75rem', minWidth: 0, px: 1.5 }}
                                 >

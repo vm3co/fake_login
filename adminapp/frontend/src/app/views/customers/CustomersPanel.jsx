@@ -162,7 +162,7 @@ function CustomerProjectsSection({ customerUuid, cache, setCache }) {
             {projects.filter(p => p.status !== 'deleted').map((project) => {
               const statusStyle = getProjectStatusColor(project.status);
               return (
-                <TableRow key={project.testcase_uuid} sx={{ '& td': { py: 0.5, fontSize: '0.8rem' } }}>
+                <TableRow key={project.sendtask_uuid} sx={{ '& td': { py: 0.5, fontSize: '0.8rem' } }}>
                   <TableCell>{project.task_name}</TableCell>
                   <TableCell>
                     <Chip

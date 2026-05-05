@@ -160,3 +160,16 @@ CREATE TABLE IF NOT EXISTS trigger_pages (
     page_type TEXT DEFAULT 'custom', -- 'system', 'custom', 'ai'
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- customer_tasks（追蹤客戶建立的專案與任務狀態）
+CREATE TABLE IF NOT EXISTS customer_tasks (
+    id SERIAL PRIMARY KEY,
+    customer_uuid VARCHAR(36) NOT NULL,
+    testcase_uuid VARCHAR(36) UNIQUE NOT NULL,
+    sendtask_uuid VARCHAR(36),
+    task_name VARCHAR(255),
+    task_type VARCHAR(20),
+    status VARCHAR(20) DEFAULT 'created',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_customer_tasks_customer_uuid ON customer_tasks(customer_uuid);
