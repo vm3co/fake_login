@@ -29,6 +29,7 @@ import {
 } from '@mui/material';
 import CloseIcon from '@mui/icons-material/Close';
 import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import PauseIcon from '@mui/icons-material/Pause';
 import StopIcon from '@mui/icons-material/Stop';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -160,6 +161,7 @@ const getProjectStatusText = (status) => {
   switch (status) {
     case 'created': return '已建立';
     case 'active': return '執行中';
+    case 'paused': return '已暫停';
     case 'stopped': return '已停止';
     case 'deleted': return '已刪除';
     default: return status;
@@ -170,6 +172,7 @@ const getProjectStatusColor = (status) => {
   switch (status) {
     case 'created': return { bg: '#dbeafe', color: '#1e40af' };
     case 'active': return { bg: '#dcfce7', color: '#166534' };
+    case 'paused': return { bg: '#fef3c7', color: '#92400e' };
     case 'stopped': return { bg: '#fed7aa', color: '#9a3412' };
     case 'deleted': return { bg: '#f1f5f9', color: '#64748b' };
     default: return { bg: '#f1f5f9', color: '#64748b' };
@@ -206,6 +209,13 @@ export default function Customer() {
   const [loadingProjects, setLoadingProjects] = useState(false);
   const [operatingProject, setOperatingProject] = useState(null); // 正在操作的專案 UUID
 
+  // 任務細節（唯讀檢視）Dialog 狀態
+  const [viewDetailDialog, setViewDetailDialog] = useState({
+    open: false,
+    loading: false,
+    data: null,
+  });
+
   const { loading, error, sendtasksData, fetchCustomerSendtasksData } = useCustomer();
 
   // 載入客戶 Cookie 資料
@@ -224,12 +234,15 @@ export default function Customer() {
     });
   };
 
-  // 取得客戶建立的專案列表
+  // 取得客戶建立的專案列表（先同步 SE2 狀態再取得）
   const fetchMyProjects = useCallback(async () => {
     const customerUuid = getCookie('customer_uuid');
     if (!customerUuid) return;
     setLoadingProjects(true);
     try {
+      // 先同步 SE2 上的任務狀態
+      await axios.post('/api/task/sync_customer_tasks', { customer_uuid: customerUuid });
+      // 再取得最新的專案列表
       const res = await axios.get(`/api/task/get_customer_tasks?customer_uuid=${customerUuid}`);
       if (res.data?.status === 'success') {
         setMyProjects(res.data.data || []);
@@ -241,6 +254,19 @@ export default function Customer() {
     }
   }, []);
 
+  // 更新客戶的 sendtasks Cookie 與資料
+  const refreshCustomerSendtasks = async () => {
+    try {
+      const sendtasksRes = await axios.get('/api/customer/get_my_sendtasks');
+      if (sendtasksRes.data?.status === 'success') {
+        document.cookie = `sendtasks=${encodeURIComponent(JSON.stringify(sendtasksRes.data.sendtasks))}; path=/`;
+        loadCustomerData();
+      }
+    } catch (err) {
+      console.error('更新 sendtasks Cookie 失敗:', err);
+    }
+  };
+
   // 啟動任務
   const handleStartTask = async (sendtaskUuid) => {
     setOperatingProject(sendtaskUuid);
@@ -249,10 +275,48 @@ export default function Customer() {
       if (res.data?.status === 'success') {
         enqueueSnackbar('任務啟動成功！', { variant: 'success' });
         fetchMyProjects();
+        // 啟動後重新取得客戶最新 sendtasks 並更新 Cookie
+        await refreshCustomerSendtasks();
       }
     } catch (err) {
       const detail = err.response?.data?.detail;
       const errorMsg = typeof detail === 'string' ? detail : (detail ? JSON.stringify(detail) : '啟動任務失敗');
+      enqueueSnackbar(errorMsg, { variant: 'error' });
+    } finally {
+      setOperatingProject(null);
+    }
+  };
+
+  // 暫停任務
+  const handlePauseTask = async (sendtaskUuid) => {
+    setOperatingProject(sendtaskUuid);
+    try {
+      const res = await axios.post('/api/task/pause_sendtask', { sendtask_uuid: sendtaskUuid });
+      if (res.data?.status === 'success') {
+        enqueueSnackbar('任務已暫停', { variant: 'success' });
+        fetchMyProjects();
+      }
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      const errorMsg = typeof detail === 'string' ? detail : (detail ? JSON.stringify(detail) : '暫停任務失敗');
+      enqueueSnackbar(errorMsg, { variant: 'error' });
+    } finally {
+      setOperatingProject(null);
+    }
+  };
+
+  // 恢復任務（從暫停中繼續）
+  const handleResumeTask = async (sendtaskUuid) => {
+    setOperatingProject(sendtaskUuid);
+    try {
+      const res = await axios.post('/api/task/resume_sendtask', { sendtask_uuid: sendtaskUuid });
+      if (res.data?.status === 'success') {
+        enqueueSnackbar('任務已恢復執行', { variant: 'success' });
+        fetchMyProjects();
+      }
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      const errorMsg = typeof detail === 'string' ? detail : (detail ? JSON.stringify(detail) : '恢復任務失敗');
       enqueueSnackbar(errorMsg, { variant: 'error' });
     } finally {
       setOperatingProject(null);
@@ -267,6 +331,8 @@ export default function Customer() {
       if (res.data?.status === 'success') {
         enqueueSnackbar('任務已停止', { variant: 'success' });
         fetchMyProjects();
+        // 停止後重新取得客戶最新 sendtasks 並更新 Cookie
+        await refreshCustomerSendtasks();
       }
     } catch (err) {
       const detail = err.response?.data?.detail;
@@ -367,6 +433,15 @@ export default function Customer() {
     return matchesSearch && matchesStatus && matchesActive && matchesTriggered;
   });
 
+  // 客戶自建且已啟動/已暫停的任務 UUID
+  const myActiveUuids = new Set(
+    myProjects.filter(p => p.status === 'active' || p.status === 'paused').map(p => p.sendtask_uuid)
+  );
+  // 管理員分配的任務（排除客戶自建的）
+  const adminAssignedTasks = filteredTasks.filter(t => !myActiveUuids.has(t.sendtask_uuid));
+  // 客戶自建已啟動的任務（用於下方獨立清單）
+  const myActiveTaskData = taskData.filter(t => myActiveUuids.has(t.sendtask_uuid));
+
   const getStatusText = (status) => {
     switch (status) {
       case 'triggered': return '已觸發';
@@ -390,9 +465,6 @@ export default function Customer() {
   // 手動重新載入資料
   const handleRefreshData = () => {
     loadCustomerData();
-    if (customerData.sendtasks) {
-      fetchCustomerSendtasksData();
-    }
   };
 
   const handleCardClick = (task) => {
@@ -424,6 +496,48 @@ export default function Customer() {
   const handleCreateSuccess = (testcaseUuid) => {
     setCreateTaskOpen(false);
     fetchMyProjects(); // 重新整理專案列表
+  };
+
+  // 將 unix timestamp（秒）轉成 datetime-local input 接受的格式 "YYYY-MM-DDTHH:mm"
+  const tsToInputDateTime = (ts) => {
+    if (!ts || ts <= 0) return '';
+    const d = new Date(ts * 1000);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  // 點擊「我的任務」的專案名稱：取得 SE2 的細節並開啟唯讀 Dialog
+  const handleViewProjectDetail = async (project) => {
+    setViewDetailDialog({ open: true, loading: true, data: null });
+    try {
+      const res = await axios.get(`/api/task/get_testcase_detail?testcase_uuid=${project.sendtask_uuid}`);
+      if (res.data?.status === 'success' && res.data.data) {
+        const d = res.data.data;
+        setViewDetailDialog({
+          open: true,
+          loading: false,
+          data: {
+            task_name: d.task_name || project.task_name || '',
+            task_type: d.task_type || project.task_type || 'pre',
+            start_date: tsToInputDateTime(d.test_start_ut),
+            end_date: tsToInputDateTime(d.test_end_ut),
+            stop_date: tsToInputDateTime(d.send_end_ut),
+            person_count: d.person_count ?? 0,
+            template_uuids: d.template_uuids || [],
+            unit_uuid: d.unit_uuid || '',
+            participants: d.participants || [],
+          },
+        });
+      } else {
+        enqueueSnackbar('取得任務細節失敗', { variant: 'error' });
+        setViewDetailDialog({ open: false, loading: false, data: null });
+      }
+    } catch (err) {
+      const detail = err.response?.data?.detail;
+      const errorMsg = typeof detail === 'string' ? detail : (detail ? JSON.stringify(detail) : '取得任務細節失敗');
+      enqueueSnackbar(errorMsg, { variant: 'error' });
+      setViewDetailDialog({ open: false, loading: false, data: null });
+    }
   };
 
 
@@ -598,7 +712,18 @@ export default function Customer() {
                       return (
                         <TableRow key={project.sendtask_uuid} sx={{ '&:hover': { bgcolor: '#f8fafc' } }}>
                           <TableCell>
-                            <Typography variant="body2" fontWeight={600}>{project.task_name}</Typography>
+                            <Typography
+                              variant="body2"
+                              fontWeight={600}
+                              onClick={() => handleViewProjectDetail(project)}
+                              sx={{
+                                cursor: 'pointer',
+                                color: 'primary.main',
+                                '&:hover': { textDecoration: 'underline' },
+                              }}
+                            >
+                              {project.task_name}
+                            </Typography>
                           </TableCell>
                           <TableCell>
                             <Chip
@@ -616,7 +741,7 @@ export default function Customer() {
                           </TableCell>
                           <TableCell>
                             <Typography variant="caption" color="text.secondary">
-                              {project.created_at ? new Date(project.created_at).toLocaleString('zh-TW') : '-'}
+                              {project.created_at ? new Date(project.created_at).toLocaleString('zh-TW', { timeZone: "Asia/Taipei" }) : '-'}
                             </Typography>
                           </TableCell>
                           <TableCell align="right">
@@ -635,8 +760,36 @@ export default function Customer() {
                                   啟動
                                 </Button>
                               )}
-                              {/* 停止任務按鈕：只有 active 狀態可按 */}
+                              {/* 暫停任務按鈕：只有 active 狀態可按 */}
                               {project.status === 'active' && (
+                                <Button
+                                  size="small"
+                                  variant="outlined"
+                                  color="info"
+                                  startIcon={isOperating ? <CircularProgress size={14} /> : <PauseIcon />}
+                                  onClick={() => handlePauseTask(project.sendtask_uuid)}
+                                  disabled={isOperating}
+                                  sx={{ fontSize: '0.75rem', minWidth: 0, px: 1.5 }}
+                                >
+                                  暫停
+                                </Button>
+                              )}
+                              {/* 恢復任務按鈕：只有 paused 狀態可按 */}
+                              {project.status === 'paused' && (
+                                <Button
+                                  size="small"
+                                  variant="contained"
+                                  color="success"
+                                  startIcon={isOperating ? <CircularProgress size={14} color="inherit" /> : <PlayArrowIcon />}
+                                  onClick={() => handleResumeTask(project.sendtask_uuid)}
+                                  disabled={isOperating}
+                                  sx={{ fontSize: '0.75rem', minWidth: 0, px: 1.5 }}
+                                >
+                                  繼續
+                                </Button>
+                              )}
+                              {/* 停止任務按鈕：active 或 paused 狀態可按 */}
+                              {(project.status === 'active' || project.status === 'paused') && (
                                 <Button
                                   size="small"
                                   variant="outlined"
@@ -696,146 +849,286 @@ export default function Customer() {
             <CircularProgress />
             <Typography sx={{ ml: 2 }}>載入任務統計資料中...</Typography>
           </Box>
-        ) : filteredTasks.length === 0 ? (
+        ) : adminAssignedTasks.length === 0 && myActiveTaskData.length === 0 ? (
           <Alert severity="warning" sx={{ borderRadius: '12px' }}>
             沒有符合篩選條件的任務
           </Alert>
         ) : (
-          filteredTasks.map((task) => {
-            const taskStatus = customerData.sendtasks.find(t => t.uuid === task.sendtask_uuid);
-            const isInCooldown = cooldowns[task.sendtask_uuid] && (Date.now() - cooldowns[task.sendtask_uuid] < 10000);
-            return (
-              <TaskCard
-                key={task.id}
-                elevation={0}
-              >
-                <TaskHeader>
-                  <Avatar
-                    sx={{
-                      bgcolor: getStatusColor(task.status),
-                      mr: 2
-                    }}
-                  >
-                    <Assignment />
-                  </Avatar>
-
-                  <Box sx={{ flex: 1 }}>
-                    <Typography variant="h6"
-                      onClick={() => handleCardClick(task)}
+          <>
+            {/* 管理員分配的任務 */}
+            {adminAssignedTasks.map((task) => {
+              const taskStatus = customerData.sendtasks.find(t => t.uuid === task.sendtask_uuid);
+              const isInCooldown = cooldowns[task.sendtask_uuid] && (Date.now() - cooldowns[task.sendtask_uuid] < 10000);
+              return (
+                <TaskCard
+                  key={task.id}
+                  elevation={0}
+                >
+                  <TaskHeader>
+                    <Avatar
                       sx={{
-                        cursor: 'pointer',
-                        color: 'primary.main',
-                        '&:hover': {
-                          textDecoration: 'underline',
-                        },
-                        fontWeight: 'bold'
-                      }}>
-                      {task.name}
-                    </Typography>
-                    <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-                      <Schedule sx={{ mr: 1, color: '#64748b', fontSize: 20 }} />
-                      <Typography variant="body2" color="text.secondary">
-                        {task.startDate} - {task.endDate}
+                        bgcolor: getStatusColor(task.status),
+                        mr: 2
+                      }}
+                    >
+                      <Assignment />
+                    </Avatar>
+
+                    <Box sx={{ flex: 1 }}>
+                      <Typography variant="h6"
+                        onClick={() => handleCardClick(task)}
+                        sx={{
+                          cursor: 'pointer',
+                          color: 'primary.main',
+                          '&:hover': {
+                            textDecoration: 'underline',
+                          },
+                          fontWeight: 'bold'
+                        }}>
+                        {task.name}
                       </Typography>
+                      <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                        <Schedule sx={{ mr: 1, color: '#64748b', fontSize: 20 }} />
+                        <Typography variant="body2" color="text.secondary">
+                          {task.startDate} - {task.endDate}
+                        </Typography>
+                      </Box>
+
+                      {taskStatus && (
+                        <Box sx={{ mt: 1.5 }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                            <Chip
+                              label={`📋 總數：${task.totalplanned || 0}`}
+                              size="small"
+                              sx={{
+                                backgroundColor: '#e0e7ff',
+                                color: '#3730a3',
+                                fontWeight: 700,
+                                fontSize: '0.78rem',
+                                borderRadius: '8px',
+                              }}
+                            />
+                          </Box>
+                          <Box sx={{ display: 'flex', gap: 0.8, flexWrap: 'wrap' }}>
+                            {taskStatus.send && (
+                              <Chip
+                                label={`✅ 已寄出：${task.totalsuccess}`}
+                                size="small"
+                                sx={{
+                                  backgroundColor: '#dcfce7',
+                                  color: '#15803d',
+                                  fontWeight: 600,
+                                  fontSize: '0.75rem',
+                                  borderRadius: '8px',
+                                }}
+                              />
+                            )}
+                            {taskStatus.failed && (
+                              <Chip
+                                label={`❌ 失敗：${task.totalfailed}`}
+                                size="small"
+                                sx={{
+                                  backgroundColor: '#fee2e2',
+                                  color: '#b91c1c',
+                                  fontWeight: 600,
+                                  fontSize: '0.75rem',
+                                  borderRadius: '8px',
+                                }}
+                              />
+                            )}
+                            {taskStatus.notyet && (
+                              <Chip
+                                label={`⏳ 待寄送：${task.totalnotyet}`}
+                                size="small"
+                                sx={{
+                                  backgroundColor: '#fef9c3',
+                                  color: '#a16207',
+                                  fontWeight: 600,
+                                  fontSize: '0.75rem',
+                                  borderRadius: '8px',
+                                }}
+                              />
+                            )}
+                          </Box>
+                        </Box>
+                      )}
                     </Box>
 
-                    {taskStatus && (
-                      <Box sx={{ mt: 1.5 }}>
-                        {/* 總數徽章 */}
-                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
-                          <Chip
-                            label={`📋 總數：${task.totalplanned || 0}`}
+                    <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                      <StatusChip
+                        label={getStatusText(task.status)}
+                        status={task.status}
+                        size="small"
+                      />
+                    </Box>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
+                      <Button
+                        variant="outlined"
+                        size="small"
+                        onClick={() => handleUpdateTask(task.sendtask_uuid)}
+                        disabled={isCheckingSends || isInCooldown}
+                        sx={{ minWidth: '130px' }}
+                      >
+                        {isInCooldown ? '目前為最新資料' : '更新'}
+                      </Button>
+                    </Box>
+                  </TaskHeader>
+                </TaskCard>
+              );
+            })}
+
+            {/* ====== 我建立的已啟動任務 ====== */}
+            {customerData.task_creation_enabled && myActiveTaskData.length > 0 && (
+              <>
+                <Divider sx={{ my: 3 }} />
+                <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 1 }}>
+                  <BuildCircle sx={{ color: '#6366f1' }} />
+                  <Typography variant="h5" sx={{ fontWeight: 600 }}>
+                    我建立的任務
+                  </Typography>
+                  <Chip label={myActiveTaskData.length} size="small" color="primary" />
+                </Box>
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  以下是您自行建立且已啟動的任務，點擊任務名稱可查看詳細資料
+                </Typography>
+                {myActiveTaskData.map((task) => {
+                  const taskStatus = customerData.sendtasks.find(t => t.uuid === task.sendtask_uuid);
+                  const isInCooldown = cooldowns[task.sendtask_uuid] && (Date.now() - cooldowns[task.sendtask_uuid] < 10000);
+                  const projectInfo = myProjects.find(p => p.sendtask_uuid === task.sendtask_uuid);
+                  return (
+                    <TaskCard
+                      key={`my-${task.id}`}
+                      elevation={0}
+                    >
+                      <TaskHeader>
+                        <Avatar
+                          sx={{
+                            bgcolor: '#6366f1',
+                            mr: 2
+                          }}
+                        >
+                          <BuildCircle />
+                        </Avatar>
+
+                        <Box sx={{ flex: 1 }}>
+                          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <Typography variant="h6"
+                              onClick={() => handleCardClick(task)}
+                              sx={{
+                                cursor: 'pointer',
+                                color: 'primary.main',
+                                '&:hover': {
+                                  textDecoration: 'underline',
+                                },
+                                fontWeight: 'bold'
+                              }}>
+                              {task.name}
+                            </Typography>
+                            {projectInfo && (
+                              <Chip
+                                label={getProjectStatusText(projectInfo.status)}
+                                size="small"
+                                sx={{
+                                  fontWeight: 600,
+                                  fontSize: '0.7rem',
+                                  bgcolor: getProjectStatusColor(projectInfo.status).bg,
+                                  color: getProjectStatusColor(projectInfo.status).color
+                                }}
+                              />
+                            )}
+                          </Box>
+                          <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
+                            <Schedule sx={{ mr: 1, color: '#64748b', fontSize: 20 }} />
+                            <Typography variant="body2" color="text.secondary">
+                              {task.startDate} - {task.endDate}
+                            </Typography>
+                          </Box>
+
+                          {taskStatus && (
+                            <Box sx={{ mt: 1.5 }}>
+                              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
+                                <Chip
+                                  label={`📋 總數：${task.totalplanned || 0}`}
+                                  size="small"
+                                  sx={{
+                                    backgroundColor: '#e0e7ff',
+                                    color: '#3730a3',
+                                    fontWeight: 700,
+                                    fontSize: '0.78rem',
+                                    borderRadius: '8px',
+                                  }}
+                                />
+                              </Box>
+                              <Box sx={{ display: 'flex', gap: 0.8, flexWrap: 'wrap' }}>
+                                {taskStatus.send && (
+                                  <Chip
+                                    label={`✅ 已寄出：${task.totalsuccess}`}
+                                    size="small"
+                                    sx={{
+                                      backgroundColor: '#dcfce7',
+                                      color: '#15803d',
+                                      fontWeight: 600,
+                                      fontSize: '0.75rem',
+                                      borderRadius: '8px',
+                                    }}
+                                  />
+                                )}
+                                {taskStatus.failed && (
+                                  <Chip
+                                    label={`❌ 失敗：${task.totalfailed}`}
+                                    size="small"
+                                    sx={{
+                                      backgroundColor: '#fee2e2',
+                                      color: '#b91c1c',
+                                      fontWeight: 600,
+                                      fontSize: '0.75rem',
+                                      borderRadius: '8px',
+                                    }}
+                                  />
+                                )}
+                                {taskStatus.notyet && (
+                                  <Chip
+                                    label={`⏳ 待寄送：${task.totalnotyet}`}
+                                    size="small"
+                                    sx={{
+                                      backgroundColor: '#fef9c3',
+                                      color: '#a16207',
+                                      fontWeight: 600,
+                                      fontSize: '0.75rem',
+                                      borderRadius: '8px',
+                                    }}
+                                  />
+                                )}
+                              </Box>
+                            </Box>
+                          )}
+                        </Box>
+
+                        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                          <StatusChip
+                            label={getStatusText(task.status)}
+                            status={task.status}
                             size="small"
-                            sx={{
-                              backgroundColor: '#e0e7ff',
-                              color: '#3730a3',
-                              fontWeight: 700,
-                              fontSize: '0.78rem',
-                              borderRadius: '8px',
-                            }}
                           />
                         </Box>
-                        {/* 統計徽章列 */}
-                        <Box sx={{ display: 'flex', gap: 0.8, flexWrap: 'wrap' }}>
-                          {taskStatus.send && (
-                            <Chip
-                              label={`✅ 已寄出：${task.totalsuccess}`}
-                              size="small"
-                              sx={{
-                                backgroundColor: '#dcfce7',
-                                color: '#15803d',
-                                fontWeight: 600,
-                                fontSize: '0.75rem',
-                                borderRadius: '8px',
-                              }}
-                            />
-                          )}
-                          {taskStatus.failed && (
-                            <Chip
-                              label={`❌ 失敗：${task.totalfailed}`}
-                              size="small"
-                              sx={{
-                                backgroundColor: '#fee2e2',
-                                color: '#b91c1c',
-                                fontWeight: 600,
-                                fontSize: '0.75rem',
-                                borderRadius: '8px',
-                              }}
-                            />
-                          )}
-                          {taskStatus.notyet && (
-                            <Chip
-                              label={`⏳ 待寄送：${task.totalnotyet}`}
-                              size="small"
-                              sx={{
-                                backgroundColor: '#fef9c3',
-                                color: '#a16207',
-                                fontWeight: 600,
-                                fontSize: '0.75rem',
-                                borderRadius: '8px',
-                              }}
-                            />
-                          )}
-                          {!taskStatus.send && !taskStatus.failed && !taskStatus.notyet && !taskStatus.notTriggered && !taskStatus.triggered && (
-                            <Chip
-                              label="— 無資料"
-                              size="small"
-                              sx={{
-                                backgroundColor: '#f1f5f9',
-                                color: '#64748b',
-                                fontWeight: 600,
-                                fontSize: '0.75rem',
-                                borderRadius: '8px',
-                              }}
-                            />
-                          )}
+                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
+                          <Button
+                            variant="outlined"
+                            size="small"
+                            onClick={() => handleUpdateTask(task.sendtask_uuid)}
+                            disabled={isCheckingSends || isInCooldown}
+                            sx={{ minWidth: '130px' }}
+                          >
+                            {isInCooldown ? '目前為最新資料' : '更新'}
+                          </Button>
                         </Box>
-                      </Box>
-                    )}
-                  </Box>
-
-                  <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
-                    <StatusChip
-                      label={getStatusText(task.status)}
-                      status={task.status}
-                      size="small"
-                    />
-                  </Box>
-                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 1 }}>
-                    <Button
-                      variant="outlined"
-                      size="small"
-                      onClick={() => handleUpdateTask(task.sendtask_uuid)}
-                      disabled={isCheckingSends || isInCooldown}
-                      sx={{ minWidth: '130px' }}
-                    >
-                      {isInCooldown ? '目前為最新資料' : '更新'}
-                    </Button>
-                  </Box>
-                </TaskHeader>
-              </TaskCard>
-            );
-          })
+                      </TaskHeader>
+                    </TaskCard>
+                  );
+                })}
+              </>
+            )}
+          </>
         )}
       </RightContent>
 
@@ -848,7 +1141,8 @@ export default function Customer() {
       {/* 新增任務 Dialog */}
       <Dialog
         open={createTaskOpen}
-        onClose={() => setCreateTaskOpen(false)}
+        onClose={(_, reason) => { if (reason !== 'backdropClick') setCreateTaskOpen(false); }}
+        disableEscapeKeyDown
         maxWidth="md"
         fullWidth
       >
@@ -860,6 +1154,32 @@ export default function Customer() {
         </DialogTitle>
         <DialogContent>
           <CreateTask onSuccess={handleCreateSuccess} />
+        </DialogContent>
+      </Dialog>
+
+      {/* 任務細節（唯讀）Dialog */}
+      <Dialog
+        open={viewDetailDialog.open}
+        onClose={(_, reason) => { if (reason !== 'backdropClick') setViewDetailDialog({ open: false, loading: false, data: null }); }}
+        disableEscapeKeyDown
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          任務詳細資料
+          <IconButton onClick={() => setViewDetailDialog({ open: false, loading: false, data: null })} size="small">
+            <CloseIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent>
+          {viewDetailDialog.loading ? (
+            <Box display="flex" alignItems="center" justifyContent="center" py={4}>
+              <CircularProgress size={24} />
+              <Typography sx={{ ml: 2 }}>載入中...</Typography>
+            </Box>
+          ) : viewDetailDialog.data ? (
+            <CreateTask readOnly initialData={viewDetailDialog.data} />
+          ) : null}
         </DialogContent>
       </Dialog>
     </MainContainer>

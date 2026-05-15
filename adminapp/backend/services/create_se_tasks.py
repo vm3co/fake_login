@@ -265,4 +265,17 @@ class SeTaskService:
         logger.error(f"刪除任務失敗 {sendtasks_uuid}")
         return False
 
+    async def pause_sendtask(self, sendtask_uuid: str) -> bool:
+        '''暫停任務'''
+        logger.info(f"暫停任務： {sendtask_uuid}")
+        url = self.url + '/api/case/pause_sendtask'
+        payload = {"sendtask_uuid": sendtask_uuid}
+        
+        data = await self._send_post_async(url, payload)
+        if data and data.get("sub_code") == 20000:
+            logger.info(f"暫停任務成功 {sendtask_uuid}")
+            return True
+        logger.error(f"暫停任務失敗 {sendtask_uuid}")
+        return False
+
 se_task_service = SeTaskService()

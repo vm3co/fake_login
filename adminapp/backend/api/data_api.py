@@ -24,7 +24,7 @@ from sqlalchemy import select, update, delete, func, desc, asc, text, String, ca
 from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from backend.repository.db_controller import db_controller
-from backend.repository.models import SendTask, Mtmpl, Notification, SendLogStats, SendLogDetail, CustomerAcct
+from backend.repository.models import SendTask, Mtmpl, Notification, SendLogStats, SendLogDetail, CustomerAcct, CustomerTask
 from backend.services.log_manager import Logger
 from backend.services.getSe2data import get_se2_data
 from backend.services.time_utils import format_datetime
@@ -1386,6 +1386,15 @@ def get_router(db_user):
         if not del_customer_names:
             return {"status": "error", "message": "沒有收到資料"}
         try:
+            # 取得要刪除的客戶，擷取其 customer_uuid
+            customers = await db_controller.get(CustomerAcct, {"customer_name": del_customer_names})
+            if customers:
+                customer_uuids = [c.customer_uuid for c in customers if c.customer_uuid]
+                if customer_uuids:
+                    # 一併刪除 customer_tasks 裡面的資料
+                    await db_controller.delete(CustomerTask, {"customer_uuid": customer_uuids})
+
+            # 刪除客戶帳號
             await db_controller.delete(CustomerAcct, {"customer_name": del_customer_names})
             return {"status": "success", "message": del_customer_names}
         except Exception as e:
@@ -1454,6 +1463,28 @@ def get_router(db_user):
             else:
                  return {"status": "error", "message": result["message"]}
         except Exception as e:
+            return {"status": "error", "message": str(e)}
+
+    @router.get(
+        "/customer/get_my_sendtasks",
+        tags=["data"]
+        )
+    async def get_my_sendtasks(current_user: dict = Depends(get_current_user)):
+        """取得當前客戶的 sendtasks 清單（用於更新 Cookie）"""
+        if current_user.get("user_type") != "customer":
+            return {"status": "error", "message": "非客戶帳號"}
+
+        try:
+            customer = await db_controller.get_one(
+                CustomerAcct,
+                {"customer_name": current_user.get("username")}
+            )
+            if not customer:
+                return {"status": "error", "message": "找不到客戶帳號"}
+
+            return {"status": "success", "sendtasks": customer.sendtasks or []}
+        except Exception as e:
+            logger.error(f"Error in get_my_sendtasks: {str(e)}")
             return {"status": "error", "message": str(e)}
 
     return router

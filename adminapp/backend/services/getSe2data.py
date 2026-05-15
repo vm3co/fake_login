@@ -31,6 +31,8 @@ API_ENDPOINTS = {
     "get_acct": "/api/account/get_acct",
     "get_accts": "/api/account/get_accts",
     "export_csv": "/api/casexport/export_csv",
+    "pause_sendtask": "/api/case/pause_sendtask",
+    "resume_sendtask": "/api/case/resume_sendtask",
 }
 
 class getSe2data:
@@ -174,6 +176,25 @@ class getSe2data:
         }
         data = await self._send_post(url, payload_template)
         return data.get("data") if data else None
+
+    async def get_test_participant(self, testcase_uuid: str, pre_test_enable: bool) -> list[list] | None:
+        '''
+        抓取專案受測者清單
+        :param testcase_uuid: 專案的 testcase_uuid
+        :param pre_test_enable: 是否為前測，True → query_type=4，False → query_type=5
+        :return: 受測者資料列表（每筆為 list），失敗時回傳 None
+        '''
+        url = self.url + "/api/case/get_test_participant"
+        payload_template = {
+            "testcase_uuid": testcase_uuid,
+            "query_type": "4" if pre_test_enable else "5",
+            "edit_mode": False,
+            "skip_query": False
+        }
+        data = await self._send_post(url, payload_template)
+        if not data:
+            return None
+        return (data.get("data") or {}).get("test_person_data", {}).get("data")
 
     async def get_sendlog(self, uuid: str) -> pd.DataFrame | None:
         '''抓取專案參與人員清單'''
@@ -333,6 +354,38 @@ class getSe2data:
                     return await self.export_xlsx(sendtask_content, isTokenRefreshed=True)
                 logger.error(f"Unhandled exception: {e}")
         return None              
+
+    async def pause_sendtask(self, sendtask_uuid: str) -> dict | None:
+        """
+        暫停指定的任務。
+        :param sendtask_uuid: 任務的 UUID
+        :return: API 回傳結果，成功時 sub_code 為 20000
+        """
+        logger.info(f"Pausing sendtask {sendtask_uuid}...")
+        url = self.url + API_ENDPOINTS["pause_sendtask"]
+        payload = {"sendtask_uuid": sendtask_uuid}
+        data = await self._send_post(url, payload)
+        if data and data.get("sub_code") == 20000:
+            logger.info(f"Sendtask {sendtask_uuid} paused successfully.")
+        else:
+            logger.warning(f"Failed to pause sendtask {sendtask_uuid}, response: {data}")
+        return data
+
+    async def resume_sendtask(self, sendtask_uuid: str) -> dict | None:
+        """
+        恢復（繼續執行）指定的任務。
+        :param sendtask_uuid: 任務的 UUID
+        :return: API 回傳結果，成功時 sub_code 為 20000
+        """
+        logger.info(f"Resuming sendtask {sendtask_uuid}...")
+        url = self.url + API_ENDPOINTS["resume_sendtask"]
+        payload = {"sendtask_uuid": sendtask_uuid}
+        data = await self._send_post(url, payload)
+        if data and data.get("sub_code") == 20000:
+            logger.info(f"Sendtask {sendtask_uuid} resumed successfully.")
+        else:
+            logger.warning(f"Failed to resume sendtask {sendtask_uuid}, response: {data}")
+        return data
 
 
 # 初始化 getSe2data 實例
