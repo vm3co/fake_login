@@ -223,7 +223,12 @@ async def lifespan(app: FastAPI):
         task.cancel()
     await asyncio.gather(*worker_tasks, return_exceptions=True)
 
-app = FastAPI(lifespan=lifespan)
+app = FastAPI(
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
+    lifespan=lifespan
+)
 
 # 定義允許的來源
 origins = [
