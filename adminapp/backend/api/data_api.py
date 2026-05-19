@@ -1303,6 +1303,7 @@ def get_router(db_user):
         customer_name: str = ""
         enabled: bool = False
         org_uuid: str = ""
+        allowed_email_domains: list[str] | None = None
 
     @router.post(
         "/update_customer_task_creation",
@@ -1313,7 +1314,7 @@ def get_router(db_user):
         更新客戶的「建立任務功能」開關狀態與指定組織
 
         1. POST /update_customer_task_creation
-        2. Body: {"customer_name": ..., "enabled": true/false, "org_uuid": ...}
+        2. Body: {"customer_name": ..., "enabled": true/false, "org_uuid": ..., "allowed_email_domains": [...]}
         """
         if not request.customer_name:
             return {"status": "error", "message": "沒有收到客戶名稱"}
@@ -1322,7 +1323,8 @@ def get_router(db_user):
             result = await db_user.update_customer_task_creation(
                 request.customer_name, 
                 request.enabled, 
-                request.org_uuid
+                request.org_uuid,
+                request.allowed_email_domains
             )
             return result
         except Exception as e:

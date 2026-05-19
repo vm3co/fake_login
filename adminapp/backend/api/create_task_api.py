@@ -149,6 +149,31 @@ async def create_testcase(request: CreateTaskRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"無法解析參與人員資料: {e}")
     
+    # Email Domain 驗證
+    try:
+        customer = await db_controller.get_one(CustomerAcct, {"customer_uuid": request.customer_uuid})
+        if customer and customer.allowed_email_domains:
+            allowed_domains = [d.lower() for d in customer.allowed_email_domains]
+            df = pd.read_csv(io.StringIO(request.participant_data))
+            
+            # 檢查名為 UserEMail 的欄位或第 4 欄 (index 3)
+            if 'UserEMail' in df.columns:
+                emails = df['UserEMail'].dropna().astype(str)
+            elif len(df.columns) > 3:
+                emails = df.iloc[:, 3].dropna().astype(str)
+            else:
+                emails = []
+
+            for email in emails:
+                if '@' in email:
+                    domain = email.split('@')[1].lower()
+                    if not any(d == domain for d in allowed_domains):
+                        raise ValueError(f"Email {email} 不符合 domain 限制。允許的 domain: {', '.join(allowed_domains)}")
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        logger.warning(f"Email domain validation error (non-fatal): {e}")
+
     try:
         uuid = await se_task_service.create_testcase(
             id=request.task_name,

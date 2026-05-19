@@ -220,7 +220,7 @@ export default function useCustomers() {
     };
 
     // 更新客戶「建立任務功能」開關
-    const updateCustomerTaskCreation = async (customerName, enabled, orgUuid = "") => {
+    const updateCustomerTaskCreation = async (customerName, enabled, orgUuid = "", allowedEmailDomains = null) => {
         const controller = createController();
         const cleanup = registerRequest(controller);
 
@@ -228,7 +228,8 @@ export default function useCustomers() {
             const response = await axios.post("/api/update_customer_task_creation", {
                 customer_name: customerName,
                 enabled: enabled,
-                org_uuid: orgUuid
+                org_uuid: orgUuid,
+                allowed_email_domains: allowedEmailDomains
             }, {
                 signal: controller.signal,
             });

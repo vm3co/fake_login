@@ -185,7 +185,8 @@ export default function Customer() {
     acct_uuid: null,
     customer_uuid: null,
     task_creation_enabled: false,
-    task_creation_org_uuid: ''
+    task_creation_org_uuid: '',
+    allowed_email_domains: []
   });
   const { enqueueSnackbar } = useSnackbar();
   const [searchText, setSearchText] = useState('');
@@ -225,12 +226,14 @@ export default function Customer() {
     const customer_uuid = getCookie('customer_uuid');
     const task_creation_enabled = getCookie('task_creation_enabled') === true || getCookie('task_creation_enabled') === 'true';
     const task_creation_org_uuid = getCookie('task_creation_org_uuid') || '';
+    const allowed_email_domains = parseTasks(getCookie('allowed_email_domains')) || [];
     setCustomerData({
       sendtasks,
       acct_uuid,
       customer_uuid,
       task_creation_enabled,
-      task_creation_org_uuid
+      task_creation_org_uuid,
+      allowed_email_domains
     });
   };
 
@@ -1153,7 +1156,7 @@ export default function Customer() {
           </IconButton>
         </DialogTitle>
         <DialogContent>
-          <CreateTask onSuccess={handleCreateSuccess} />
+          <CreateTask onSuccess={handleCreateSuccess} allowedEmailDomains={customerData.allowed_email_domains} />
         </DialogContent>
       </Dialog>
 

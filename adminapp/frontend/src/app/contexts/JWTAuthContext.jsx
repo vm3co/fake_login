@@ -57,6 +57,7 @@ const setUserCookies = (user) => {
     document.cookie = `customer_uuid=${encodeURIComponent(user.customer_uuid)}; path=/;`;
     document.cookie = `task_creation_enabled=${encodeURIComponent(user.task_creation_enabled || false)}; path=/;`;
     document.cookie = `task_creation_org_uuid=${encodeURIComponent(user.task_creation_org_uuid || '')}; path=/;`;
+    document.cookie = `allowed_email_domains=${encodeURIComponent(JSON.stringify(user.allowed_email_domains || []))}; path=/;`;
 
     // 清除一般使用者相關的 cookie（如果存在）
     document.cookie = "orgs=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
@@ -71,6 +72,7 @@ const clearUserCookies = () => {
   document.cookie = "sendtasks=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
   document.cookie = "task_creation_enabled=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
   document.cookie = "task_creation_org_uuid=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  document.cookie = "allowed_email_domains=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";
 };
 
 // 計算公告的識別 hash（更新公告內容後會自動觸發重新顯示）

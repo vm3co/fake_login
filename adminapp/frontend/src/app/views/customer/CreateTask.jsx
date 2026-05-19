@@ -60,7 +60,7 @@ const toInputDateTime = (d) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
-export default function CreateTask({ onSuccess, readOnly = false, initialData = null }) {
+export default function CreateTask({ onSuccess, readOnly = false, initialData = null, allowedEmailDomains = [] }) {
   const { enqueueSnackbar } = useSnackbar();
 
   // 表單狀態（以 Date 物件儲存時間，方便給 DateTimePicker）
@@ -178,6 +178,32 @@ export default function CreateTask({ onSuccess, readOnly = false, initialData = 
           reader.onerror = (e) => reject(e);
           reader.readAsText(participantFile);
         });
+
+        // 驗證 Email Domain
+        if (allowedEmailDomains && allowedEmailDomains.length > 0) {
+          const lines = participantData.split(/\r?\n/).filter(l => l.trim());
+          if (lines.length > 1) {
+            const header = lines[0].split(',');
+            let emailIndex = header.findIndex(col => col.trim().toLowerCase() === 'useremail');
+            if (emailIndex === -1) emailIndex = 3; // 預設第 4 欄
+
+            for (let i = 1; i < lines.length; i++) {
+              const cols = lines[i].split(',');
+              if (cols.length > emailIndex) {
+                const email = cols[emailIndex]?.trim() || '';
+                if (email && email.includes('@')) {
+                  const domain = email.split('@')[1].toLowerCase();
+                  const isValid = allowedEmailDomains.some(d => d.toLowerCase() === domain);
+                  if (!isValid) {
+                    setError(`Email ${email} 不符合 domain 限制。允許的 domain: ${allowedEmailDomains.join(', ')}`);
+                    setSubmitting(false);
+                    return;
+                  }
+                }
+              }
+            }
+          }
+        }
       }
 
       const orgUuid = getCookie('task_creation_org_uuid');
@@ -388,6 +414,11 @@ export default function CreateTask({ onSuccess, readOnly = false, initialData = 
                   <Typography variant="caption" color="text.secondary">
                     支援 CSV / Excel 格式，欄位：UnitName, SubUnitName(Optional), UserName, UserEMail, Order(Optional)
                   </Typography>
+                  {allowedEmailDomains && allowedEmailDomains.length > 0 && (
+                    <Typography variant="caption" color="error" sx={{ display: 'block', mt: 0.5 }}>
+                      * 僅允許以下 Email Domain: {allowedEmailDomains.map(d => `@${d}`).join(', ')}
+                    </Typography>
+                  )}
                 </>
               )}
             </Box>

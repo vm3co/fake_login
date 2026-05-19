@@ -325,7 +325,12 @@ export default function CustomersPanel() {
         promises.push(updateCustomerSendtasks(customerKey, sendtasksForDb));
       }
       if (taskCreationForDb) {
-        promises.push(updateCustomerTaskCreation(customerKey, taskCreationForDb.enabled, taskCreationForDb.org_uuid));
+        promises.push(updateCustomerTaskCreation(
+            customerKey, 
+            taskCreationForDb.enabled, 
+            taskCreationForDb.org_uuid,
+            taskCreationForDb.allowed_email_domains
+        ));
       }
 
       await Promise.all(promises);
@@ -478,12 +483,13 @@ export default function CustomersPanel() {
                           <Switch
                             checked={localTaskCreation[customerKey]?.enabled ?? !!customer.task_creation_enabled}
                             onChange={(e) => {
-                              const isEnabled = e.target.checked;
+                                const isEnabled = e.target.checked;
                               setLocalTaskCreation(prev => ({
                                 ...prev,
                                 [customerKey]: {
                                   enabled: isEnabled,
-                                  org_uuid: prev[customerKey]?.org_uuid ?? (customer.task_creation_org_uuid || '')
+                                  org_uuid: prev[customerKey]?.org_uuid ?? (customer.task_creation_org_uuid || ''),
+                                  allowed_email_domains: prev[customerKey]?.allowed_email_domains ?? (customer.allowed_email_domains || [])
                                 }
                               }));
                             }}
@@ -512,7 +518,8 @@ export default function CustomersPanel() {
                                 ...prev,
                                 [customerKey]: {
                                   enabled: prev[customerKey]?.enabled ?? !!customer.task_creation_enabled,
-                                  org_uuid: orgUuid
+                                  org_uuid: orgUuid,
+                                  allowed_email_domains: prev[customerKey]?.allowed_email_domains ?? (customer.allowed_email_domains || [])
                                 }
                               }));
                             }}
@@ -529,6 +536,40 @@ export default function CustomersPanel() {
                           </Select>
                         </FormControl>
                       )}
+
+                      {/* Email Domain 限制 */}
+                      <Autocomplete
+                        multiple
+                        freeSolo
+                        size="small"
+                        sx={{ minWidth: 250, flex: 1 }}
+                        disabled={isCurrentlySaving}
+                        options={[]}
+                        value={localTaskCreation[customerKey]?.allowed_email_domains ?? (customer.allowed_email_domains || [])}
+                        onChange={(event, newValue) => {
+                          const cleanedDomains = newValue.map(v => v.replace(/^@+/, '').toLowerCase());
+                          setLocalTaskCreation(prev => ({
+                            ...prev,
+                            [customerKey]: {
+                              enabled: prev[customerKey]?.enabled ?? !!customer.task_creation_enabled,
+                              org_uuid: prev[customerKey]?.org_uuid ?? (customer.task_creation_org_uuid || ''),
+                              allowed_email_domains: cleanedDomains
+                            }
+                          }));
+                        }}
+                        renderTags={(value, getTagProps) =>
+                          value.map((option, index) => (
+                            <Chip variant="outlined" label={`@${option}`} size="small" {...getTagProps({ index })} color="primary" />
+                          ))
+                        }
+                        renderInput={(params) => (
+                          <TextField
+                            {...params}
+                            label="Email Domain 限制 (白名單)"
+                            placeholder="輸入後按 Enter (如 gmail.com)"
+                          />
+                        )}
+                      />
                     </Box>
                     <Autocomplete
                       multiple
