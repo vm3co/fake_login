@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from datetime import datetime
+from urllib.parse import urlparse
 import os
 import csv
 import json
@@ -48,7 +49,7 @@ async def log_input(
     data: LoginData, 
     request_info: Dict = Depends(get_request_info)
     ):
-    url_id = data.url.split("/")[-1][:64]
+    url_id = urlparse(data.url).path.rstrip("/").split("/")[-1][:64]
     now = int(datetime.now().timestamp())   # 記錄當下時間戳
 
     # Determine what info to record: input_data has priority, fallback to email
@@ -76,7 +77,7 @@ async def log_input(
         "data": info_to_record
     }
 
-    if url_id == "test":
+    if url_id in ("test", "99999_99999"):
         new_data = [now, request_info["ip"], request_info["user_agent"], info_to_record]
         await writer_test('input', new_data)
     else:

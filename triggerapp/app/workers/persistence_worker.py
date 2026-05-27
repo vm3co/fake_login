@@ -104,7 +104,11 @@ class PersistenceWorker:
                 second_input_info=func.array_append(func.coalesce(SendLogDetail.second_input_info, []), event["data"])
             )
             result = await db_controller.execute(stmt)
-            logger.info(f"Processed input event for {event['uuid']}")
+
+            if result.rowcount == 0:
+                logger.warning(f"No row found for uuid {event['uuid']} to update input.")
+            else:
+                logger.info(f"Processed input event for {event['uuid']}")
         except Exception as e:
             logger.error(f"Error processing input event: {e}")
         
