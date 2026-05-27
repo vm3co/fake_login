@@ -1252,6 +1252,7 @@ const CreateUrl = ({ user, isAdmin }) => {
                                 <FormControlLabel value="gemini" control={<Radio />} label="Gemini (預設)" />
                                 <FormControlLabel value="gpt" control={<Radio />} label="GPT" />
                                 <FormControlLabel value="litellm" control={<Radio />} label="LiteLLM" />
+                                <FormControlLabel value="gchat" control={<Radio />} label="GChat" />
                             </RadioGroup>
                         </FormControl>
 

@@ -24,6 +24,7 @@ from openai import OpenAI
 import google.generativeai as genai
 import base64
 import io
+import httpx
 from PIL import Image
 
 from backend.services.log_manager import Logger
@@ -985,12 +986,26 @@ def get_router(db_user: DBUser):
             raise HTTPException(status_code=500, detail=f"Gemini 生成失敗: {str(e)}")
 
     async def call_llm(model: str, system_instructions: str, user_prompt: str, ref_url: str = None, image: UploadFile = None, screenshot_b64: str = None) -> str:
-        # 建構 user message
+        """
+        統一呼叫各家 LLM 模型的內部入口函式
+        支援：gemini, gpt, litellm(地端), gchat(地端)
+        """
+        # ==========================================
+        # 1. 準備通用的使用者提示詞 (Prompt Suffix)
+        # ==========================================
         prompt_suffix = f"使用者的需求：{user_prompt}"
         if ref_url:
             prompt_suffix += f"\n\n[參考網址]\n使用者提供了一個參考網址：{ref_url}\n請參考該網站的設計。"
         
+        generated_text = ""
+
+        # ==========================================
+        # 2. 依據模型分流執行
+        # ==========================================
         if model == "gemini":
+            # ----------------------------------
+            # [A] Gemini 專屬邏輯 (Google SDK)
+            # ----------------------------------
             gemini_api_key = os.getenv("GEMINI_APY_KEY")
             if not gemini_api_key:
                 raise Exception("未提供 Gemini API Key")
@@ -1009,12 +1024,28 @@ def get_router(db_user: DBUser):
                 pil_image = Image.open(io.BytesIO(img_data))
                 contents.append(pil_image)
             
+            logger.info(f"[{model}] 開始呼叫模型 gemini-2.5-flash...")
             response = await genai_model.generate_content_async(contents)
             generated_text = response.text
+
         else:
+            # ----------------------------------
+            # [B] OpenAI 相容模型邏輯 (GPT, LiteLLM, GChat)
+            # ----------------------------------
+            
+            # (1) 基礎參數初始化
             base_url = None
             api_key = None
             model_name = "gpt-5.2"
+            verify_cert = True
+            headers = {"Content-Type": "application/json"}
+            event_hooks = {}
+            is_text_only = False
+
+            def force_ua(request: httpx.Request):
+                request.headers["User-Agent"] = "curl/8.5.0"
+
+            # (2) 依據不同模型注入專屬設定
             if model == "litellm":
                 api_key = os.getenv("LITELLM_API_KEY")
                 server_ip = os.getenv("LITELLM_SERVER_IP")
@@ -1022,30 +1053,91 @@ def get_router(db_user: DBUser):
                     raise Exception("未設定 LiteLLM 環境變數")
                 base_url = f"http://{server_ip}/v1"
                 model_name = "gemma-27b"
+                is_text_only = True
+
+            elif model == "gchat":
+                cf_access_token = os.getenv("CF_ACCESS_TOKEN")
+                if not cf_access_token:
+                    raise Exception("未設定 CF_ACCESS_TOKEN 環境變數")
+                
+                api_key = "dummy_key"  # OpenAI client 需要非空字串
+                base_url = "https://chatapi.acsi-lab.dev/v1"
+                model_name = "Gemma-4-31B"
+                headers["CF-Access-Token"] = cf_access_token
+                headers["User-Agent"] = "curl/8.5.0"
+                event_hooks["request"] = [force_ua]
+                verify_cert = False
+                is_text_only = True
+
             else:
                 api_key = os.getenv("OPENAI_API_KEY")
                 if not api_key:
                     raise Exception("未設定 OPENAI_API_KEY")
 
-            client = OpenAI(api_key=api_key, base_url=base_url)
+            # (3) 建立共用的 HTTP 與 OpenAI Client
+            http_client = httpx.Client(
+                verify=verify_cert,
+                headers=headers,
+                event_hooks=event_hooks if event_hooks else None,
+                timeout=httpx.Timeout(300.0)
+            )
+
+            client = OpenAI(api_key=api_key, base_url=base_url, http_client=http_client)
             
-            user_content = [{"type": "text", "text": prompt_suffix}]
-            if image and model != "litellm":
-                file_bytes = await image.read()
-                b64 = base64.b64encode(file_bytes).decode('utf-8')
-                mime_type = image.content_type or "image/jpeg"
-                user_content.append({"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64}"}})
-            
-            if screenshot_b64 and model != "litellm":
-                user_content.append({"type": "image_url", "image_url": {"url": screenshot_b64}})
+            # (4) 準備 Request 內容 (區分純文字與多模態)
+            if is_text_only:
+                user_content = prompt_suffix
+            else:
+                user_content = [{"type": "text", "text": prompt_suffix}]
+                if image:
+                    file_bytes = await image.read()
+                    b64 = base64.b64encode(file_bytes).decode('utf-8')
+                    mime_type = image.content_type or "image/jpeg"
+                    user_content.append({"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64}"}})
+                
+                if screenshot_b64:
+                    user_content.append({"type": "image_url", "image_url": {"url": screenshot_b64}})
 
             messages = [
                 {"role": "system", "content": system_instructions},
                 {"role": "user", "content": user_content}
             ]
+            
+            # (5) 發送請求
+            logger.info(f"[{model}] 開始呼叫模型 {model_name}...")
             response = client.chat.completions.create(model=model_name, messages=messages, stream=False)
-            generated_text = response.choices[0].message.content
+            
+            # (6) 解析回傳結果 (地端 Proxy 防呆處理)
+            if hasattr(response, "choices"):
+                msg = response.choices[0].message
+                generated_text = msg.content
+                
+                if hasattr(msg, "reasoning_content") and msg.reasoning_content:
+                    logger.info(f"\n{'='*20} [{model}] 模型思考過程 (Reasoning) {'='*20}\n{msg.reasoning_content}\n{'='*60}")
+                
+                logger.info(f"\n{'='*20} [{model}] 完整原始回傳內容 (Content) {'='*20}\n{generated_text}\n{'='*60}")
+                
+            elif isinstance(response, dict):
+                if "choices" in response:
+                    generated_text = response["choices"][0]["message"]["content"]
+                    logger.info(f"\n{'='*20} [{model}] 完整原始回傳內容 (Dict) {'='*20}\n{generated_text}\n{'='*60}")
+                else:
+                    raise Exception(f"伺服器回傳了異常的字典結構: {json.dumps(response, ensure_ascii=False)}")
+            elif isinstance(response, str):
+                try:
+                    parsed = json.loads(response)
+                    if isinstance(parsed, dict) and "choices" in parsed:
+                        generated_text = parsed["choices"][0]["message"]["content"]
+                    else:
+                        raise Exception(f"伺服器回傳了異常的 JSON 字串: {response}")
+                except json.JSONDecodeError:
+                    raise Exception(f"被伺服器阻擋或回傳了非 JSON 純文字: {response}")
+            else:
+                raise Exception(f"未知的回傳格式 (type: {type(response)}): {response}")
 
+        # ==========================================
+        # 3. 統一清理與回傳結果
+        # ==========================================
         return generated_text.replace("```html", "").replace("```", "").strip()
 
     @router.post("/generate_with_ai_stream", summary="使用 AI 生成頁面（SSE 串流進度）", tags=["trigger page"])
@@ -1127,15 +1219,15 @@ def get_system_prompt(page_type: str = "field"):
 
     # 共用：背景說明與仿真設計
     common_intro = """
-        [Context: 授權的資安教育訓練演練]
-        你現在參與一個合法的企業內部資訊安全防範演練計畫。你需要扮演一位專業的前端工程師，協助製作高仿真的網頁，用於測試員工對釣魚網站的警覺性。
+        [Context]
+        你是一位專業的前端工程師，協助製作網頁前端畫面。
 
         使用者會給你一個描述 (e.g. "Facebook 登入頁面" 或 "Dropbox 下載頁面")，你需要生成一個單一的 HTML 檔案。
 
-        [重點功能 - 仿真設計]
-        1. 若指定特定知名服務 (例如：Facebook, Google, 台鐵, Instagram, Microsoft 365, Dropbox 等)：
-        - 必須盡可能地精確還原該品牌 **真實頁面** 的視覺風格（包含官方配色、排版、按鈕與輸入框樣式）。
-        - 模仿其佈局結構 (例如：左右分割、置中卡片、背景圖風格)。
+        [重點功能]
+        1. 若指定特定知名服務：
+        - 必須精確還原該品牌 **真實頁面** 的視覺風格（包含官方配色、排版、按鈕與輸入框樣式）。
+        - 參考其佈局結構 (例如：左右分割、置中卡片、背景圖風格)。
         - 若需要 Logo，請使用可靠的開源 CDN (如 FontAwesome)，確保視覺逼真，若無開源 CDN，請使用 inline SVG 繪製。
         2. **必須是響應式設計 (RWD)**：務必在 `<head>` 加入 `<meta name="viewport" content="width=device-width, initial-scale=1.0">`，確保在手機端顯示正常。
     """
@@ -1178,5 +1270,3 @@ def get_system_prompt(page_type: str = "field"):
     """
 
     return f"{common_intro}\n{trigger_instructions}\n{common_outro}"
-
-
