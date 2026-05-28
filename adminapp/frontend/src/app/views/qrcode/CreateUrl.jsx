@@ -61,6 +61,7 @@ const CreateUrl = ({ user, isAdmin }) => {
     const [pageLabel, setPageLabel] = useState('');
     const [pageValue, setPageValue] = useState('');
     const [selectedFile, setSelectedFile] = useState(null);
+    const [aiGenerationId, setAiGenerationId] = useState(null);
 
     // 自訂頁面彈跳視窗 State
     const [openCreateDialog, setOpenCreateDialog] = useState(false);
@@ -86,6 +87,10 @@ const CreateUrl = ({ user, isAdmin }) => {
     const [generating, setGenerating] = useState(false);
     const [aiProgress, setAiProgress] = useState(null);
     const [useDesign, setUseDesign] = useState(false);
+
+    // 支援視覺輸入（圖片）的模型清單
+    const VISION_MODELS = ['gemini', 'gpt', 'gchat', 'gchat_gpt55'];
+    const supportsVision = VISION_MODELS.includes(aiModel);
 
 
     // 刪除確認視窗
@@ -246,6 +251,7 @@ const CreateUrl = ({ user, isAdmin }) => {
         setPageValue('');
         setOldPageValue('');
         setSelectedFile(null);
+        setAiGenerationId(null);
     };
 
     const handleCloseCreateDialog = () => {
@@ -278,6 +284,11 @@ const CreateUrl = ({ user, isAdmin }) => {
         // 在"修改"模式下，檔案是可選的
         if (selectedFile) {
             formData.append('file', selectedFile);
+        }
+
+        // 若為 AI 生成的頁面，附上 generation_id 以便後端串接日誌
+        if (aiGenerationId) {
+            formData.append('generationId', aiGenerationId);
         }
 
         // 決定要呼叫哪個 API
@@ -455,6 +466,7 @@ const CreateUrl = ({ user, isAdmin }) => {
                             setPageValue(`ai_${timestamp}`);
                             setOldPageValue('');
                             setSelectedFile(file);
+                            setAiGenerationId(data.data.generation_id || null);
 
                             // 開啟上傳視窗確認
                             setOpenUploadDialog(true);
@@ -1247,12 +1259,22 @@ const CreateUrl = ({ user, isAdmin }) => {
                                 aria-label="ai-model"
                                 name="ai-model"
                                 value={aiModel}
-                                onChange={(e) => setAiModel(e.target.value)}
+                                onChange={(e) => {
+                                    const newModel = e.target.value;
+                                    setAiModel(newModel);
+                                    // 切換到不支援圖片的模型時，自動清掉已選的圖以免使用者誤會
+                                    if (!VISION_MODELS.includes(newModel) && aiImage) {
+                                        setAiImage(null);
+                                        enqueueSnackbar('已切換至不支援圖片的模型，附圖已自動移除', { variant: 'info' });
+                                    }
+                                }}
                             >
                                 <FormControlLabel value="gemini" control={<Radio />} label="Gemini (預設)" />
                                 <FormControlLabel value="gpt" control={<Radio />} label="GPT" />
                                 <FormControlLabel value="litellm" control={<Radio />} label="LiteLLM" />
-                                <FormControlLabel value="gchat" control={<Radio />} label="GChat" />
+                                <FormControlLabel value="gchat" control={<Radio />} label="GChat (Gemma-4-31B)" />
+                                <FormControlLabel value="gchat_gptoss" control={<Radio />} label="GChat (GPT-OSS 20B)" />
+                                <FormControlLabel value="gchat_gpt55" control={<Radio />} label="GChat (gpt-5.5)" />
                             </RadioGroup>
                         </FormControl>
 
@@ -1324,7 +1346,7 @@ const CreateUrl = ({ user, isAdmin }) => {
                         <Button
                             variant="outlined"
                             component="label"
-                            disabled={generating}
+                            disabled={generating || !supportsVision}
                             startIcon={<UploadIcon />}
                             fullWidth
                         >
@@ -1340,6 +1362,11 @@ const CreateUrl = ({ user, isAdmin }) => {
                                 }}
                             />
                         </Button>
+                        {!supportsVision && (
+                            <Typography variant="caption" color="text.secondary" sx={{ mt: -1, ml: 1 }}>
+                                此模型不支援圖片輸入（僅 Gemini / GPT / GChat (Gemma-4-31B, gpt-5.5) 可用）
+                            </Typography>
+                        )}
                         {aiImage && (
                             <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mt: 1, p: 1, border: '1px solid #ddd', borderRadius: 1 }}>
                                 <Typography variant="body2" noWrap sx={{ maxWidth: '80%' }}>

@@ -55,6 +55,8 @@ services:
       - ./triggerapp/app/templates:/app/uploads_for_trigger_app_templates
       # 掛載token跟cert的資料夾
       - ./adminapp/backend/certs:/app/backend/certs
+      # 保留 AI 生成日誌
+      - ./adminapp/ai_logs:/app/ai_logs
     depends_on:
       postgres-db:
         condition: service_healthy

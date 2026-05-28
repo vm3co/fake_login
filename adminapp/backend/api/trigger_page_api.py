@@ -4,6 +4,7 @@
 import os
 import shutil
 import re
+import time
 from pathlib import Path
 from fastapi import (
     APIRouter, 
@@ -20,6 +21,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, PlainTextResponse, FileResponse, StreamingResponse
 import asyncio
 import json
+from typing import AsyncIterator, Tuple
 from openai import OpenAI
 import google.generativeai as genai
 import base64
@@ -34,6 +36,7 @@ from sqlalchemy import select, update, delete, insert
 from backend.services.db_user import DBUser
 from backend.api.user_api import get_current_user
 from backend.services.design_generator import get_design_context
+from backend.services import ai_log_manager as ai_log
 
 logger = Logger().get_logger()
 
@@ -196,16 +199,17 @@ def get_router(db_user: DBUser):
         pageLabel: str = Form(..., description="顯示在選項中的名稱 (e.g., '我的新頁面')"),
         pageValue: str = Depends(validate_page_value), # 使用 Depends 來驗證
         file: UploadFile = File(..., description="要上傳的 HTML 模板檔案"),
+        generationId: str = Form(None, description="若由 AI 生成，請帶上對應的 generation_id 以串接日誌"),
         current_user: dict = Depends(get_current_user)
     ):
         """
         上傳並儲存新頁面。
         """
         user_uuid = current_user.get("acct_uuid")
-        
+
         # 檢查是否已存在 (Global Check)
         exists = await db_controller.get_one(TriggerPage, {"page_value": pageValue})
-        
+
         if exists:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -240,10 +244,25 @@ def get_router(db_user: DBUser):
             # [復原] 如果 DB 操作失敗，刪除剛剛上傳的檔案
             if save_path.exists():
                 save_path.unlink()
+            if generationId:
+                ai_log.write_upload_event(generationId, {
+                    "user_uuid": user_uuid,
+                    "page_label": pageLabel,
+                    "page_value": pageValue,
+                    "error": f"資料庫寫入失敗: {str(e)}",
+                }, success=False)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"寫入資料庫失敗: {str(e)}"
             )
+
+        if generationId:
+            ai_log.write_upload_event(generationId, {
+                "user_uuid": user_uuid,
+                "page_label": pageLabel,
+                "page_value": pageValue,
+                "saved_file": str(save_path.resolve()),
+            })
 
         return {
             "status": "success",
@@ -985,10 +1004,15 @@ def get_router(db_user: DBUser):
             logger.error(f"Gemini 生成失敗: {e}")
             raise HTTPException(status_code=500, detail=f"Gemini 生成失敗: {str(e)}")
 
-    async def call_llm(model: str, system_instructions: str, user_prompt: str, ref_url: str = None, image: UploadFile = None, screenshot_b64: str = None) -> str:
+    async def call_llm(model: str, system_instructions: str, user_prompt: str, ref_url: str = None, image: UploadFile = None, screenshot_b64: str = None, generation_id: str = None) -> AsyncIterator[Tuple[str, str]]:
         """
-        統一呼叫各家 LLM 模型的內部入口函式
+        統一呼叫各家 LLM 模型的內部入口函式（async generator）
         支援：gemini, gpt, litellm(地端), gchat(地端)
+
+        yield ("chunk", delta_text): 每收到一段 token 時發出
+        yield ("done", full_cleaned_text): 全部收完、清理後發出
+
+        使用 stream=True 避免 Cloudflare 524 timeout（origin 長時間靜止問題）。
         """
         # ==========================================
         # 1. 準備通用的使用者提示詞 (Prompt Suffix)
@@ -996,15 +1020,13 @@ def get_router(db_user: DBUser):
         prompt_suffix = f"使用者的需求：{user_prompt}"
         if ref_url:
             prompt_suffix += f"\n\n[參考網址]\n使用者提供了一個參考網址：{ref_url}\n請參考該網站的設計。"
-        
-        generated_text = ""
 
         # ==========================================
         # 2. 依據模型分流執行
         # ==========================================
         if model == "gemini":
             # ----------------------------------
-            # [A] Gemini 專屬邏輯 (Google SDK)
+            # [A] Gemini 專屬邏輯 (Google SDK, async stream)
             # ----------------------------------
             gemini_api_key = os.getenv("GEMINI_APY_KEY")
             if not gemini_api_key:
@@ -1018,21 +1040,30 @@ def get_router(db_user: DBUser):
                 pil_image = Image.open(io.BytesIO(file_bytes))
                 contents.append(pil_image)
             if screenshot_b64:
-                # remove data:image/png;base64,
                 header, encoded = screenshot_b64.split(",", 1)
                 img_data = base64.b64decode(encoded)
                 pil_image = Image.open(io.BytesIO(img_data))
                 contents.append(pil_image)
-            
-            logger.info(f"[{model}] 開始呼叫模型 gemini-2.5-flash...")
-            response = await genai_model.generate_content_async(contents)
-            generated_text = response.text
+
+            logger.info(f"[{model}] 開始呼叫模型 gemini-2.5-flash (streaming)...")
+            start_ts = time.time()
+            generated_text = ""
+            response = await genai_model.generate_content_async(contents, stream=True)
+            async for chunk in response:
+                if chunk.text:
+                    generated_text += chunk.text
+                    yield ("chunk", chunk.text)
+            end_ts = time.time()
+
+            if generation_id:
+                ai_log.write_section(generation_id, f"[{model}] Model Response (Content)", generated_text)
+                ai_log.write_timing(generation_id, f"[{model}] LLM Call", start_ts, end_ts)
 
         else:
             # ----------------------------------
-            # [B] OpenAI 相容模型邏輯 (GPT, LiteLLM, GChat)
+            # [B] OpenAI 相容模型邏輯 (GPT, LiteLLM, GChat) — AsyncOpenAI + stream=True
             # ----------------------------------
-            
+
             # (1) 基礎參數初始化
             base_url = None
             api_key = None
@@ -1055,26 +1086,33 @@ def get_router(db_user: DBUser):
                 model_name = "gemma-27b"
                 is_text_only = True
 
-            elif model == "gchat":
+            elif model.startswith("gchat"):
                 cf_access_token = os.getenv("CF_ACCESS_TOKEN")
                 if not cf_access_token:
                     raise Exception("未設定 CF_ACCESS_TOKEN 環境變數")
-                
-                api_key = "dummy_key"  # OpenAI client 需要非空字串
+
+                # gchat sub-model 對照表：(送進 API 的 model_name, 是否支援視覺輸入)
+                GCHAT_MODELS = {
+                    "gchat":        ("Gemma-4-31B", True),
+                    "gchat_gptoss": ("gpt-oss-20b", False),
+                    "gchat_gpt55":  ("gpt-5.5",     True),
+                }
+
+                api_key = "dummy_key"
                 base_url = "https://chatapi.acsi-lab.dev/v1"
-                model_name = "Gemma-4-31B"
+                model_name, supports_vision = GCHAT_MODELS.get(model, ("Gemma-4-31B", False))
                 headers["CF-Access-Token"] = cf_access_token
                 headers["User-Agent"] = "curl/8.5.0"
                 event_hooks["request"] = [force_ua]
                 verify_cert = False
-                is_text_only = True
+                is_text_only = not supports_vision
 
             else:
                 api_key = os.getenv("OPENAI_API_KEY")
                 if not api_key:
                     raise Exception("未設定 OPENAI_API_KEY")
 
-            # (3) 建立共用的 HTTP 與 OpenAI Client
+            # (3) 建立 SYNC HTTP Client（與原始碼相同設定，確保連線穩定）
             http_client = httpx.Client(
                 verify=verify_cert,
                 headers=headers,
@@ -1082,8 +1120,8 @@ def get_router(db_user: DBUser):
                 timeout=httpx.Timeout(300.0)
             )
 
-            client = OpenAI(api_key=api_key, base_url=base_url, http_client=http_client)
-            
+            sync_client = OpenAI(api_key=api_key, base_url=base_url, http_client=http_client)
+
             # (4) 準備 Request 內容 (區分純文字與多模態)
             if is_text_only:
                 user_content = prompt_suffix
@@ -1094,7 +1132,7 @@ def get_router(db_user: DBUser):
                     b64 = base64.b64encode(file_bytes).decode('utf-8')
                     mime_type = image.content_type or "image/jpeg"
                     user_content.append({"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64}"}})
-                
+
                 if screenshot_b64:
                     user_content.append({"type": "image_url", "image_url": {"url": screenshot_b64}})
 
@@ -1102,43 +1140,59 @@ def get_router(db_user: DBUser):
                 {"role": "system", "content": system_instructions},
                 {"role": "user", "content": user_content}
             ]
-            
-            # (5) 發送請求
-            logger.info(f"[{model}] 開始呼叫模型 {model_name}...")
-            response = client.chat.completions.create(model=model_name, messages=messages, stream=False)
-            
-            # (6) 解析回傳結果 (地端 Proxy 防呆處理)
-            if hasattr(response, "choices"):
-                msg = response.choices[0].message
-                generated_text = msg.content
-                
-                if hasattr(msg, "reasoning_content") and msg.reasoning_content:
-                    logger.info(f"\n{'='*20} [{model}] 模型思考過程 (Reasoning) {'='*20}\n{msg.reasoning_content}\n{'='*60}")
-                
-                logger.info(f"\n{'='*20} [{model}] 完整原始回傳內容 (Content) {'='*20}\n{generated_text}\n{'='*60}")
-                
-            elif isinstance(response, dict):
-                if "choices" in response:
-                    generated_text = response["choices"][0]["message"]["content"]
-                    logger.info(f"\n{'='*20} [{model}] 完整原始回傳內容 (Dict) {'='*20}\n{generated_text}\n{'='*60}")
-                else:
-                    raise Exception(f"伺服器回傳了異常的字典結構: {json.dumps(response, ensure_ascii=False)}")
-            elif isinstance(response, str):
+
+            # (5) 用 thread pool + queue 執行 sync streaming
+            # sync stream=True 讓 Cloudflare 看到資料流動（避免 524）
+            # thread pool 讓 event loop 不被阻塞
+            logger.info(f"[{model}] 開始呼叫模型 {model_name} (sync streaming via thread)...")
+            start_ts = time.time()
+            generated_text = ""
+            reasoning_text = ""
+            loop = asyncio.get_running_loop()
+            queue: asyncio.Queue = asyncio.Queue()
+
+            def _produce():
                 try:
-                    parsed = json.loads(response)
-                    if isinstance(parsed, dict) and "choices" in parsed:
-                        generated_text = parsed["choices"][0]["message"]["content"]
-                    else:
-                        raise Exception(f"伺服器回傳了異常的 JSON 字串: {response}")
-                except json.JSONDecodeError:
-                    raise Exception(f"被伺服器阻擋或回傳了非 JSON 純文字: {response}")
-            else:
-                raise Exception(f"未知的回傳格式 (type: {type(response)}): {response}")
+                    with sync_client.chat.completions.create(
+                        model=model_name, messages=messages, stream=True
+                    ) as resp:
+                        for _chunk in resp:
+                            _delta = _chunk.choices[0].delta if _chunk.choices else None
+                            if _delta and _delta.content:
+                                loop.call_soon_threadsafe(queue.put_nowait, ("chunk", _delta.content))
+                            if _delta and hasattr(_delta, "reasoning_content") and _delta.reasoning_content:
+                                loop.call_soon_threadsafe(queue.put_nowait, ("reasoning", _delta.reasoning_content))
+                except Exception as _e:
+                    loop.call_soon_threadsafe(queue.put_nowait, ("error", str(_e)))
+                finally:
+                    loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
+
+            loop.run_in_executor(None, _produce)
+
+            while True:
+                _kind, _payload = await queue.get()
+                if _kind == "chunk":
+                    generated_text += _payload
+                    yield ("chunk", _payload)
+                elif _kind == "reasoning":
+                    reasoning_text += _payload
+                elif _kind == "error":
+                    raise Exception(_payload)
+                elif _kind == "done":
+                    break
+            end_ts = time.time()
+
+            # (6) 收完後寫 log
+            if reasoning_text and generation_id:
+                ai_log.write_section(generation_id, f"[{model}] Model Reasoning", reasoning_text)
+            if generation_id:
+                ai_log.write_section(generation_id, f"[{model}] Model Response (Content)", generated_text)
+                ai_log.write_timing(generation_id, f"[{model}] LLM Call", start_ts, end_ts)
 
         # ==========================================
-        # 3. 統一清理與回傳結果
+        # 3. 統一清理與回傳最終結果
         # ==========================================
-        return generated_text.replace("```html", "").replace("```", "").strip()
+        yield ("done", generated_text.replace("```html", "").replace("```", "").strip())
 
     @router.post("/generate_with_ai_stream", summary="使用 AI 生成頁面（SSE 串流進度）", tags=["trigger page"])
     async def generate_page_with_ai_stream(
@@ -1150,6 +1204,21 @@ def get_router(db_user: DBUser):
         useDesign: bool = Form(False, description="是否啟用 DESIGN.md 分析"),
         current_user: dict = Depends(get_current_user)
     ):
+        generation_id = ai_log.new_generation_id()
+        ai_log.write_header(generation_id, {
+            "user_uuid": current_user.get("acct_uuid"),
+            "model": aiModel,
+            "page_type": pageType,
+            "use_design": useDesign,
+            "ref_url": refUrl or "",
+            "has_image": bool(image),
+        })
+        base_system_prompt = get_system_prompt(pageType)
+        ai_log.write_section(generation_id, "System Prompt", base_system_prompt)
+        ai_log.write_section(generation_id, "User Prompt", prompt)
+        if refUrl:
+            ai_log.write_section(generation_id, "Reference URL", refUrl)
+
         async def event_generator():
             def sse_event(event_type: str, data: dict) -> str:
                 return f"data: {json.dumps({'type': event_type, 'data': data})}\n\n"
@@ -1159,44 +1228,73 @@ def get_router(db_user: DBUser):
                 # 階段 1：設計解析
                 if refUrl and useDesign:
                     yield sse_event("progress", {"stage": "extracting", "message": "正在解析目標網站設計風格..."})
-                    
+
                     try:
                         design_context = await get_design_context(refUrl)
-                        yield sse_event("progress", {
-                            "stage": "extracted",
-                            "message": f"設計解析完成",
-                            "source": design_context.get("source")
-                        })
                     except Exception as e:
                         logger.error(f"提取設計解析失敗: {e}")
-                        yield sse_event("progress", {
-                            "stage": "extracted",
-                            "message": f"設計解析失敗，改用預設規範",
-                            "source": "fallback"
-                        })
-                
+                        ai_log.write_section(generation_id, "Design Context (useDesign) Error", str(e))
+                        design_context = {}
+
+                    # [重要] 先寫 log 再 yield SSE，避免前端中斷（AbortController）時
+                    # CancelledError 跳出導致 cache hit / extracted 的內容沒被記錄
+                    if design_context.get("design_md"):
+                        ai_log.write_section(
+                            generation_id,
+                            "Design Context (useDesign)",
+                            f"source: {design_context.get('source')}\n\n{design_context['design_md']}"
+                        )
+
+                    source = design_context.get("source")
+                    yield sse_event("progress", {
+                        "stage": "extracted",
+                        "message": "設計解析完成" if source and source != "fallback" else "設計解析失敗，改用預設規範",
+                        "source": source or "fallback"
+                    })
+
                 # 階段 2：LLM 生成
                 yield sse_event("progress", {"stage": "generating", "message": "正在使用 AI 生成網頁程式碼..."})
-                
-                system_instructions = get_system_prompt(pageType)
+
+                system_instructions = base_system_prompt
                 if refUrl and design_context.get("design_md"):
                     system_instructions += f"\n\n<design_system>\n{design_context['design_md']}\n</design_system>"
                     system_instructions += "\n\n[嚴格要求] 你必須完全遵守上方 <design_system> 中的設計規範來撰寫HTML/CSS。"
-                
-                html_content = await call_llm(
+
+                html_content = ""
+                char_count = 0
+                last_emitted = 0
+                async for kind, payload in call_llm(
                     model=aiModel,
                     system_instructions=system_instructions,
                     user_prompt=prompt,
                     ref_url=refUrl,
                     image=image,
-                    screenshot_b64=design_context.get("screenshot_b64") if refUrl else None
-                )
-                
+                    screenshot_b64=design_context.get("screenshot_b64") if refUrl else None,
+                    generation_id=generation_id,
+                ):
+                    if kind == "chunk":
+                        char_count += len(payload)
+                        # 每累積 ~200 字元送一次 progress，避免 SSE flood
+                        if char_count - last_emitted >= 200:
+                            yield sse_event("progress", {
+                                "stage": "generating",
+                                "message": f"已生成 {char_count} 字元..."
+                            })
+                            last_emitted = char_count
+                    elif kind == "done":
+                        html_content = payload
+
                 # 階段 3：完成
-                yield sse_event("complete", {"stage": "done", "message": "生成完成！", "html": html_content})
-                
+                yield sse_event("complete", {
+                    "stage": "done",
+                    "message": "生成完成！",
+                    "html": html_content,
+                    "generation_id": generation_id,
+                })
+
             except Exception as e:
                 logger.error(f"生成流程失敗: {e}")
+                ai_log.write_section(generation_id, "Errors", str(e))
                 yield sse_event("error", {"stage": "error", "message": f"處理失敗: {str(e)}"})
 
         return StreamingResponse(
