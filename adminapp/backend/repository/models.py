@@ -174,6 +174,17 @@ class LoginLog(Base):
     details = Column(Text)
     create_time = Column(TIMESTAMP, server_default=func.now())
 
+class Domain(Base):
+    __tablename__ = "domains"
+
+    id = Column(Integer, primary_key=True, index=True)
+    domain = Column(String(255), unique=True, nullable=False, index=True)
+    label = Column(Text)
+    source_company = Column(Text, nullable=True)
+    notes = Column(Text, nullable=True)
+    is_active = Column(Boolean, default=True, nullable=False)
+    create_time = Column(TIMESTAMP, server_default=func.now())
+
 class TriggerPage(Base):
     __tablename__ = "trigger_pages"
 
@@ -182,6 +193,7 @@ class TriggerPage(Base):
     page_label = Column(Text, nullable=False)
     owner_uuid = Column(String(36), index=True)
     page_type = Column(Text, default='custom')
+    allowed_domain_id = Column(Integer, ForeignKey("domains.id"), nullable=True, index=True)
     create_time = Column(TIMESTAMP, server_default=func.now())
 
 class SystemConfig(Base):

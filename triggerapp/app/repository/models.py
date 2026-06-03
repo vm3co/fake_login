@@ -1,8 +1,31 @@
 from sqlalchemy import (
-    Column, Integer, String, Boolean, BigInteger, Text
+    Column, Integer, String, Boolean, BigInteger, Text, ForeignKey, TIMESTAMP
 )
+from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import ARRAY as PG_ARRAY
 from app.repository.database import Base
+
+
+class Domain(Base):
+    __tablename__ = "domains"
+
+    id = Column(Integer, primary_key=True, index=True)
+    domain = Column(String(255), unique=True, nullable=False, index=True)
+    label = Column(Text)
+    is_active = Column(Boolean, default=True, nullable=False)
+    create_time = Column(TIMESTAMP, server_default=func.now())
+
+
+class TriggerPage(Base):
+    __tablename__ = "trigger_pages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    page_value = Column(String(255), unique=True, nullable=False, index=True)
+    page_label = Column(Text, nullable=False)
+    owner_uuid = Column(String(36), index=True)
+    page_type = Column(Text, default='custom')
+    allowed_domain_id = Column(Integer, ForeignKey("domains.id"), nullable=True, index=True)
+    create_time = Column(TIMESTAMP, server_default=func.now())
 
 class SendTask(Base):
     __tablename__ = "sendtasks"

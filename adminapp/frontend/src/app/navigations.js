@@ -12,6 +12,7 @@ const navigations = [
       { name: "使用者", iconText: "AC", icon: "account_circle", path: "/admin/accts" },
       { name: "登入登出紀錄", iconText: "LOG", icon: "history", path: "/admin/logs" },
       { name: "更新公告", iconText: "AN", icon: "campaign", path: "/admin/announcement" },
+      { name: "Domain 管理", iconText: "DM", icon: "language", path: "/admin/domains" },
       // { name: "Forgot Password", iconText: "FP", path: "/session/forgot-password" },
       // { name: "Error", iconText: "404", path: "/session/404" }
     ]

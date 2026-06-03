@@ -24,7 +24,7 @@ from backend.services.log_manager import Logger
 from backend.api.data_api import get_router as log_router
 from backend.api.user_api import get_router as user_router
 from backend.api.trigger_page_api import get_router as page_router
-from backend.api import notification_api, job_api, create_task_api
+from backend.api import notification_api, job_api, create_task_api, domain_api
 
 from backend.workers.sync_worker import SyncWorker
 from backend.workers.archiving_worker import ArchivingWorker
@@ -254,6 +254,7 @@ app.include_router(page_router(db_user), prefix="/api/trigger_page")
 app.include_router(notification_api.router, prefix="/api")
 app.include_router(job_api.router, prefix="/api")
 app.include_router(create_task_api.router, prefix="/api")
+app.include_router(domain_api.router, prefix="/api/domain")
 
 # 設定模板目錄：掛載 React 打包好的靜態檔案（注意路徑）
 FRONTEND_DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"

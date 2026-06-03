@@ -1,6 +1,8 @@
 import os
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
+from backend.repository import models  # Import models to ensure they are registered with Base
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -45,8 +47,22 @@ async def get_db():
 
 async def init_db():
     """Initializes the database by creating all tables defined in models."""
-    from backend.repository import models  # Import models to ensure they are registered with Base
     async with engine.begin() as conn:
         # await conn.run_sync(Base.metadata.drop_all) # Uncomment to reset DB
         await conn.run_sync(Base.metadata.create_all)
+        # 補上既有資料表新增欄位 (idempotent)
+        await conn.execute(text(
+            "ALTER TABLE trigger_pages "
+            "ADD COLUMN IF NOT EXISTS allowed_domain_id INTEGER REFERENCES domains(id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_trigger_pages_allowed_domain_id "
+            "ON trigger_pages(allowed_domain_id)"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE domains ADD COLUMN IF NOT EXISTS source_company TEXT"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE domains ADD COLUMN IF NOT EXISTS notes TEXT"
+        ))
 

@@ -3,6 +3,7 @@ from datetime import datetime
 import csv
 import os
 import json
+from urllib.parse import urlparse
 from app.services.redis_client import RedisClient
 from pathlib import Path
 from typing import Dict, Any
@@ -12,6 +13,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, Response, RedirectResponse
 
 from app.services.log_manager import Logger
+from app.repository.db_controller import db_controller
+from app.repository.models import TriggerPage, Domain
 
 
 redis_client = RedisClient()
@@ -21,6 +24,67 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 logger = Logger().get_logger()
 
 router = APIRouter()
+
+
+def _request_host(request: Request) -> str:
+    """從 request 取出 host (不含 port)，優先吃 X-Forwarded-Host (nginx 帶上)。"""
+    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
+    return host.split(":")[0].strip().lower()
+
+
+def _get_default_host() -> str:
+    """從 TRIGGER_APP_URL 解析 hostname (例如 http://selink.test.xyz → selink.test.xyz)。"""
+    raw = os.getenv("TRIGGER_APP_URL", "")
+    if not raw:
+        return ""
+    try:
+        return (urlparse(raw).hostname or "").lower()
+    except Exception:
+        return ""
+
+
+async def _enforce_page_domain(request: Request, page_name: str):
+    """檢查請求 Host 是否符合 page 綁定的 domain。
+
+    - page 在 DB 不存在 (e.g. from-url 等系統路由) → 通過
+    - page 已綁定 → host 必須等於綁的 domain，否則 404
+    - page 未綁定 → host 必須等於 TRIGGER_APP_URL 的 hostname，否則 404
+    - TRIGGER_APP_URL 未設定時，未綁定 page 通過 (避免整套打掛)
+    """
+    req_host = _request_host(request)
+    try:
+        page = await db_controller.get_one(TriggerPage, {"page_value": page_name})
+    except Exception as e:
+        logger.error(f"查詢 TriggerPage 失敗 ({page_name}): {e}")
+        return  # DB 故障時不阻擋，避免一個 DB blip 把所有頁面打掛
+    if page is None:
+        logger.info(f"[domain-check] page='{page_name}' 不在 DB，pass (host={req_host})")
+        return
+
+    # 決定該 page 應該被哪個 host 訪問
+    if page.allowed_domain_id is not None:
+        try:
+            domain = await db_controller.get_one(Domain, {"id": page.allowed_domain_id})
+        except Exception as e:
+            logger.error(f"查詢 Domain 失敗 (id={page.allowed_domain_id}): {e}")
+            return
+        if domain is None:
+            logger.warning(f"[domain-check] page='{page_name}' 綁的 domain id={page.allowed_domain_id} 已不存在，pass")
+            return
+        expected_host = domain.domain.lower()
+        source = "bound"
+    else:
+        expected_host = _get_default_host()
+        if not expected_host:
+            logger.info(f"[domain-check] page='{page_name}' 未綁 + TRIGGER_APP_URL 未設定，pass")
+            return
+        source = "default(TRIGGER_APP_URL)"
+
+    if req_host != expected_host:
+        logger.info(f"[domain-check] BLOCK page='{page_name}' {source}='{expected_host}' req_host='{req_host}' → 404")
+        raise HTTPException(status_code=404, detail="Not Found")
+    logger.info(f"[domain-check] OK page='{page_name}' host='{req_host}' ({source})")
+
 
 async def get_request_info(request: Request) -> Dict[str, Any]:
     """
@@ -41,8 +105,10 @@ templates_dir = BASE_DIR / "templates"
 templates = Jinja2Templates(directory=templates_dir)
 
 @router.get("/")
-async def index(request: Request):
-    return templates.TemplateResponse(request=request, name="index.html", context={"request": request, "title": "假登入網頁"})
+# async def index(request: Request):
+#     return templates.TemplateResponse(request=request, name="index.html", context={"request": request, "title": "假登入網頁"})
+async def index():
+    return RedirectResponse(url="https://www.google.com")
 
 @router.get("/warning")
 async def warning_page(request: Request):
@@ -52,6 +118,8 @@ async def warning_page(request: Request):
 
 
 async def _shared_project_detail(request: Request, page_name: str, project_id: str, url: str, event_type: str):
+    # 軟隔離：若 page 綁定 domain，僅該 domain 可訪問
+    await _enforce_page_domain(request, page_name)
     # 統一先進行紀錄
     request_info = await get_request_info(request)
     now = int(datetime.now().timestamp())

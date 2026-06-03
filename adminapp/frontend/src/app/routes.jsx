@@ -24,6 +24,8 @@ const Accts = Loadable(lazy(() => import("app/views/admin/UserListPage")));
 const LoginLogs = Loadable(lazy(() => import("app/views/admin/LoginLogs")));
 // ADMIN PAGE → announcement page
 const AnnouncementPage = Loadable(lazy(() => import("app/views/admin/AnnouncementPage")));
+// ADMIN PAGE → domain management
+const DomainListPage = Loadable(lazy(() => import("app/views/admin/DomainListPage")));
 
 // CUSTOMER PAGE
 const Customer = Loadable(lazy(() => import("app/views/customer/Customer")));
@@ -52,6 +54,8 @@ const routes = [
       { path: "/admin/logs", element: <LoginLogs />, auth: authRoles.admin },
       // admin page → announcement route
       { path: "/admin/announcement", element: <AnnouncementPage />, auth: authRoles.admin },
+      // admin page → domain management route
+      { path: "/admin/domains", element: <DomainListPage />, auth: authRoles.admin },
     ]
   },
 

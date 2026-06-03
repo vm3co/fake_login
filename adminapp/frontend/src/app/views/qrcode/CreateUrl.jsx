@@ -32,6 +32,10 @@ import {
     Step,
     StepLabel,
     Switch,
+    Select,
+    MenuItem,
+    InputLabel,
+    Chip,
 } from '@mui/material';
 import ContentCopyIcon from '@mui/icons-material/ContentCopy';
 import UploadIcon from '@mui/icons-material/Upload';
@@ -54,6 +58,9 @@ const CreateUrl = ({ user, isAdmin }) => {
     const [loadingOptions, setLoadingOptions] = useState(true);
     const [loadError, setLoadError] = useState(null);
 
+    // domain 清單
+    const [domainList, setDomainList] = useState([]);
+
     // 彈跳視窗的 State
     const [openUploadDialog, setOpenUploadDialog] = useState(false);
     const [editMode, setEditMode] = useState(null);
@@ -62,6 +69,7 @@ const CreateUrl = ({ user, isAdmin }) => {
     const [pageValue, setPageValue] = useState('');
     const [selectedFile, setSelectedFile] = useState(null);
     const [aiGenerationId, setAiGenerationId] = useState(null);
+    const [uploadAllowedDomainId, setUploadAllowedDomainId] = useState('');
 
     // 自訂頁面彈跳視窗 State
     const [openCreateDialog, setOpenCreateDialog] = useState(false);
@@ -76,6 +84,7 @@ const CreateUrl = ({ user, isAdmin }) => {
     const [createBtnText, setCreateBtnText] = useState('登入');
     const [createTemplateType, setCreateTemplateType] = useState('test');
     const [createSvg, setCreateSvg] = useState('');
+    const [createAllowedDomainId, setCreateAllowedDomainId] = useState('');
 
     // AI 生成彈跳視窗 State
     const [openAiDialog, setOpenAiDialog] = useState(false);
@@ -114,10 +123,14 @@ const CreateUrl = ({ user, isAdmin }) => {
         setLoadingOptions(true);
         setLoadError(null);
         try {
-            // 並行請求 config 和 pageOptions
-            const [configRes, pagesRes] = await Promise.all([
+            const accessToken = window.localStorage.getItem("accessToken");
+            // 並行請求 config / pageOptions / domain list
+            const [configRes, pagesRes, domainsRes] = await Promise.all([
                 fetch('/api/trigger_page/config'),
-                fetch('/api/trigger_page/get')
+                fetch('/api/trigger_page/get'),
+                fetch('/api/domain/list', {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                })
             ]);
 
             if (!pagesRes.ok) {
@@ -126,6 +139,13 @@ const CreateUrl = ({ user, isAdmin }) => {
 
             const pagesData = await pagesRes.json();
             setPageOptions(pagesData);
+
+            if (domainsRes.ok) {
+                const domainsData = await domainsRes.json();
+                setDomainList(domainsData.filter(d => d.is_active));
+            } else {
+                setDomainList([]);
+            }
 
             if (configRes.ok) {
                 const configData = await configRes.json();
@@ -150,36 +170,47 @@ const CreateUrl = ({ user, isAdmin }) => {
         }
     };
 
+    // 根據 page 綁定的 domain 決定 base URL
+    const resolveBaseUrlForOption = (option) => {
+        if (option && option.allowed_domain) {
+            const proto = window.location.protocol || 'https:';
+            return `${proto}//${option.allowed_domain}`;
+        }
+        return triggerBaseUrl || `${window.location.origin}/trigger`;
+    };
+
     useEffect(() => {
         fetchPageOptions();
     }, []);
 
     const handleConfirm = () => {
-        // 確保有值，若無則再次 fallback
-        const baseUrl = triggerBaseUrl || `${window.location.origin}/trigger`;
-
         if (!selectedOption) {
             enqueueSnackbar('請先選擇一個選項', { variant: 'warning' });
-        } else {
-            let urlSuffix = "";
-            let qrSuffix = "";
-
-            if (redirectOption === 'custom') {
-                if (!customRedirectUrl) {
-                    enqueueSnackbar('請輸入自訂連結 URL', { variant: 'warning' });
-                    setOpenRedirectDialog(true);
-                    return;
-                }
-                urlSuffix = `?redirect_url=${encodeURIComponent(customRedirectUrl)}`;
-                qrSuffix = `&redirect_url=${encodeURIComponent(customRedirectUrl)}`;
-            } else if (redirectOption === 'self') {
-                urlSuffix = `?redirect_url=self`;
-                qrSuffix = `&redirect_url=self`;
-            }
-
-            setOutputTextUrl(`${baseUrl}/page/${selectedOption}/99999_99999${urlSuffix}`)
-            setOutputTextQrcode(`${baseUrl}/qrcode/${selectedOption}/uuid?uuid=99999_99999${qrSuffix}`);
+            return;
         }
+        // 根據選到的 page 找出對應 domain；QR 圖仍由系統內部 trigger app 產生 (保留預設 base)
+        const selectedPage = pageOptions.find(o => o.value === selectedOption);
+        const baseUrl = resolveBaseUrlForOption(selectedPage);
+        const qrBaseUrl = triggerBaseUrl || `${window.location.origin}/trigger`;
+
+        let urlSuffix = "";
+        let qrSuffix = "";
+
+        if (redirectOption === 'custom') {
+            if (!customRedirectUrl) {
+                enqueueSnackbar('請輸入自訂連結 URL', { variant: 'warning' });
+                setOpenRedirectDialog(true);
+                return;
+            }
+            urlSuffix = `?redirect_url=${encodeURIComponent(customRedirectUrl)}`;
+            qrSuffix = `&redirect_url=${encodeURIComponent(customRedirectUrl)}`;
+        } else if (redirectOption === 'self') {
+            urlSuffix = `?redirect_url=self`;
+            qrSuffix = `&redirect_url=self`;
+        }
+
+        setOutputTextUrl(`${baseUrl}/page/${selectedOption}/99999_99999${urlSuffix}`)
+        setOutputTextQrcode(`${qrBaseUrl}/qrcode/${selectedOption}/uuid?uuid=99999_99999${qrSuffix}`);
     };
 
     const handleCopyUrl = async () => {
@@ -216,6 +247,7 @@ const CreateUrl = ({ user, isAdmin }) => {
             setPageLabel(option.label);
             setPageValue(option.value);
             setOldPageValue(option.value);
+            setUploadAllowedDomainId(option.allowed_domain_id ?? '');
             setOpenUploadDialog(true); // Only open regular upload/edit dialog
         } else {
             // Only for upload new file
@@ -223,6 +255,7 @@ const CreateUrl = ({ user, isAdmin }) => {
             setPageLabel('');
             setPageValue('');
             setOldPageValue('');
+            setUploadAllowedDomainId('');
             setOpenUploadDialog(true);
         }
         setSelectedFile(null);
@@ -240,6 +273,7 @@ const CreateUrl = ({ user, isAdmin }) => {
         setCreateBtnText('登入');
         setCreateTemplateType('test');
         setCreateSvg('');
+        setCreateAllowedDomainId('');
         setOpenCreateDialog(true);
     }
 
@@ -252,6 +286,7 @@ const CreateUrl = ({ user, isAdmin }) => {
         setOldPageValue('');
         setSelectedFile(null);
         setAiGenerationId(null);
+        setUploadAllowedDomainId('');
     };
 
     const handleCloseCreateDialog = () => {
@@ -280,6 +315,7 @@ const CreateUrl = ({ user, isAdmin }) => {
         formData.append('pageLabel', pageLabel);
         formData.append('pageValue', pageValue);
         formData.append('oldPageValue', oldPageValue);
+        formData.append('allowedDomainId', uploadAllowedDomainId === '' ? '' : String(uploadAllowedDomainId));
 
         // 在"修改"模式下，檔案是可選的
         if (selectedFile) {
@@ -339,6 +375,7 @@ const CreateUrl = ({ user, isAdmin }) => {
         formData.append('btnText', createBtnText);
         formData.append('templateType', createTemplateType);
         formData.append('svgContent', createSvg);
+        formData.append('allowedDomainId', createAllowedDomainId === '' ? '' : String(createAllowedDomainId));
 
         try {
             const accessToken = window.localStorage.getItem("accessToken");
@@ -760,10 +797,19 @@ const CreateUrl = ({ user, isAdmin }) => {
                                                                             <Typography sx={{ flexGrow: 1, ml: 1, fontWeight: 500 }}>
                                                                                 {option.label}
                                                                             </Typography>
+                                                                            {option.allowed_domain && (
+                                                                                <Chip
+                                                                                    label={option.allowed_domain}
+                                                                                    size="small"
+                                                                                    color="primary"
+                                                                                    variant="outlined"
+                                                                                    sx={{ mr: 1 }}
+                                                                                />
+                                                                            )}
                                                                             <Stack direction="row" spacing={0.5}>
                                                                                 <Button
                                                                                     component={Link}
-                                                                                    href={baseUrl + '/page/' + option.value + '/test'}
+                                                                                    href={resolveBaseUrlForOption(option) + '/page/' + option.value + '/test'}
                                                                                     target="_blank"
                                                                                     rel="noopener noreferrer"
                                                                                     variant="outlined"
@@ -974,6 +1020,25 @@ const CreateUrl = ({ user, isAdmin }) => {
                             onChange={(e) => setPageValue(e.target.value.toLowerCase().trim())}
                         // disabled={!!editMode} // 修改時，Value (主鍵) 不可變
                         />
+                        <FormControl fullWidth margin="dense">
+                            <InputLabel id="upload-domain-label">綁定網域 (Domain)</InputLabel>
+                            <Select
+                                labelId="upload-domain-label"
+                                label="綁定網域 (Domain)"
+                                value={uploadAllowedDomainId}
+                                onChange={(e) => setUploadAllowedDomainId(e.target.value)}
+                            >
+                                <MenuItem value="">
+                                    <em>使用預設 (TRIGGER_APP_URL)</em>
+                                </MenuItem>
+                                {domainList.map((d) => (
+                                    <MenuItem key={d.id} value={d.id}>{d.label || d.domain} ({d.domain})</MenuItem>
+                                ))}
+                            </Select>
+                            <Typography variant="caption" color="text.secondary" sx={{ ml: 1.5, mt: 0.5 }}>
+                                綁定後，此頁面只接受該網域的請求；其他網域訪問會 404
+                            </Typography>
+                        </FormControl>
                         <Button
                             variant="outlined"
                             component="label"
@@ -1027,6 +1092,25 @@ const CreateUrl = ({ user, isAdmin }) => {
                             helperText="網址 ID，只能包含小寫英文、數字、底線"
                             fullWidth
                         />
+                        <FormControl fullWidth>
+                            <InputLabel id="create-domain-label">綁定網域 (Domain)</InputLabel>
+                            <Select
+                                labelId="create-domain-label"
+                                label="綁定網域 (Domain)"
+                                value={createAllowedDomainId}
+                                onChange={(e) => setCreateAllowedDomainId(e.target.value)}
+                            >
+                                <MenuItem value="">
+                                    <em>使用預設 (TRIGGER_APP_URL)</em>
+                                </MenuItem>
+                                {domainList.map((d) => (
+                                    <MenuItem key={d.id} value={d.id}>{d.label || d.domain} ({d.domain})</MenuItem>
+                                ))}
+                            </Select>
+                            <Typography variant="caption" color="text.secondary" sx={{ ml: 1.5, mt: 0.5 }}>
+                                綁定後，此頁面只接受該網域的請求；其他網域訪問會 404
+                            </Typography>
+                        </FormControl>
                         <FormControl component="fieldset">
                             <Typography variant="body1" gutterBottom>選擇版型：</Typography>
                             <RadioGroup

@@ -30,7 +30,7 @@ import httpx
 from PIL import Image
 
 from backend.services.log_manager import Logger
-from backend.repository.models import TriggerPage, User
+from backend.repository.models import TriggerPage, User, Domain
 from backend.repository.db_controller import db_controller
 from sqlalchemy import select, update, delete, insert
 from backend.services.db_user import DBUser
@@ -64,6 +64,23 @@ def validate_page_value(pageValue: str = Form(...)):
             detail="網址 ID 只能包含小寫字母、數字和底線。"
         )
     return pageValue
+
+
+async def _resolve_allowed_domain_id(raw_value):
+    """將前端傳來的 allowedDomainId 轉成有效的 domain id；空字串/None 視為未綁定 (None)。
+
+    驗證該 id 存在於 domains 表，否則拋 422。
+    """
+    if raw_value in (None, "", "null"):
+        return None
+    try:
+        domain_id = int(raw_value)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=422, detail="allowedDomainId 必須為整數")
+    exists = await db_controller.get_one(Domain, {"id": domain_id})
+    if not exists:
+        raise HTTPException(status_code=422, detail=f"找不到 domain id={domain_id}")
+    return domain_id
 
 # --- 3. API 端點 ---
 
@@ -133,17 +150,27 @@ def get_router(db_user: DBUser):
                 # 優先使用 full_name，否則 fallback 到 username
                 owner_name_map[u.acct_uuid] = u.full_name or u.username
 
+        # 批次查詢綁定 domain
+        domain_ids = list({row.allowed_domain_id for row in rows if row.allowed_domain_id})
+        domain_map = {}
+        if domain_ids:
+            domain_rows = await db_controller.get(Domain, filters={"id": domain_ids})
+            for d in domain_rows:
+                domain_map[d.id] = d.domain
+
         # 轉換格式以符合前端需求
         data = [
             {
                 "value": row.page_value,
                 "label": row.page_label,
                 "owner": row.owner_uuid,
-                "owner_name": owner_name_map.get(row.owner_uuid) if row.owner_uuid else None
+                "owner_name": owner_name_map.get(row.owner_uuid) if row.owner_uuid else None,
+                "allowed_domain_id": row.allowed_domain_id,
+                "allowed_domain": domain_map.get(row.allowed_domain_id) if row.allowed_domain_id else None,
             }
             for row in rows
         ]
-        
+
         return JSONResponse(content=data)
 
     @router.get(
@@ -200,12 +227,14 @@ def get_router(db_user: DBUser):
         pageValue: str = Depends(validate_page_value), # 使用 Depends 來驗證
         file: UploadFile = File(..., description="要上傳的 HTML 模板檔案"),
         generationId: str = Form(None, description="若由 AI 生成，請帶上對應的 generation_id 以串接日誌"),
+        allowedDomainId: str = Form(None, description="綁定的 domain id；留空代表不綁定，套用預設"),
         current_user: dict = Depends(get_current_user)
     ):
         """
         上傳並儲存新頁面。
         """
         user_uuid = current_user.get("acct_uuid")
+        domain_id = await _resolve_allowed_domain_id(allowedDomainId)
 
         # 檢查是否已存在 (Global Check)
         exists = await db_controller.get_one(TriggerPage, {"page_value": pageValue})
@@ -238,7 +267,8 @@ def get_router(db_user: DBUser):
                 "page_value": pageValue,
                 "page_label": pageLabel,
                 "owner_uuid": user_uuid,
-                "page_type": "custom"
+                "page_type": "custom",
+                "allowed_domain_id": domain_id,
             })
         except Exception as e:
             # [復原] 如果 DB 操作失敗，刪除剛剛上傳的檔案
@@ -279,10 +309,12 @@ def get_router(db_user: DBUser):
         pageValue: str = Depends(validate_page_value),
         oldPageValue: str = Form(..., description="要修改的目標 value"),
         file: UploadFile = File(None, description="上傳新的 HTML 檔案來覆蓋"),
+        allowedDomainId: str = Form(None, description="綁定的 domain id；留空代表不綁定，套用預設"),
         current_user: dict = Depends(get_current_user)
     ):
         user_uuid = current_user.get("acct_uuid")
         user_type = current_user.get("user_type")
+        domain_id = await _resolve_allowed_domain_id(allowedDomainId)
         
         # 權限檢查: 找出舊頁面
         old_page = await db_controller.get_one(TriggerPage, {"page_value": oldPageValue})
@@ -339,7 +371,8 @@ def get_router(db_user: DBUser):
         try:
             await db_controller.update(TriggerPage, {"id": old_page.id}, {
                 "page_label": pageLabel,
-                "page_value": pageValue
+                "page_value": pageValue,
+                "allowed_domain_id": domain_id,
             })
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"資料庫更新失敗: {str(e)}")
@@ -412,11 +445,13 @@ def get_router(db_user: DBUser):
         btnText: str = Form(..., description="按鈕文字 (e.g., '登入')"),
         templateType: str = Form("classic", description="版型選擇: 'classic' or 'modern'"),
         svgContent: str = Form("", description="SVG 圖示內容 (僅用於 Modern 版型)"),
+        allowedDomainId: str = Form(None, description="綁定的 domain id；留空代表不綁定，套用預設"),
         current_user: dict = Depends(get_current_user)
     ):
         """
         根據使用者輸入的設定，自動生成 HTML 檔案並新增到選項中。
         """
+        domain_id = await _resolve_allowed_domain_id(allowedDomainId)
         user_uuid = current_user.get("acct_uuid")
 
         # 檢查重複
@@ -734,7 +769,8 @@ def get_router(db_user: DBUser):
                 "page_value": pageValue,
                 "page_label": pageLabel,
                 "owner_uuid": user_uuid,
-                "page_type": "custom"
+                "page_type": "custom",
+                "allowed_domain_id": domain_id,
             })
         except Exception as e:
             if save_path.exists():
