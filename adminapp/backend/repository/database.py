@@ -2,7 +2,6 @@ import os
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
-from backend.repository import models  # Import models to ensure they are registered with Base
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -47,6 +46,8 @@ async def get_db():
 
 async def init_db():
     """Initializes the database by creating all tables defined in models."""
+    # 延遲 import 避免循環 (models.py 需要本檔的 Base)
+    from backend.repository import models  # noqa: F401
     async with engine.begin() as conn:
         # await conn.run_sync(Base.metadata.drop_all) # Uncomment to reset DB
         await conn.run_sync(Base.metadata.create_all)
