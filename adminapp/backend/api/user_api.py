@@ -11,7 +11,7 @@ from backend.core.security import hash_password
 from backend.core.security import create_access_token
 from backend.services.log_manager import Logger
 from jose import jwt, JWTError
-from sqlalchemy import select
+from sqlalchemy import select, func
 from backend.repository.db_controller import db_controller
 from backend.repository.models import User, CustomerAcct, Acct, SystemConfig
 
@@ -95,10 +95,17 @@ def get_router(db_user):
         username = data.username
         password = data.password
 
+        # 登入帳號（email）一律不分大小寫，這裡先取小寫版本供各種比對使用
+        username_lower = username.lower() if username else username
+
         # ----------------------------------------------------------------
         # Step 1: 優先判斷是否為 platform_admin（不受維護模式限制）
         # ----------------------------------------------------------------
-        is_platform_admin = (username == PLATFORM_ADMIN_EMAIL and password == PLATFORM_ADMIN_PASSWORD)
+        is_platform_admin = (
+            PLATFORM_ADMIN_EMAIL is not None
+            and username_lower == PLATFORM_ADMIN_EMAIL.lower()
+            and password == PLATFORM_ADMIN_PASSWORD
+        )
 
         # ----------------------------------------------------------------
         # Step 2: 非 platform_admin 的人，皆需通過維護模式檢查
@@ -148,7 +155,7 @@ def get_router(db_user):
             }
 
         # 3b. .env 超級管理員登入
-        if username == ADMIN_EMAIL and password == ADMIN_PASSWORD:
+        if ADMIN_EMAIL is not None and username_lower == ADMIN_EMAIL.lower() and password == ADMIN_PASSWORD:
             access_token = create_access_token({
                 "acct_uuid": "admin",
                 "username": ADMIN_EMAIL,
@@ -175,9 +182,11 @@ def get_router(db_user):
                 "user": user_obj
             }
 
-        # 3c. 一般使用者
+        # 3c. 一般使用者（username 為 email，登入時不分大小寫）
         # 需要重新查詢 potential_user，因為前面拿掉了
-        potential_user = await db_controller.get_one(User, {"username": username})
+        potential_user = (await db_controller.execute_scalars(
+            select(User).where(func.lower(User.username) == username_lower).limit(1)
+        ) or [None])[0]
         if potential_user and verify_password(password, potential_user.password_hash):
             access_token = create_access_token({
                 "acct_uuid": potential_user.acct_uuid,
@@ -205,8 +214,10 @@ def get_router(db_user):
                 "user": user_obj
             }
 
-        # 3d. 客戶帳號
-        customer = await db_controller.get_one(CustomerAcct, {"customer_name": username})
+        # 3d. 客戶帳號（customer_name 不分大小寫）
+        customer = (await db_controller.execute_scalars(
+            select(CustomerAcct).where(func.lower(CustomerAcct.customer_name) == username_lower).limit(1)
+        ) or [None])[0]
         if customer and verify_password(password, customer.password_hash):
             access_token = create_access_token({
                 "acct_uuid": customer.acct_uuid,
