@@ -1112,8 +1112,10 @@ const CreateUrl = ({ user, isAdmin }) => {
                                                 return;
                                             }
                                             try {
-                                                setOutputTextUrl(`${baseUrl}/page/from-url/99999_99999?url=${encodeURIComponent(directUrlInput)}`)
-                                                setOutputTextQrcode(`${baseUrl}/qrcode/from-url/uuid?uuid=99999_99999&url=${encodeURIComponent(directUrlInput)}`);
+                                                // 跟「產生連結使用的網域」下拉接在一起；未選則用預設 base
+                                                const fromUrlBase = selectedLinkBase || baseUrl;
+                                                setOutputTextUrl(`${fromUrlBase}/page/from-url/99999_99999?url=${encodeURIComponent(directUrlInput)}`)
+                                                setOutputTextQrcode(`${fromUrlBase}/qrcode/from-url/uuid?uuid=99999_99999&url=${encodeURIComponent(directUrlInput)}`);
                                             } catch (e) {
                                                 enqueueSnackbar('請輸入有效的網址 (例如: https://www.google.com)', { variant: e });
                                             }
