@@ -194,7 +194,7 @@ def get_router(db_user: DBUser):
         """
         return {
             "triggerUrl": os.getenv("TRIGGER_APP_URL", ""),
-            "aliasHosts": _alias_base_urls(),
+            "ethanHosts": _alias_base_urls(),
         }
 
     @router.get(
