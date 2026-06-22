@@ -97,8 +97,19 @@ const CreateUrl = ({ user, isAdmin }) => {
     const [aiProgress, setAiProgress] = useState(null);
     const [useDesign, setUseDesign] = useState(false);
 
+    // AI 網頁微調與儲存彈跳視窗 State
+    const [openTweakDialog, setOpenTweakDialog] = useState(false);
+    const [aiRawHtml, setAiRawHtml] = useState('');
+    const [previewHtml, setPreviewHtml] = useState('');
+    const [tweakPageLabel, setTweakPageLabel] = useState('');
+    const [tweakPageValue, setTweakPageValue] = useState('');
+    const [tweakAllowedDomainId, setTweakAllowedDomainId] = useState('');
+    const [tweakTitle, setTweakTitle] = useState('登入');
+    const [tweakLogo, setTweakLogo] = useState(null);
+    const [tweakGenerationId, setTweakGenerationId] = useState(null);
+
     // 支援視覺輸入（圖片）的模型清單
-    const VISION_MODELS = ['gemini', 'gpt', 'gchat', 'gchat_gpt55'];
+    const VISION_MODELS = ['gemini', 'gpt', 'gchat_gpt55', 'gchat_gpt54', 'gchat_gpt54mini', 'gchat_gemma12b'];
     const supportsVision = VISION_MODELS.includes(aiModel);
 
 
@@ -111,12 +122,120 @@ const CreateUrl = ({ user, isAdmin }) => {
     const abortControllerRef = useRef(null);
 
     const [triggerBaseUrl, setTriggerBaseUrl] = useState('');
+    const [ethanHosts, setEthanHosts] = useState([]);
+    const [selectedLinkBase, setSelectedLinkBase] = useState('');
     const [directUrlInput, setDirectUrlInput] = useState('');
 
     // Redirect Config State
     const [openRedirectDialog, setOpenRedirectDialog] = useState(false);
     const [redirectOption, setRedirectOption] = useState('warning'); // 'warning' or 'custom'
     const [customRedirectUrl, setCustomRedirectUrl] = useState('');
+
+    // 圖片壓縮輔助函式
+    const compressImageToBase64 = (file, maxWidth = 300, maxHeight = 300) => {
+        return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.readAsDataURL(file);
+            reader.onload = (event) => {
+                const img = new Image();
+                img.src = event.target.result;
+                img.onload = () => {
+                    let width = img.width;
+                    let height = img.height;
+
+                    if (width > height) {
+                        if (width > maxWidth) {
+                            height = Math.round(height * (maxWidth / width));
+                            width = maxWidth;
+                        }
+                    } else {
+                        if (height > maxHeight) {
+                            width = Math.round(width * (maxHeight / height));
+                            height = maxHeight;
+                        }
+                    }
+
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, width, height);
+                    
+                    if (file.type === 'image/svg+xml') {
+                         resolve(event.target.result);
+                    } else {
+                         resolve(canvas.toDataURL(file.type, 0.8));
+                    }
+                };
+                img.onerror = (error) => reject(error);
+            };
+            reader.onerror = (error) => reject(error);
+        });
+    };
+
+    useEffect(() => {
+        let isMounted = true;
+
+        const generatePreview = async () => {
+            if (!aiRawHtml) return;
+
+            const parser = new DOMParser();
+            const dom = parser.parseFromString(aiRawHtml, "text/html");
+
+            // 強制檢查並補上 <meta charset="UTF-8"> 防呆 (預防 LLM 幻覺)
+            let metaCharset = dom.querySelector('meta[charset]');
+            if (!metaCharset) {
+                metaCharset = dom.createElement('meta');
+                metaCharset.setAttribute('charset', 'UTF-8');
+                dom.head.insertBefore(metaCharset, dom.head.firstChild);
+            }
+
+            if (tweakTitle) {
+                dom.title = tweakTitle;
+            }
+
+            if (tweakLogo) {
+                try {
+                    const base64Image = await compressImageToBase64(tweakLogo);
+                    if (!isMounted) return; // 防競態條件
+                    
+                    const logoContainer = dom.getElementById('custom-brand-logo');
+                    
+                    const img = dom.createElement('img');
+                    img.setAttribute('src', base64Image);
+                    img.setAttribute('style', 'max-height: 80px; width: auto; display: block; margin: 0 auto 1rem auto;');
+                    img.setAttribute('alt', 'Brand Logo');
+
+                    if (logoContainer) {
+                        logoContainer.innerHTML = '';
+                        logoContainer.appendChild(img);
+                    } else {
+                        // Fallback 機制：找不到指定 ID 時，放在 form 最上面
+                        const loginForm = dom.getElementById('login-form') || dom.querySelector('form');
+                        if (loginForm) {
+                            loginForm.insertBefore(img, loginForm.firstChild);
+                        }
+                    }
+                } catch (err) {
+                    console.error("處理 Logo 預覽失敗", err);
+                }
+            }
+
+            if (!isMounted) return;
+
+            // 防止 Quirks Mode，手動補回 DOCTYPE
+            const finalHtmlString = `<!DOCTYPE html>\n${dom.documentElement.outerHTML}`;
+            setPreviewHtml(finalHtmlString);
+        };
+
+        if (openTweakDialog) {
+            generatePreview();
+        }
+
+        return () => {
+            isMounted = false;
+        };
+    }, [tweakTitle, tweakLogo, aiRawHtml, openTweakDialog]);
 
     // 載入 json & config
     const fetchPageOptions = async () => {
@@ -155,6 +274,7 @@ const CreateUrl = ({ user, isAdmin }) => {
                 } else {
                     setTriggerBaseUrl(`${window.location.origin}/trigger`);
                 }
+                setEthanHosts(configData.ethanHosts || []);
             } else {
                 // Config API 失敗時的 fallback
                 setTriggerBaseUrl(`${window.location.origin}/trigger`);
@@ -188,10 +308,14 @@ const CreateUrl = ({ user, isAdmin }) => {
             enqueueSnackbar('請先選擇一個選項', { variant: 'warning' });
             return;
         }
-        // 根據選到的 page 找出對應 domain；QR 圖仍由系統內部 trigger app 產生 (保留預設 base)
+        // 根據選到的 page 找出對應 domain
         const selectedPage = pageOptions.find(o => o.value === selectedOption);
-        const baseUrl = resolveBaseUrlForOption(selectedPage);
-        const qrBaseUrl = triggerBaseUrl || `${window.location.origin}/trigger`;
+        const isBound = !!(selectedPage && selectedPage.allowed_domain);
+        const defaultBase = triggerBaseUrl || `${window.location.origin}/trigger`;
+        // 綁定頁面：base 用綁定 domain，QR 圖走 selink（trigger 端自行解析成綁定 domain）
+        // 未綁定頁面：base 與 QR 圖都走操作者選的鏡像網域（讓 trigger 端把 QR 內容解析成該網域）
+        const baseUrl = isBound ? resolveBaseUrlForOption(selectedPage) : (selectedLinkBase || defaultBase);
+        const qrBaseUrl = isBound ? defaultBase : baseUrl;
 
         let urlSuffix = "";
         let qrSuffix = "";
@@ -488,27 +612,22 @@ const CreateUrl = ({ user, isAdmin }) => {
                             setAiProgress(data.data);
                             const htmlContent = data.data.html;
 
-                            // 成功生成後，關閉 AI Dialog，開啟 Upload Dialog，並將內容轉換為檔案
-                            setOpenAiDialog(false);
+                            // 保存原始 HTML，設定微調 Dialog 的預設值
+                            setAiRawHtml(htmlContent);
+                            setPreviewHtml(htmlContent);
+                            setTweakGenerationId(data.data.generation_id || null);
 
-                            // 建立一個 File 物件
-                            const blob = new Blob([htmlContent], { type: 'text/html' });
                             const timestamp = new Date().getTime();
-                            const fileName = `ai_generated_${timestamp}.html`;
-                            const file = new File([blob], fileName, { type: 'text/html' });
+                            setTweakPageLabel(`AI 生成頁面 ${new Date().toLocaleTimeString()}`);
+                            setTweakPageValue(`ai_${timestamp}`);
+                            setTweakAllowedDomainId('');
+                            setTweakTitle('登入');
+                            setTweakLogo(null);
 
-                            // 預設一些欄位
-                            setEditMode(null);
-                            setPageLabel(`AI 生成頁面 ${new Date().toLocaleTimeString()}`);
-                            setPageValue(`ai_${timestamp}`);
-                            setOldPageValue('');
-                            setSelectedFile(file);
-                            setAiGenerationId(data.data.generation_id || null);
+                            setOpenAiDialog(false);
+                            setOpenTweakDialog(true);
 
-                            // 開啟上傳視窗確認
-                            setOpenUploadDialog(true);
-
-                            enqueueSnackbar('AI 生成成功！請確認並儲存頁面。', { variant: 'success' });
+                            enqueueSnackbar('AI 生成成功！請確認預覽並儲存頁面。', { variant: 'success' });
                         } else if (data.type === 'error') {
                             throw new Error(data.data.message);
                         }
@@ -527,6 +646,58 @@ const CreateUrl = ({ user, isAdmin }) => {
             setGenerating(false);
             setAiProgress(null);
             abortControllerRef.current = null;
+        }
+    };
+
+    const handleCloseTweakDialog = () => {
+        setOpenTweakDialog(false);
+        setTweakLogo(null);
+    };
+
+    const handleSaveTweak = async () => {
+        if (!tweakPageLabel || !tweakPageValue) {
+            enqueueSnackbar('請輸入網頁名稱和網址 ID', { variant: 'warning' });
+            return;
+        }
+
+        try {
+            // 利用最新的 previewHtml 來建立 File
+            const blob = new Blob([previewHtml], { type: 'text/html;charset=utf-8' });
+            const file = new File([blob], `${tweakPageValue}.html`, { type: 'text/html;charset=utf-8' });
+
+            const formData = new FormData();
+            formData.append('pageLabel', tweakPageLabel);
+            formData.append('pageValue', tweakPageValue);
+            formData.append('oldPageValue', '');
+            formData.append('allowedDomainId', tweakAllowedDomainId === '' ? '' : String(tweakAllowedDomainId));
+            formData.append('file', file);
+            
+            if (tweakGenerationId) {
+                formData.append('generationId', tweakGenerationId);
+            }
+
+            const accessToken = window.localStorage.getItem("accessToken");
+            const response = await fetch('/api/trigger_page/upload', {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${accessToken}`
+                },
+                body: formData,
+            });
+
+            const result = await response.json();
+
+            if (!response.ok) {
+                throw new Error(result.detail || '儲存失敗');
+            }
+
+            enqueueSnackbar('AI 頁面儲存成功！', { variant: 'success' });
+            setOpenTweakDialog(false);
+            fetchPageOptions();
+
+        } catch (err) {
+            console.error("儲存失敗:", err);
+            enqueueSnackbar(err.message, { variant: 'error' });
         }
     };
 
@@ -880,6 +1051,28 @@ const CreateUrl = ({ user, isAdmin }) => {
                                         )}
                                     </Typography>
                                 </Box>
+                                {ethanHosts.length > 0 && (
+                                    <FormControl size="small"
+                                        disabled={!!(pageOptions.find(o => o.value === selectedOption)?.allowed_domain)}
+                                        sx={{ minWidth: 280 }}
+                                    >
+                                        <InputLabel id="link-base-label">產生連結使用的網域</InputLabel>
+                                        <Select
+                                            labelId="link-base-label"
+                                            label="產生連結使用的網域"
+                                            value={selectedLinkBase}
+                                            onChange={(e) => setSelectedLinkBase(e.target.value)}
+                                        >
+                                            <MenuItem value=""><em>預設 ({triggerBaseUrl})</em></MenuItem>
+                                            {ethanHosts.map((h) => (
+                                                <MenuItem key={h} value={h}>{h}</MenuItem>
+                                            ))}
+                                        </Select>
+                                        <Typography variant="caption" color="text.secondary" sx={{ ml: 1.5, mt: 0.5 }}>
+                                            已綁定網域的頁面不受此設定影響
+                                        </Typography>
+                                    </FormControl>
+                                )}
                                 <Box sx={{ display: 'flex', gap: 2 }}>
                                     <Button
                                         variant="outlined"
@@ -1356,8 +1549,11 @@ const CreateUrl = ({ user, isAdmin }) => {
                                 <FormControlLabel value="gemini" control={<Radio />} label="Gemini (預設)" />
                                 <FormControlLabel value="gpt" control={<Radio />} label="GPT" />
                                 <FormControlLabel value="litellm" control={<Radio />} label="LiteLLM" />
-                                <FormControlLabel value="gchat" control={<Radio />} label="GChat (Gemma-4-31B)" />
+                                <FormControlLabel value="gchat_gemma431b" control={<Radio />} label="GChat (Gemma-4-31B)" disabled />
                                 <FormControlLabel value="gchat_gptoss" control={<Radio />} label="GChat (GPT-OSS 20B)" />
+                                <FormControlLabel value="gchat_gemma12b" control={<Radio />} label="GChat (Gemma-4-12B)" />
+                                <FormControlLabel value="gchat_gpt54mini" control={<Radio />} label="GChat (gpt-5.4-mini)" />
+                                <FormControlLabel value="gchat_gpt54" control={<Radio />} label="GChat (gpt-5.4)" />
                                 <FormControlLabel value="gchat_gpt55" control={<Radio />} label="GChat (gpt-5.5)" />
                             </RadioGroup>
                         </FormControl>
@@ -1504,6 +1700,121 @@ const CreateUrl = ({ user, isAdmin }) => {
                         disabled={generating}
                     >
                         {generating ? '生成中...' : '開始生成'}
+                    </Button>
+                </DialogActions>
+            </Dialog>
+
+            {/* AI 生成網頁微調與儲存 Dialog */}
+            <Dialog open={openTweakDialog} onClose={handleCloseTweakDialog} fullWidth maxWidth="md">
+                <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    AI 生成頁面微調與儲存
+                    <IconButton onClick={handleCloseTweakDialog} edge="end">
+                        <CloseIcon />
+                    </IconButton>
+                </DialogTitle>
+                <DialogContent>
+                    <Grid container spacing={3} sx={{ pt: 1 }}>
+                        <Grid item xs={12} md={5}>
+                            <Stack spacing={2}>
+                                <Typography variant="subtitle2" color="text.secondary">頁面基礎資訊</Typography>
+                                <TextField
+                                    required
+                                    label="名稱"
+                                    value={tweakPageLabel}
+                                    onChange={(e) => setTweakPageLabel(e.target.value)}
+                                    helperText="顯示在選項中的名稱"
+                                    fullWidth
+                                    size="small"
+                                />
+                                <TextField
+                                    required
+                                    label="網址 ID"
+                                    value={tweakPageValue}
+                                    onChange={(e) => setTweakPageValue(e.target.value.toLowerCase().trim())}
+                                    helperText="用於 URL 的識別碼"
+                                    fullWidth
+                                    size="small"
+                                />
+                                <FormControl fullWidth size="small">
+                                    <InputLabel id="tweak-domain-label">綁定網域 (Domain)</InputLabel>
+                                    <Select
+                                        labelId="tweak-domain-label"
+                                        label="綁定網域 (Domain)"
+                                        value={tweakAllowedDomainId}
+                                        onChange={(e) => setTweakAllowedDomainId(e.target.value)}
+                                    >
+                                        <MenuItem value="">
+                                            <em>使用預設 (TRIGGER_APP_URL)</em>
+                                        </MenuItem>
+                                        {domainList.map((d) => (
+                                            <MenuItem key={d.id} value={d.id}>{d.label || d.domain} ({d.domain})</MenuItem>
+                                        ))}
+                                    </Select>
+                                </FormControl>
+                                
+                                <Divider sx={{ my: 1 }} />
+
+                                <Typography variant="subtitle2" color="text.secondary">內容微調</Typography>
+                                <TextField
+                                    label="網頁標題 (Title)"
+                                    value={tweakTitle}
+                                    onChange={(e) => setTweakTitle(e.target.value)}
+                                    helperText="瀏覽器分頁上顯示的文字"
+                                    fullWidth
+                                    size="small"
+                                />
+                                <Button
+                                    variant="outlined"
+                                    component="label"
+                                    startIcon={<UploadIcon />}
+                                    fullWidth
+                                >
+                                    上傳自訂圖標 (Logo)
+                                    <input
+                                        type="file"
+                                        hidden
+                                        accept="image/png, image/jpeg, image/webp, image/svg+xml"
+                                        onChange={(e) => {
+                                            if (e.target.files && e.target.files.length > 0) {
+                                                setTweakLogo(e.target.files[0]);
+                                            }
+                                        }}
+                                    />
+                                </Button>
+                                {tweakLogo && (
+                                    <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mt: 1, p: 1, border: '1px solid #ddd', borderRadius: 1 }}>
+                                        <Typography variant="body2" noWrap sx={{ maxWidth: '80%' }}>
+                                            已選擇: {tweakLogo.name}
+                                        </Typography>
+                                        <IconButton size="small" onClick={() => setTweakLogo(null)}>
+                                            <CloseIcon fontSize="small" />
+                                        </IconButton>
+                                    </Stack>
+                                )}
+                            </Stack>
+                        </Grid>
+                        <Grid item xs={12} md={7}>
+                            <Typography variant="subtitle2" color="text.secondary" sx={{ mb: 1 }}>即時預覽</Typography>
+                            <Box sx={{
+                                border: '1px solid #ccc',
+                                borderRadius: 1,
+                                height: '500px',
+                                overflow: 'hidden',
+                                position: 'relative'
+                            }}>
+                                <iframe
+                                    srcDoc={previewHtml}
+                                    title="Live Preview"
+                                    style={{ width: '100%', height: '100%', border: 'none', backgroundColor: '#fff' }}
+                                />
+                            </Box>
+                        </Grid>
+                    </Grid>
+                </DialogContent>
+                <DialogActions>
+                    <Button onClick={handleCloseTweakDialog}>取消</Button>
+                    <Button onClick={handleSaveTweak} variant="contained" color="primary">
+                        確認並儲存
                     </Button>
                 </DialogActions>
             </Dialog>

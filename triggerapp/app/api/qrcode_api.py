@@ -8,6 +8,7 @@ from app.services.qrcode import qrcode
 from app.repository.db_controller import db_controller
 from app.repository.models import TriggerPage, Domain
 from app.services.log_manager import Logger
+from app.services.domain_utils import request_host, accepted_default_hosts
 
 
 router = APIRouter()
@@ -25,6 +26,12 @@ async def _resolve_page_base_url(page_name: str, request: Request) -> str:
                 return f"{proto}://{domain.domain}"
     except Exception as e:
         logger.error(f"解析 page 綁定 domain 失敗 ({page_name}): {e}")
+
+    # 未綁定：訪客所在 host 若是已認可的 trigger 網域，連結 / QR 就跟著該網域
+    host = request_host(request)
+    if host and host in accepted_default_hosts():
+        proto = request.url.scheme or "https"
+        return f"{proto}://{host}"
 
     fallback = os.getenv("TRIGGER_APP_URL")
     if fallback:

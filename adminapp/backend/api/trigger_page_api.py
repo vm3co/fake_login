@@ -173,6 +173,16 @@ def get_router(db_user: DBUser):
 
         return JSONResponse(content=data)
 
+    def _alias_base_urls() -> list:
+        """把 TRIGGER_APP_ETHAN_HOSTS 轉成可直接當連結 base 的完整 URL 清單。
+        裸 host 補 https://；已帶 scheme 則原樣保留。"""
+        out = []
+        for raw in os.getenv("TRIGGER_APP_ETHAN_HOSTS", "").split(","):
+            raw = raw.strip()
+            if raw:
+                out.append(raw if "//" in raw else f"https://{raw}")
+        return out
+
     @router.get(
         "/config",
         summary="獲取前端配置 (如 Trigger App URL)",
@@ -183,7 +193,8 @@ def get_router(db_user: DBUser):
         傳回前端需要的動態配置
         """
         return {
-            "triggerUrl": os.getenv("TRIGGER_APP_URL", "")
+            "triggerUrl": os.getenv("TRIGGER_APP_URL", ""),
+            "aliasHosts": _alias_base_urls(),
         }
 
     @router.get(
@@ -1129,14 +1140,17 @@ def get_router(db_user: DBUser):
 
                 # gchat sub-model 對照表：(送進 API 的 model_name, 是否支援視覺輸入)
                 GCHAT_MODELS = {
-                    "gchat":        ("Gemma-4-31B", True),
+                    "gchat_gemma431b": ("Gemma-4-31B", True),      # 舊模型，已停用，僅為相容保留
                     "gchat_gptoss": ("gpt-oss-20b", False),
                     "gchat_gpt55":  ("gpt-5.5",     True),
+                    "gchat_gpt54":  ("gpt-5.4",     True),
+                    "gchat_gpt54mini": ("gpt-5.4-mini", True),
+                    "gchat_gemma12b": ("Gemma-4-12B", True),
                 }
 
                 api_key = "dummy_key"
                 base_url = "https://chatapi.acsi-lab.dev/v1"
-                model_name, supports_vision = GCHAT_MODELS.get(model, ("Gemma-4-31B", False))
+                model_name, supports_vision = GCHAT_MODELS.get(model)
                 headers["CF-Access-Token"] = cf_access_token
                 headers["User-Agent"] = "curl/8.5.0"
                 event_hooks["request"] = [force_ua]
@@ -1396,6 +1410,13 @@ def get_system_prompt(page_type: str = "field"):
         (注意：請絕對保留 Jinja2 模板語法 {{ ... }}，不可更改或解析它們)
 
         2. **樣式 (CSS)**：請將所有 CSS 樣式直接寫在 `<style>` 標籤內 (Internal CSS)，不可引入外部自訂 CSS 檔案。
+
+        3. **編碼與標題**：
+        - `<head>` 內必須包含 `<meta charset="UTF-8">`。
+        - `<head>` 內必須包含標準的 `<title>登入</title>`。
+
+        4. **預留 Logo 容器**：
+        - 遇到需要繪製或放置品牌 Logo，請務必將其包裝在`<div id="custom-brand-logo"></div>`的容器中，以利系統後續安全替換與修改。
 
         [輸出格式要求]
         - 請「只」回傳純 HTML 程式碼。

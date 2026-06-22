@@ -1,10 +1,9 @@
 from pydantic import BaseModel
 from datetime import datetime
 import csv
-import os
 import json
-from urllib.parse import urlparse
 from app.services.redis_client import RedisClient
+from app.services.domain_utils import request_host as _request_host, accepted_default_hosts
 from pathlib import Path
 from typing import Dict, Any
 from fastapi import FastAPI, Request, APIRouter, HTTPException, Depends
@@ -26,30 +25,13 @@ logger = Logger().get_logger()
 router = APIRouter()
 
 
-def _request_host(request: Request) -> str:
-    """從 request 取出 host (不含 port)，優先吃 X-Forwarded-Host (nginx 帶上)。"""
-    host = request.headers.get("x-forwarded-host") or request.headers.get("host") or ""
-    return host.split(":")[0].strip().lower()
-
-
-def _get_default_host() -> str:
-    """從 TRIGGER_APP_URL 解析 hostname (例如 http://selink.test.xyz → selink.test.xyz)。"""
-    raw = os.getenv("TRIGGER_APP_URL", "")
-    if not raw:
-        return ""
-    try:
-        return (urlparse(raw).hostname or "").lower()
-    except Exception:
-        return ""
-
-
 async def _enforce_page_domain(request: Request, page_name: str):
     """檢查請求 Host 是否符合 page 綁定的 domain。
 
     - page 在 DB 不存在 (e.g. from-url 等系統路由) → 通過
     - page 已綁定 → host 必須等於綁的 domain，否則 404
-    - page 未綁定 → host 必須等於 TRIGGER_APP_URL 的 hostname，否則 404
-    - TRIGGER_APP_URL 未設定時，未綁定 page 通過 (避免整套打掛)
+    - page 未綁定 → host 必須在 accepted_default_hosts() 集合內（含 selink 與所有別名），否則 404
+    - 集合為空（TRIGGER_APP_URL 未設定且無別名）時，未綁定 page 通過 (避免整套打掛)
     """
     req_host = _request_host(request)
     try:
@@ -72,18 +54,20 @@ async def _enforce_page_domain(request: Request, page_name: str):
             logger.warning(f"[domain-check] page='{page_name}' 綁的 domain id={page.allowed_domain_id} 已不存在，pass")
             return
         expected_host = domain.domain.lower()
-        source = "bound"
+        if req_host != expected_host:
+            logger.info(f"[domain-check] BLOCK page='{page_name}' bound='{expected_host}' req_host='{req_host}' → 404")
+            raise HTTPException(status_code=404, detail="Not Found")
+        logger.info(f"[domain-check] OK page='{page_name}' host='{req_host}' (bound)")
     else:
-        expected_host = _get_default_host()
-        if not expected_host:
-            logger.info(f"[domain-check] page='{page_name}' 未綁 + TRIGGER_APP_URL 未設定，pass")
+        default_hosts = accepted_default_hosts()
+        if not default_hosts:
+            logger.info(f"[domain-check] page='{page_name}' 未綁 + 無預設 host，pass")
             return
-        source = "default(TRIGGER_APP_URL)"
-
-    if req_host != expected_host:
-        logger.info(f"[domain-check] BLOCK page='{page_name}' {source}='{expected_host}' req_host='{req_host}' → 404")
+        if req_host in default_hosts:
+            logger.info(f"[domain-check] OK page='{page_name}' host='{req_host}' (default/alias)")
+            return
+        logger.info(f"[domain-check] BLOCK page='{page_name}' default_hosts={default_hosts} req_host='{req_host}' → 404")
         raise HTTPException(status_code=404, detail="Not Found")
-    logger.info(f"[domain-check] OK page='{page_name}' host='{req_host}' ({source})")
 
 
 async def get_request_info(request: Request) -> Dict[str, Any]:
