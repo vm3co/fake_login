@@ -312,10 +312,10 @@ const CreateUrl = ({ user, isAdmin }) => {
         const selectedPage = pageOptions.find(o => o.value === selectedOption);
         const isBound = !!(selectedPage && selectedPage.allowed_domain);
         const defaultBase = triggerBaseUrl || `${window.location.origin}/trigger`;
-        // 綁定頁面：base 用綁定 domain，QR 圖走 selink（trigger 端自行解析成綁定 domain）
-        // 未綁定頁面：base 與 QR 圖都走操作者選的鏡像網域（讓 trigger 端把 QR 內容解析成該網域）
+        // 綁定頁面：base 用綁定 domain；未綁定頁面：base 用操作者選的鏡像網域
+        // QR 圖網址一律跟 base 一致，讓「連結、QR 圖來源、QR 掃描後目標」三者同一個網域
         const baseUrl = isBound ? resolveBaseUrlForOption(selectedPage) : (selectedLinkBase || defaultBase);
-        const qrBaseUrl = isBound ? defaultBase : baseUrl;
+        const qrBaseUrl = baseUrl;
 
         let urlSuffix = "";
         let qrSuffix = "";
