@@ -24,7 +24,12 @@ class RedisClient:
                     host=redis_host,
                     port=redis_port,
                     db=0,
-                    decode_responses=True
+                    decode_responses=True,
+                    # socket_timeout 必須 > PersistenceWorker 的 BLPOP timeout(5s)，
+                    # 否則 redis-py 8 預設約 5s 的讀取超時會跟 BLPOP 撞期，
+                    # queue 空閒時每 ~5s 丟一次 "Timeout reading from redis"。
+                    socket_timeout=10,
+                    socket_connect_timeout=5,
                 )
             except Exception as e:
                 logger.error(f"Failed to initialize Redis pool: {e}")
