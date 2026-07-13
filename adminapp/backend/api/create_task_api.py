@@ -149,9 +149,21 @@ async def create_testcase(request: CreateTaskRequest):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"無法解析參與人員資料: {e}")
     
+    # 取得客戶設定（供任務數量上限與 Email domain 驗證共用）
+    customer = await db_controller.get_one(CustomerAcct, {"customer_uuid": request.customer_uuid})
+
+    # 任務數量上限驗證（後端最終防線；None/0 = 不限制，只計未刪除任務）
+    if customer and customer.max_task_count:
+        existing_tasks = await db_controller.get(CustomerTask, {"customer_uuid": request.customer_uuid})
+        active_count = len([t for t in existing_tasks if t.status != "deleted"])
+        if active_count >= customer.max_task_count:
+            raise HTTPException(
+                status_code=400,
+                detail=f"已達到任務建立上限（{customer.max_task_count}），無法再建立新任務"
+            )
+
     # Email Domain 驗證
     try:
-        customer = await db_controller.get_one(CustomerAcct, {"customer_uuid": request.customer_uuid})
         if customer and customer.allowed_email_domains:
             allowed_domains = [d.lower() for d in customer.allowed_email_domains]
             df = pd.read_csv(io.StringIO(request.participant_data))

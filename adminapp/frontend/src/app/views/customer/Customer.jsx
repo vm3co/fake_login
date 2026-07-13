@@ -186,7 +186,8 @@ export default function Customer() {
     customer_uuid: null,
     task_creation_enabled: false,
     task_creation_org_uuid: '',
-    allowed_email_domains: []
+    allowed_email_domains: [],
+    max_task_count: null
   });
   const { enqueueSnackbar } = useSnackbar();
   const [searchText, setSearchText] = useState('');
@@ -227,13 +228,18 @@ export default function Customer() {
     const task_creation_enabled = getCookie('task_creation_enabled') === true || getCookie('task_creation_enabled') === 'true';
     const task_creation_org_uuid = getCookie('task_creation_org_uuid') || '';
     const allowed_email_domains = parseTasks(getCookie('allowed_email_domains')) || [];
+    const rawMaxTaskCount = getCookie('max_task_count');
+    const max_task_count = (rawMaxTaskCount === '' || rawMaxTaskCount === null || rawMaxTaskCount === undefined)
+      ? null
+      : Number(rawMaxTaskCount);
     setCustomerData({
       sendtasks,
       acct_uuid,
       customer_uuid,
       task_creation_enabled,
       task_creation_org_uuid,
-      allowed_email_domains
+      allowed_email_domains,
+      max_task_count
     });
   };
 
@@ -1156,7 +1162,12 @@ export default function Customer() {
           </IconButton>
         </DialogTitle>
         <DialogContent>
-          <CreateTask onSuccess={handleCreateSuccess} allowedEmailDomains={customerData.allowed_email_domains} />
+          <CreateTask
+            onSuccess={handleCreateSuccess}
+            allowedEmailDomains={customerData.allowed_email_domains}
+            maxTaskCount={customerData.max_task_count}
+            currentTaskCount={myProjects.filter(p => p.status !== 'deleted').length}
+          />
         </DialogContent>
       </Dialog>
 

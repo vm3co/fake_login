@@ -96,7 +96,7 @@ const getProjectStatusColor = (status) => {
 };
 
 // --- 客戶專案列表子元件（純展示） ---
-function CustomerProjectsSection({ customerUuid, cache, setCache }) {
+function CustomerProjectsSection({ customerUuid, cache, setCache, maxTaskCount }) {
   const [projects, setProjects] = useState(cache[customerUuid] || null);
   const [loading, setLoading] = useState(false);
 
@@ -146,7 +146,7 @@ function CustomerProjectsSection({ customerUuid, cache, setCache }) {
   return (
     <Box sx={{ mb: 2, p: 1.5, bgcolor: '#f8fafc', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
       <Typography variant="subtitle2" sx={{ mb: 1, fontWeight: 700 }}>
-        📋 客戶建立的專案 ({projects.filter(p => p.status !== 'deleted').length})
+        📋 客戶建立的專案 ({projects.filter(p => p.status !== 'deleted').length}{maxTaskCount ? ` / 上限 ${maxTaskCount}` : ''})
       </Typography>
       <TableContainer>
         <Table size="small">
@@ -326,10 +326,11 @@ export default function CustomersPanel() {
       }
       if (taskCreationForDb) {
         promises.push(updateCustomerTaskCreation(
-            customerKey, 
-            taskCreationForDb.enabled, 
+            customerKey,
+            taskCreationForDb.enabled,
             taskCreationForDb.org_uuid,
-            taskCreationForDb.allowed_email_domains
+            taskCreationForDb.allowed_email_domains,
+            taskCreationForDb.max_task_count
         ));
       }
 
@@ -475,6 +476,7 @@ export default function CustomersPanel() {
                         customerUuid={customer.customer_uuid}
                         cache={customerProjectsCache}
                         setCache={setCustomerProjectsCache}
+                        maxTaskCount={customer.max_task_count}
                       />
                     )}
                     <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', gap: 2, p: 1.5, bgcolor: 'grey.50', borderRadius: 1, border: '1px solid', borderColor: 'divider' }}>
@@ -489,7 +491,8 @@ export default function CustomersPanel() {
                                 [customerKey]: {
                                   enabled: isEnabled,
                                   org_uuid: prev[customerKey]?.org_uuid ?? (customer.task_creation_org_uuid || ''),
-                                  allowed_email_domains: prev[customerKey]?.allowed_email_domains ?? (customer.allowed_email_domains || [])
+                                  allowed_email_domains: prev[customerKey]?.allowed_email_domains ?? (customer.allowed_email_domains || []),
+                                  max_task_count: prev[customerKey]?.max_task_count ?? (customer.max_task_count ?? null)
                                 }
                               }));
                             }}
@@ -519,7 +522,8 @@ export default function CustomersPanel() {
                                 [customerKey]: {
                                   enabled: prev[customerKey]?.enabled ?? !!customer.task_creation_enabled,
                                   org_uuid: orgUuid,
-                                  allowed_email_domains: prev[customerKey]?.allowed_email_domains ?? (customer.allowed_email_domains || [])
+                                  allowed_email_domains: prev[customerKey]?.allowed_email_domains ?? (customer.allowed_email_domains || []),
+                                  max_task_count: prev[customerKey]?.max_task_count ?? (customer.max_task_count ?? null)
                                 }
                               }));
                             }}
@@ -535,6 +539,32 @@ export default function CustomersPanel() {
                             ))}
                           </Select>
                         </FormControl>
+                      )}
+
+                      {/* 可建立任務數上限 */}
+                      {(localTaskCreation[customerKey]?.enabled ?? !!customer.task_creation_enabled) && (
+                        <TextField
+                          type="number"
+                          size="small"
+                          label="可建立任務數上限"
+                          placeholder="留空 = 不限制"
+                          sx={{ width: 160 }}
+                          inputProps={{ min: 0 }}
+                          disabled={isCurrentlySaving}
+                          value={localTaskCreation[customerKey]?.max_task_count ?? (customer.max_task_count ?? '')}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setLocalTaskCreation(prev => ({
+                              ...prev,
+                              [customerKey]: {
+                                enabled: prev[customerKey]?.enabled ?? !!customer.task_creation_enabled,
+                                org_uuid: prev[customerKey]?.org_uuid ?? (customer.task_creation_org_uuid || ''),
+                                allowed_email_domains: prev[customerKey]?.allowed_email_domains ?? (customer.allowed_email_domains || []),
+                                max_task_count: v === '' ? null : Number(v)
+                              }
+                            }));
+                          }}
+                        />
                       )}
 
                       {/* Email Domain 限制 */}
@@ -553,7 +583,8 @@ export default function CustomersPanel() {
                             [customerKey]: {
                               enabled: prev[customerKey]?.enabled ?? !!customer.task_creation_enabled,
                               org_uuid: prev[customerKey]?.org_uuid ?? (customer.task_creation_org_uuid || ''),
-                              allowed_email_domains: cleanedDomains
+                              allowed_email_domains: cleanedDomains,
+                              max_task_count: prev[customerKey]?.max_task_count ?? (customer.max_task_count ?? null)
                             }
                           }));
                         }}

@@ -869,13 +869,14 @@ class DBUser:
             logger.error(f"Update customer sendtasks failed: {e}")
             return {"status": "error", "message": str(e)}
 
-    async def update_customer_task_creation(self, customer_name: str, enabled: bool, org_uuid: str = None, allowed_email_domains: list[str] = None):
+    async def update_customer_task_creation(self, customer_name: str, enabled: bool, org_uuid: str = None, allowed_email_domains: list[str] = None, max_task_count: int = None):
         """
         更新客戶的「建立任務功能」開關狀態與指定組織。
         :param customer_name: 客戶名稱
         :param enabled: 是否啟用建立任務功能
         :param org_uuid: 關聯的組織 uuid
         :param allowed_email_domains: 允許的 Email domain 清單
+        :param max_task_count: 可建立任務數量上限（None / 0 = 不限制）
         """
         customer = await db_controller.get_one(CustomerAcct, {"customer_name": customer_name})
 
@@ -889,6 +890,8 @@ class DBUser:
                 update_data["task_creation_org_uuid"] = org_uuid
             if allowed_email_domains is not None:
                 update_data["allowed_email_domains"] = allowed_email_domains
+            if max_task_count is not None:
+                update_data["max_task_count"] = max_task_count
             await db_controller.update(CustomerAcct, {"customer_name": customer_name}, update_data)
             return {"status": "success", "message": f"客戶 {customer_name} 建立任務功能設定已更新"}
         except Exception as e:

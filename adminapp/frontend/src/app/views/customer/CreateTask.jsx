@@ -60,8 +60,13 @@ const toInputDateTime = (d) => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
-export default function CreateTask({ onSuccess, readOnly = false, initialData = null, allowedEmailDomains = [] }) {
+export default function CreateTask({ onSuccess, readOnly = false, initialData = null, allowedEmailDomains = [], maxTaskCount = null, currentTaskCount = 0 }) {
   const { enqueueSnackbar } = useSnackbar();
+
+  // 任務數量上限（maxTaskCount 為 null/0 代表不限制）
+  const hasLimit = !readOnly && maxTaskCount != null && maxTaskCount > 0;
+  const remainingTasks = hasLimit ? Math.max(maxTaskCount - currentTaskCount, 0) : null;
+  const atLimit = hasLimit && currentTaskCount >= maxTaskCount;
 
   // 表單狀態（以 Date 物件儲存時間，方便給 DateTimePicker）
   const [taskName, setTaskName] = useState(initialData?.task_name || '');
@@ -149,6 +154,7 @@ export default function CreateTask({ onSuccess, readOnly = false, initialData = 
 
   // 驗證表單
   const validate = () => {
+    if (atLimit) return `已達到任務建立上限（${maxTaskCount}），無法再建立新任務`;
     if (!taskName.trim()) return '請輸入任務名稱';
     if (!startDate) return '請選擇開始時間';
     if (!endDate) return '請選擇結束時間';
@@ -284,6 +290,14 @@ export default function CreateTask({ onSuccess, readOnly = false, initialData = 
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
             {error}
+          </Alert>
+        )}
+
+        {hasLimit && (
+          <Alert severity={atLimit ? 'warning' : 'info'} sx={{ mb: 2 }}>
+            {atLimit
+              ? `已達到任務建立上限（已建立 ${currentTaskCount} / ${maxTaskCount}），無法再建立新任務`
+              : `可建立任務數量：已建立 ${currentTaskCount} / ${maxTaskCount}，剩餘 ${remainingTasks} 個`}
           </Alert>
         )}
 
@@ -483,7 +497,7 @@ export default function CreateTask({ onSuccess, readOnly = false, initialData = 
             variant="contained"
             size="large"
             onClick={handleSubmit}
-            disabled={submitting}
+            disabled={submitting || atLimit}
             startIcon={submitting ? <CircularProgress size={20} color="inherit" /> : <Send />}
             sx={{
               mt: 3,

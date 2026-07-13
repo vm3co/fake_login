@@ -58,6 +58,7 @@ const setUserCookies = (user) => {
     document.cookie = `task_creation_enabled=${encodeURIComponent(user.task_creation_enabled || false)}; path=/;`;
     document.cookie = `task_creation_org_uuid=${encodeURIComponent(user.task_creation_org_uuid || '')}; path=/;`;
     document.cookie = `allowed_email_domains=${encodeURIComponent(JSON.stringify(user.allowed_email_domains || []))}; path=/;`;
+    document.cookie = `max_task_count=${encodeURIComponent(user.max_task_count ?? '')}; path=/;`;
 
     // 清除一般使用者相關的 cookie（如果存在）
     document.cookie = "orgs=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT";

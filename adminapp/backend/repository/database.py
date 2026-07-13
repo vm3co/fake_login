@@ -66,4 +66,7 @@ async def init_db():
         await conn.execute(text(
             "ALTER TABLE domains ADD COLUMN IF NOT EXISTS notes TEXT"
         ))
+        await conn.execute(text(
+            "ALTER TABLE customer_accts ADD COLUMN IF NOT EXISTS max_task_count INTEGER"
+        ))
 

@@ -220,7 +220,7 @@ export default function useCustomers() {
     };
 
     // 更新客戶「建立任務功能」開關
-    const updateCustomerTaskCreation = async (customerName, enabled, orgUuid = "", allowedEmailDomains = null) => {
+    const updateCustomerTaskCreation = async (customerName, enabled, orgUuid = "", allowedEmailDomains = null, maxTaskCount = null) => {
         const controller = createController();
         const cleanup = registerRequest(controller);
 
@@ -229,7 +229,8 @@ export default function useCustomers() {
                 customer_name: customerName,
                 enabled: enabled,
                 org_uuid: orgUuid,
-                allowed_email_domains: allowedEmailDomains
+                allowed_email_domains: allowedEmailDomains,
+                max_task_count: maxTaskCount
             }, {
                 signal: controller.signal,
             });

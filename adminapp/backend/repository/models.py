@@ -125,6 +125,7 @@ class CustomerAcct(Base):
     task_creation_enabled = Column(Boolean, default=False)  # 控制客戶是否可使用「新增任務」功能
     task_creation_org_uuid = Column(String(36), nullable=True)  # 控制客戶「新增任務」對應的組織
     allowed_email_domains = Column(PG_ARRAY(Text), nullable=True, default=list)  # 限制客戶上傳名冊時的 Email domain 白名單
+    max_task_count = Column(Integer, nullable=True)  # 客戶可建立任務數量上限（NULL / 0 = 不限制）
 
 class Mtmpl(Base):
     __tablename__ = "mtmpl"
