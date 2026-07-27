@@ -106,7 +106,9 @@ const CreateUrl = ({ user, isAdmin }) => {
     const [tweakAllowedDomainId, setTweakAllowedDomainId] = useState('');
     const [tweakTitle, setTweakTitle] = useState('登入');
     const [tweakLogo, setTweakLogo] = useState(null);
+    const [tweakMainTitle, setTweakMainTitle] = useState('');
     const [tweakGenerationId, setTweakGenerationId] = useState(null);
+    const [tweakNewHtmlFile, setTweakNewHtmlFile] = useState(null);
 
     // 支援視覺輸入（圖片）的模型清單
     const VISION_MODELS = ['gemini', 'gpt', 'gchat_gpt55', 'gchat_gpt54', 'gchat_gpt54mini', 'gchat_gemma12b'];
@@ -194,6 +196,14 @@ const CreateUrl = ({ user, isAdmin }) => {
                 dom.title = tweakTitle;
             }
 
+            // [新增] 替換頁面主標題 (H1)
+            if (tweakMainTitle) {
+                const mainTitleElement = dom.getElementById('custom-main-title');
+                if (mainTitleElement) {
+                    mainTitleElement.textContent = tweakMainTitle;
+                }
+            }
+
             if (tweakLogo) {
                 try {
                     const base64Image = await compressImageToBase64(tweakLogo);
@@ -235,7 +245,30 @@ const CreateUrl = ({ user, isAdmin }) => {
         return () => {
             isMounted = false;
         };
-    }, [tweakTitle, tweakLogo, aiRawHtml, openTweakDialog]);
+    }, [tweakTitle, tweakMainTitle, tweakLogo, aiRawHtml, openTweakDialog]);
+
+    // 監聽是否有新的 HTML 檔案被上傳，若有則更新 aiRawHtml
+    useEffect(() => {
+        if (tweakNewHtmlFile) {
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const newHtmlContent = e.target.result;
+                setAiRawHtml(newHtmlContent); // 將 raw HTML 換成新上傳的內容
+                // 從新的 HTML 中解析 title
+                const parser = new DOMParser();
+                const dom = parser.parseFromString(newHtmlContent, "text/html");
+                setTweakTitle(dom.title || '登入');
+                // [新增] 同時解析 H1 標題
+                const mainTitleElement = dom.getElementById('custom-main-title');
+                if (mainTitleElement) {
+                    setTweakMainTitle(mainTitleElement.textContent);
+                }
+                setTweakLogo(null); // 清空舊 logo
+            };
+            reader.onerror = (err) => enqueueSnackbar(`讀取檔案失敗: ${err}`, { variant: 'error' });
+            reader.readAsText(tweakNewHtmlFile);
+        }
+    }, [tweakNewHtmlFile]);
 
     // 載入 json & config
     const fetchPageOptions = async () => {
@@ -364,25 +397,63 @@ const CreateUrl = ({ user, isAdmin }) => {
     };
 
     // 彈跳視窗的處理函式
-    const handleOpenUploadDialog = (option = null) => {
+    const handleOpenUploadDialog = async (option = null) => {
         if (option) {
-            // 進入修改模式
-            setEditMode(option.value);
-            setPageLabel(option.label);
-            setPageValue(option.value);
-            setOldPageValue(option.value);
-            setUploadAllowedDomainId(option.allowed_domain_id ?? '');
-            setOpenUploadDialog(true); // Only open regular upload/edit dialog
+            // [修改] 進入編輯模式，改為開啟 Tweak Dialog
+            enqueueSnackbar('正在載入頁面原始碼...', { variant: 'info' });
+            try {
+                const accessToken = window.localStorage.getItem("accessToken");
+                const response = await fetch(`/api/trigger_page/download?pageValue=${option.value}`, {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+
+                if (!response.ok) {
+                    const errData = await response.json();
+                    throw new Error(errData.detail || '無法下載頁面原始碼');
+                }
+
+                const htmlContent = await response.text();
+
+                // 使用 DOMParser 提取現有 title
+                const parser = new DOMParser();
+                const dom = parser.parseFromString(htmlContent, "text/html");
+                const existingTitle = dom.title || '登入';
+
+                // [新增] 同時解析 H1 標題
+                const mainTitleElement = dom.getElementById('custom-main-title');
+                const existingMainTitle = mainTitleElement ? mainTitleElement.textContent : '';
+
+
+                // 設定 Tweak Dialog 的狀態
+                setAiRawHtml(htmlContent);
+                setPreviewHtml(htmlContent);
+                setTweakPageLabel(option.label);
+                setTweakPageValue(option.value);
+                setTweakAllowedDomainId(option.allowed_domain_id ?? '');
+                setTweakTitle(existingTitle);
+                setTweakMainTitle(existingMainTitle);
+                setTweakLogo(null);
+                setTweakNewHtmlFile(null); // 清空
+                setTweakGenerationId(null); // 編輯模式沒有 generationId
+
+                // 標記為編輯模式
+                setEditMode(option.value);
+                setOpenTweakDialog(true);
+
+            } catch (err) {
+                console.error("載入頁面失敗:", err);
+                enqueueSnackbar(err.message, { variant: 'error' });
+            }
         } else {
-            // Only for upload new file
+            // 舊的上傳檔案邏輯 (保留給未使用 AI 生成的管理者)
             setEditMode(null);
             setPageLabel('');
             setPageValue('');
             setOldPageValue('');
             setUploadAllowedDomainId('');
+            setSelectedFile(null);
             setOpenUploadDialog(true);
         }
-        setSelectedFile(null);
     };
 
     const handleOpenCreateDialog = () => {
@@ -652,6 +723,8 @@ const CreateUrl = ({ user, isAdmin }) => {
     const handleCloseTweakDialog = () => {
         setOpenTweakDialog(false);
         setTweakLogo(null);
+        setTweakMainTitle('');
+        setTweakNewHtmlFile(null);
     };
 
     const handleSaveTweak = async () => {
@@ -666,18 +739,28 @@ const CreateUrl = ({ user, isAdmin }) => {
             const file = new File([blob], `${tweakPageValue}.html`, { type: 'text/html;charset=utf-8' });
 
             const formData = new FormData();
+            const isEdit = !!editMode;
+
             formData.append('pageLabel', tweakPageLabel);
             formData.append('pageValue', tweakPageValue);
-            formData.append('oldPageValue', '');
             formData.append('allowedDomainId', tweakAllowedDomainId === '' ? '' : String(tweakAllowedDomainId));
             formData.append('file', file);
             
-            if (tweakGenerationId) {
+            if (isEdit) {
+                formData.append('oldPageValue', editMode);
+            } else {
+                formData.append('oldPageValue', '');
+            }
+
+            // 如果是 AI 新生成的，才帶上 generationId
+            if (!isEdit && tweakGenerationId) {
                 formData.append('generationId', tweakGenerationId);
             }
 
+            const apiUrl = isEdit ? '/api/trigger_page/update' : '/api/trigger_page/upload';
+
             const accessToken = window.localStorage.getItem("accessToken");
-            const response = await fetch('/api/trigger_page/upload', {
+            const response = await fetch(apiUrl, {
                 method: 'POST',
                 headers: {
                     'Authorization': `Bearer ${accessToken}`
@@ -691,9 +774,11 @@ const CreateUrl = ({ user, isAdmin }) => {
                 throw new Error(result.detail || '儲存失敗');
             }
 
-            enqueueSnackbar('AI 頁面儲存成功！', { variant: 'success' });
+            enqueueSnackbar(isEdit ? '頁面修改成功！' : 'AI 頁面儲存成功！', { variant: 'success' });
             setOpenTweakDialog(false);
             fetchPageOptions();
+            // 清除編輯模式
+            setEditMode(null);
 
         } catch (err) {
             console.error("儲存失敗:", err);
@@ -1765,6 +1850,14 @@ const CreateUrl = ({ user, isAdmin }) => {
                                     fullWidth
                                     size="small"
                                 />
+                                <TextField
+                                    label="頁面主標題 (H1)"
+                                    value={tweakMainTitle}
+                                    onChange={(e) => setTweakMainTitle(e.target.value)}
+                                    helperText="頁面內容中的主要標題"
+                                    fullWidth
+                                    size="small"
+                                />
                                 <Button
                                     variant="outlined"
                                     component="label"
@@ -1793,6 +1886,33 @@ const CreateUrl = ({ user, isAdmin }) => {
                                         </IconButton>
                                     </Stack>
                                 )}
+
+                                {editMode && (
+                                    <>
+                                    <Divider sx={{ my: 1 }} />
+                                    <Button
+                                        variant="outlined"
+                                        color="secondary"
+                                        component="label"
+                                        startIcon={<UploadIcon />}
+                                        fullWidth
+                                    >
+                                        上傳新 HTML 檔案覆蓋
+                                        <input
+                                            type="file"
+                                            hidden
+                                            accept=".html"
+                                            onChange={(e) => {
+                                                if (e.target.files && e.target.files.length > 0) {
+                                                    setTweakNewHtmlFile(e.target.files[0]);
+                                                }
+                                            }}
+                                        />
+                                    </Button>
+                                    {tweakNewHtmlFile && <Typography variant="caption" color="text.secondary">已選擇: {tweakNewHtmlFile.name}</Typography>}
+                                    </>
+                                )}
+
                             </Stack>
                         </Grid>
                         <Grid item xs={12} md={7}>

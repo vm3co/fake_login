@@ -1418,6 +1418,9 @@ def get_system_prompt(page_type: str = "field"):
         4. **預留 Logo 容器**：
         - 遇到需要繪製或放置品牌 Logo，請務必將其包裝在`<div id="custom-brand-logo"></div>`的容器中，以利系統後續安全替換與修改。
 
+        5. **預留頁面主標題容器**：
+        - 頁面的主要標題，請務必將其包裝在一個具有 ID 的標籤中，例如 `<h1 id="custom-main-title">網頁標題</h1>`。
+
         [輸出格式要求]
         - 請「只」回傳純 HTML 程式碼。
         - 絕對不要包含任何解釋性文字。
