@@ -64,6 +64,13 @@ def calc_stats(stats: List[Dict[str, Any]]) -> Dict[str, Any]:
     # 任務最後一封的 plan_time
     all_latest_plan_time = max(t["plan_time"] for t in stats) if stats else 0
 
+    # 下一封要寄出（尚未寄出的信中最早的 plan_time，含逾期）
+    next_plan_time = min(
+        (t["plan_time"] for t in stats
+         if t.get("send_time", 0) == 0 and t.get("plan_time")),
+        default=0,
+    )
+
     # 統計觸發人數
     trigger_fields = ["access_src", "click_src", "file_src", "second_access_src", "second_input_src", "second_qrcode_src"]
     totalTriggered = [
@@ -86,6 +93,7 @@ def calc_stats(stats: List[Dict[str, Any]]) -> Dict[str, Any]:
         "today_latest_plan_time": today_latest_plan_time,
         "all_earliest_plan_time": all_earliest_plan_time,
         "all_latest_plan_time": all_latest_plan_time,
+        "next_plan_time": next_plan_time,
     }
 
 # ==============================================================================
@@ -394,7 +402,7 @@ class DBUser:
             "deleted": del_count,
         }
     
-    # Mtmpl model 允許的欄位名稱
+    # Mtmpl model 允許的欄位名稱（來自 SE2 同步）
     _MTMPL_FIELDS = {
         "mtmpl_uuid", "mtmpl_name", "mtmpl_tag", "mtmpl_title", "mtmpl_content",
         "mtmpl_activate", "mtmpl_mail_attached", "mtmpl_create_ut", "mtmpl_update_ut",

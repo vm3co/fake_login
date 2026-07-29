@@ -69,4 +69,10 @@ async def init_db():
         await conn.execute(text(
             "ALTER TABLE customer_accts ADD COLUMN IF NOT EXISTS max_task_count INTEGER"
         ))
+        # await conn.execute(text(
+        #     "ALTER TABLE mtmpl ADD COLUMN IF NOT EXISTS weight_score DOUBLE PRECISION"
+        # ))
+        await conn.execute(text(
+            "ALTER TABLE sendlog_stats ADD COLUMN IF NOT EXISTS next_plan_time BIGINT"
+        ))
 

@@ -1,6 +1,6 @@
 from sqlalchemy import (
-    Column, Integer, String, Boolean, BigInteger, Text, 
-    TIMESTAMP, ForeignKey, JSON, ARRAY
+    Column, Integer, String, Boolean, BigInteger, Text,
+    TIMESTAMP, ForeignKey, JSON, ARRAY, Float
 )
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY as PG_ARRAY
@@ -84,6 +84,7 @@ class SendLogStats(Base):
     today_latest_plan_time = Column(BigInteger)
     all_earliest_plan_time = Column(BigInteger)
     all_latest_plan_time = Column(BigInteger)
+    next_plan_time = Column(BigInteger)
 
 class Acct(Base):
     __tablename__ = "accts"
@@ -148,6 +149,7 @@ class Mtmpl(Base):
     mail_from = Column(Text)
     mail_from_address = Column(Text)
     create_time = Column(TIMESTAMP, server_default=func.now())
+    # weight_score = Column(Float, nullable=True)  # 範例信權重分數（可小數；NULL=未設定）
 
 class Notification(Base):
     __tablename__ = "notifications"

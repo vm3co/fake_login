@@ -62,8 +62,9 @@ const StyledTable = styled(Table)(() => ({
         "&:nth-of-type(7)": { width: "60px" }, // 失敗
         "&:nth-of-type(8)": { width: "80px" }, // 第一封寄出預計日期
         "&:nth-of-type(9)": { width: "80px" }, // 最後一封寄出預計日期
-        "&:nth-of-type(10)": { width: "60px" }, // 是否暫停
-        "&:nth-of-type(11)": { width: "120px" }, // 更新/刪除
+        "&:nth-of-type(10)": { width: "80px" }, // 下一封寄出預計日期
+        "&:nth-of-type(11)": { width: "60px" }, // 是否暫停
+        "&:nth-of-type(12)": { width: "120px" }, // 更新/刪除
       }
     }
   },
@@ -594,6 +595,9 @@ export default function ShowAllTasks() {
                 <TableCell align="center" onClick={() => handleSort("all_latest_plan_time")}>
                   最後一封寄出<br />預計日期 {sortBy === "all_latest_plan_time" && (sortOrder === "asc" ? "▲" : "▼")}
                 </TableCell>
+                <TableCell align="center" onClick={() => handleSort("next_plan_time")}>
+                  下一封寄出<br />預計日期 {sortBy === "next_plan_time" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
                 <TableCell align="center" onClick={() => handleSort("is_pause")}>
                   是否暫停 {sortBy === "is_pause" && (sortOrder === "asc" ? "▲" : "▼")}
                 </TableCell>
@@ -670,6 +674,16 @@ export default function ShowAllTasks() {
                       {stats.all_latest_plan_time === 0 || stats.all_latest_plan_time === undefined
                         ? " - "
                         : formatDate(stats.all_latest_plan_time, "date")}
+                    </TableCell>
+                    <TableCell align="center">
+                      {stats.next_plan_time === 0 || stats.next_plan_time === undefined
+                        ? " - "
+                        : (
+                          <span style={{ color: stats.next_plan_time < Math.floor(Date.now() / 1000) ? "red" : "inherit" }}>
+                            {formatDate(stats.next_plan_time, "date")}
+                            {stats.next_plan_time < Math.floor(Date.now() / 1000) && " (逾期)"}
+                          </span>
+                        )}
                     </TableCell>
                     <TableCell align="center">
                       {row.is_pause ? (
