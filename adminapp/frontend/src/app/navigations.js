@@ -1,7 +1,8 @@
 const navigations = [
   { name: "Dashboard", path: "/dashboard/default", icon: "dashboard" },
+  // { name: "郵件範本權重", path: "/mtmpl", icon: "email" },
   { name: "客戶帳號", path: "/customers", icon: "perm_contact_calendar", disabled: true },
-  { name: "假網址生成", path: "/qrcode", icon: "list", disabled: true },
+  { name: "網頁生成", path: "/qrcode", icon: "list", disabled: true },
   { name: "更換密碼", path: "/change-password", icon: "lock", disabled: true },
   // { label: "PAGES", type: "label" },
   {

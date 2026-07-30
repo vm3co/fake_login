@@ -361,6 +361,9 @@ const CreateUrl = ({ user, isAdmin }) => {
             }
             urlSuffix = `?redirect_url=${encodeURIComponent(customRedirectUrl)}`;
             qrSuffix = `&redirect_url=${encodeURIComponent(customRedirectUrl)}`;
+        } else if (redirectOption === 'password-wrong') {
+            urlSuffix = `?redirect_url=password`;
+            qrSuffix = `&redirect_url=password`;        
         } else if (redirectOption === 'self') {
             urlSuffix = `?redirect_url=self`;
             qrSuffix = `&redirect_url=self`;
@@ -904,7 +907,7 @@ const CreateUrl = ({ user, isAdmin }) => {
                                 <Box>
                                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
                                         <Typography variant="h5" component="h1">
-                                            假網址生成
+                                            網頁生成
                                         </Typography>
                                         <Stack direction="row" spacing={1}>
                                             <Button
@@ -1129,6 +1132,10 @@ const CreateUrl = ({ user, isAdmin }) => {
                                             </Link>
                                         ) : redirectOption === 'self' ? (
                                             <span style={{ fontWeight: 'bold' }}>停留在目前頁面</span>
+                                        ) : redirectOption === 'password-wrong' ? (
+                                            <Link href={`${baseUrl}/password-wrong`} target="_blank" rel="noopener noreferrer">
+                                                密碼錯誤頁面
+                                            </Link>
                                         ) : (
                                             <Link href={customRedirectUrl} target="_blank" rel="noopener noreferrer">
                                                 {customRedirectUrl || '尚未設定 URL'}
@@ -1562,6 +1569,23 @@ const CreateUrl = ({ user, isAdmin }) => {
                                         onClick={() => window.open(`${baseUrl}/warning`, '_blank')}
                                     >
                                         預覽警告頁面
+                                    </Button>
+                                </Box>
+                            )}
+
+                            <FormControlLabel
+                                value="password-wrong"
+                                control={<Radio />}
+                                label="密碼錯誤警告頁面"
+                            />
+                            {redirectOption === 'password-wrong' && (
+                                <Box sx={{ ml: 4, mb: 2 }}>
+                                    <Button
+                                        variant="outlined"
+                                        size="small"
+                                        onClick={() => window.open(`${baseUrl}/password-wrong`, '_blank')}
+                                    >
+                                        預覽密碼錯誤警告頁面
                                     </Button>
                                 </Box>
                             )}

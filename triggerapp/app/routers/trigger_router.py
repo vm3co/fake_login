@@ -99,6 +99,11 @@ async def warning_page(request: Request):
     # 這裡會去 templates 資料夾找 warning.html
     return templates.TemplateResponse(request=request, name="warning.html", context={"request": request, "title": "社交工程演練警告"})
 
+@router.get("/password-wrong")
+async def password_warning_page(request: Request):
+    # 這裡會去 templates 資料夾找 password-wrong.html
+    return templates.TemplateResponse(request=request, name="password-wrong.html", context={"request": request, "title": "password-wrong"})
+
 
 
 async def _shared_project_detail(request: Request, page_name: str, project_id: str, url: str, event_type: str):

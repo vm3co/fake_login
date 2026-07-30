@@ -3,10 +3,11 @@
 // !! 還要加上 <script src="/static/js/recordingLoginGoogle.js"></script>
 // !! 下載按鈕觸發：在元素上加 data-role="download-trigger"
 
+const BASE_PATH = (typeof API_BASE_PATH !== 'undefined') ? API_BASE_PATH : "";
 const url = window.location.href;
 
 // // 進頁面 送 IP 紀錄
-// fetch(`${API_BASE_PATH}/api/visit`, {
+// fetch(`${BASE_PATH}/api/visit`, {
 //   method: "POST",
 //   headers: { "Content-Type": "application/json" },
 //   body: JSON.stringify({ url: url })
@@ -25,7 +26,7 @@ const url = window.location.href;
  * @param {string} inputValue - 要記錄的輸入值（登入時為帳號，下載時為 "DOWNLOAD_TRIGGERED"）
  */
 function sendInputRecord(inputValue) {
-    fetch(`${API_BASE_PATH}/api/input`, {
+    fetch(`${BASE_PATH}/api/input`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -50,12 +51,15 @@ function sendInputRecord(inputValue) {
                 if (redirectUrl === 'self') {
                     // 導回自己 (刷新頁面)
                     window.location.reload();
+                } else if (redirectUrl === 'password') {
+                    // 導回密碼警告頁面
+                    window.location.href = `${BASE_PATH}/password-wrong`;
                 } else {
                     window.location.href = redirectUrl;
                 }
             } else {
                 // 重新導向到警告頁面
-                window.location.href = `${API_BASE_PATH}/warning`;
+                window.location.href = `${BASE_PATH}/warning`;
             }
         })
         .catch(err => {

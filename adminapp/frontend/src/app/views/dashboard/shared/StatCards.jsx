@@ -53,7 +53,7 @@ export default function StatCards({ setShowTodayOnly, taskState, setTaskState })
   // 執行中任務：今日尚未寄出>0 且 今日成功寄出>0 且 今日寄出失敗為0
   const runningCount = todayTasks.filter(row => {
     const stats = statsData[row.sendtask_uuid] || {};
-    return Number(stats.todayunsend) > 0 && Number(stats.todaysuccess) > 0 && Number(stats.todaysend) - Number(stats.todaysuccess) === 0;
+    return Number(stats.todayunsend) > 0 && Number(stats.todaysuccess) > 0;
   });
 
   // 尚未開始任務：今日尚未寄出>0 且 今日成功寄出=0 且 今日寄出失敗=0
@@ -75,10 +75,10 @@ export default function StatCards({ setShowTodayOnly, taskState, setTaskState })
   });
 
   const cardList = [
-    { id: "doing", name: "執行中", amount: runningCount.length, Icon: AssignmentLate },
-    { id: "notyet", name: "尚未開始", amount: notStartedCount.length, Icon: AssignmentLate },
-    { id: "done", name: "已完成", amount: completedCount.length, Icon: AssignmentLate },
-    { id: "warning", name: "異常任務", amount: warningCount.length, Icon: AssignmentLate },
+    { id: "doing", name: "今日執行中", amount: runningCount.length, Icon: AssignmentLate },
+    { id: "notyet", name: "今日尚未開始", amount: notStartedCount.length, Icon: AssignmentLate },
+    { id: "done", name: "今日已完成", amount: completedCount.length, Icon: AssignmentLate },
+    { id: "warning", name: "今日異常任務", amount: warningCount.length, Icon: AssignmentLate },
   ];
 
   const handleCardClick = (value) => {
