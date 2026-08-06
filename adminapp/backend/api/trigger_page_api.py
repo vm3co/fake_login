@@ -88,33 +88,6 @@ def get_router(db_user: DBUser):
 
     router = APIRouter()
 
-    # 初始化預設頁面
-    async def init_defaults():
-        defaults = ["test", "modern", "google", "onedrive"]
-        
-        for val in defaults:
-            # Check if exists
-            exists = await db_controller.get_one(TriggerPage, {"page_value": val})
-            
-            if not exists:
-                logger.info(f"初始化預設頁面: {val}")
-                try:
-                    await db_controller.create(TriggerPage, {
-                        "page_value": val,
-                        "page_label": val,
-                        "owner_uuid": None,
-                        "page_type": "system"
-                    })
-                except Exception as e:
-                    logger.error(f"初始化頁面 {val} 失敗: {e}")
-
-    @router.on_event("startup")
-    async def startup_event():
-        # 注意:在這個架構下 router startup 可能不會被觸發，因為它是透過 include_router 加載的
-        # 我們可能需要在第一次請求時檢查，或是在 main.py 統一做
-        # 這裡先做一個簡單的 lazy check function
-        pass
-
     @router.get(
         "/get",
         summary="獲取所有頁面選項",
@@ -794,263 +767,6 @@ def get_router(db_user: DBUser):
             "new_entry": {"value": pageValue, "label": pageLabel, "owner": user_uuid}
         }
 
-    @router.post(
-        "/generate_with_litellm",
-        summary="使用 LiteLLM 生成頁面",
-        tags=["trigger page"]
-    )
-    async def generate_page_with_litellm(
-        prompt: str = Form(..., description="使用者的提示詞"),
-        refUrl: str = Form(None, description="參考網址 (可選)"),
-        image: UploadFile = File(None, description="參考圖片 (可選)"),
-        pageType: str = Form("field", description="網頁類型: 'field' 欄位觸發 | 'download' 下載按鍵觸發"),
-        current_user: dict = Depends(get_current_user)
-    ):
-        """
-        接收 Prompt，呼叫 LiteLLM (Local) 生成 HTML。
-        """
-        # 1. 取得設定
-        server_ip = os.getenv("LITELLM_SERVER_IP")
-        api_key = os.getenv("LITELLM_API_KEY")
-
-        if not server_ip or not api_key:
-             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="未設定 LiteLLM 環境變數 (LITELLM_SERVER_IP, LITELLM_API_KEY)。"
-            )
-
-        # 2. 設定 Client
-        try:
-            client = OpenAI(
-                api_key=api_key,
-                base_url=f"http://{server_ip}/v1"
-            )
-            # 使用 gemma-27b (專家 / 邏輯強)
-            model_name = "gemma-27b"
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"LiteLLM Client 設定失敗: {str(e)}")
-
-        # 3. 準備 System Prompt (共用)
-        system_instructions = get_system_prompt(pageType)
-        user_prompt = f"使用者的需求：{prompt}"
-        if refUrl:
-            user_prompt += f"\n\n[參考網址]\n使用者提供了一個參考網址：{refUrl}\n這是使用者想模仿的目標。請盡可能參考該網址對應的現有網站設計風格。"
-
-        # 建構 user message 內容
-        user_content = []
-        user_content.append({"type": "text", "text": user_prompt})
-
-        # 處理圖片
-        if image:
-            try:
-                # 讀取檔案內容
-                file_bytes = await image.read()
-                # 轉 Base64
-                base64_image = base64.b64encode(file_bytes).decode('utf-8')
-                
-                # 取得 mime type
-                mime_type = image.content_type or "image/jpeg"
-                
-                user_content.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{mime_type};base64,{base64_image}"
-                    }
-                })
-            except Exception as e:
-                logger.error(f"處理圖片失敗: {e}")
-                # 失敗時不中斷，僅記錄錯誤
-                pass
-            finally:
-                await image.close()
-
-        messages = [
-            {"role": "system", "content": system_instructions},
-            {"role": "user", "content": user_content}
-        ]
-
-        # 4. 呼叫模型
-        try:
-            # LiteLLM 範例使用 stream=True，這裡為了 API 簡單性，我們先用非串流，或者看前端是否支援串流。
-            # 原本的 generate_with_ai 也是回傳 PlainTextResponse，所以這裡先用非串流。
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                stream=False
-            )
-            
-            generated_text = response.choices[0].message.content
-            
-            # 清理可能的 markdown 標記
-            generated_text = generated_text.replace("```html", "").replace("```", "").strip()
-
-            return PlainTextResponse(generated_text)
-
-        except Exception as e:
-            logger.error(f"LiteLLM 生成失敗: {e}")
-            raise HTTPException(status_code=500, detail=f"LiteLLM 生成失敗: {str(e)}")
-
-    @router.post(
-        "/generate_with_gpt",
-        summary="使用 GPT 生成頁面",
-        tags=["trigger page"]
-    )
-    async def generate_page_with_gpt(
-        prompt: str = Form(..., description="使用者的提示詞"),
-        refUrl: str = Form(None, description="參考網址 (可選)"),
-        image: UploadFile = File(None, description="參考圖片 (可選)"),
-        pageType: str = Form("field", description="網頁類型: 'field' 欄位觸發 | 'download' 下載按鍵觸發"),
-        current_user: dict = Depends(get_current_user)
-    ):
-        """
-        接收 Prompt，呼叫 OpenAI GPT 生成 HTML。
-        """
-        # 1. 取得設定
-        api_key = os.getenv("OPENAI_API_KEY")
-
-        if not api_key:
-             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="未設定 OPENAI_API_KEY 環境變數。"
-            )
-
-        # 2. 設定 Client
-        try:
-            client = OpenAI(api_key=api_key)
-            # 使用 GPT-5.2
-            model_name = "gpt-5.2" 
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"OpenAI Client 設定失敗: {str(e)}")
-
-        # 3. 準備 System Prompt (共用)
-        system_instructions = get_system_prompt(pageType)
-        user_prompt = f"使用者的需求：{prompt}"
-        if refUrl:
-            user_prompt += f"\n\n[參考網址]\n使用者提供了一個參考網址：{refUrl}\n這是使用者想模仿的目標。請盡可能參考該網址對應的現有網站設計風格。"
-
-        # 建構 user message 內容
-        user_content = []
-        user_content.append({"type": "text", "text": user_prompt})
-
-        # 處理圖片
-        if image:
-            try:
-                # 讀取檔案內容
-                file_bytes = await image.read()
-                # 轉 Base64
-                base64_image = base64.b64encode(file_bytes).decode('utf-8')
-                
-                # 取得 mime type
-                mime_type = image.content_type or "image/jpeg"
-                
-                user_content.append({
-                    "type": "image_url",
-                    "image_url": {
-                        "url": f"data:{mime_type};base64,{base64_image}"
-                    }
-                })
-            except Exception as e:
-                logger.error(f"處理圖片失敗: {e}")
-                pass
-            finally:
-                await image.close()
-
-        messages = [
-            {"role": "system", "content": system_instructions},
-            {"role": "user", "content": user_content}
-        ]
-
-        # 4. 呼叫模型
-        try:
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=messages,
-                stream=False
-            )
-            
-            generated_text = response.choices[0].message.content
-            
-            # 清理可能的 markdown 標記
-            generated_text = generated_text.replace("```html", "").replace("```", "").strip()
-
-            return PlainTextResponse(generated_text)
-
-        except Exception as e:
-            logger.error(f"GPT 生成失敗: {e}")
-            raise HTTPException(status_code=500, detail=f"GPT 生成失敗: {str(e)}")
-
-    @router.post(
-        "/generate_with_gemini",
-        summary="使用 Gemini 生成頁面",
-        tags=["trigger page"]
-    )
-    async def generate_page_with_gemini(
-        prompt: str = Form(..., description="使用者的提示詞"),
-        refUrl: str = Form(None, description="參考網址 (可選)"),
-        image: UploadFile = File(None, description="參考圖片 (可選)"),
-        pageType: str = Form("field", description="網頁類型: 'field' 欄位觸發 | 'download' 下載按鍵觸發"),
-        current_user: dict = Depends(get_current_user)
-    ):
-        """
-        接收 Prompt，呼叫 Gemini API 生成 HTML。
-        """
-        
-        
-        # 1. API Key 使用環境變數
-        gemini_api_key = os.getenv("GEMINI_APY_KEY")
-        
-        if not gemini_api_key:
-             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="未提供 Gemini API Key，且後端環境變數也未設定 GEMINI_APY_KEY。"
-            )
-
-        # 2. 設定 Gemini
-        try:
-            genai.configure(api_key=gemini_api_key)
-            model = genai.GenerativeModel("gemini-2.5-flash") # 使用 gemini-2.5-flash
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Gemini 設定失敗: {str(e)}")
-
-        # 3. 準備 System Prompt
-        system_instructions = get_system_prompt(pageType)
-
-        prompt_suffix = f"使用者的需求：{prompt}"
-        if refUrl:
-            prompt_suffix += f"\n\n[參考網址]\n使用者提供了一個參考網址：{refUrl}\n這是使用者想模仿的目標。請盡可能參考該網址對應的現有網站設計風格。"
-
-        full_prompt = f"{system_instructions}\n\n{prompt_suffix}"
-
-        # 準備 Content
-        contents = [full_prompt]
-
-        if image:
-             try:
-                # 讀取檔案
-                file_bytes = await image.read()
-                # 轉為 PIL Image
-                pil_image = Image.open(io.BytesIO(file_bytes))
-                contents.append(pil_image)
-             except Exception as e:
-                logger.error(f"Gemini 處理圖片失敗: {e}")
-                pass
-             finally:
-                # 這裡不需要特別 close UploadFile，但為了保險
-                await image.close()
-
-        # 4. 呼叫模型
-        try:
-            response = await model.generate_content_async(contents)
-            generated_text = response.text
-            
-            # 清理可能的 markdown 標記
-            generated_text = generated_text.replace("```html", "").replace("```", "").strip()
-
-            return PlainTextResponse(generated_text)
-        except Exception as e:
-            logger.error(f"Gemini 生成失敗: {e}")
-            raise HTTPException(status_code=500, detail=f"Gemini 生成失敗: {str(e)}")
-
     async def call_llm(model: str, system_instructions: str, user_prompt: str, ref_url: str = None, image: UploadFile = None, screenshot_b64: str = None, generation_id: str = None) -> AsyncIterator[Tuple[str, str]]:
         """
         統一呼叫各家 LLM 模型的內部入口函式（async generator）
@@ -1114,7 +830,7 @@ def get_router(db_user: DBUser):
             # (1) 基礎參數初始化
             base_url = None
             api_key = None
-            model_name = "gpt-5.2"
+            model_name = ""
             verify_cert = True
             headers = {"Content-Type": "application/json"}
             event_hooks = {}
@@ -1157,10 +873,23 @@ def get_router(db_user: DBUser):
                 verify_cert = False
                 is_text_only = not supports_vision
 
+            elif model in ("gpt_terra", "gpt_sol"):
+                # 獨立於 "litellm" 分支，走專屬的 Gateway 位址設定，
+                # 未來若要調整 GPT 這條路的 URL 不會影響到 litellm(gemma-27b) 那條路
+                # terra / sol 是同一個 Gateway 底下的兩個不同模型，各自的實際模型名稱可用環境變數覆蓋
+                GPT_MODELS = {
+                    "gpt_terra": os.getenv("GPT_MODEL_NAME_TERRA", "gpt-5.6-terra"),
+                    "gpt_sol": os.getenv("GPT_MODEL_NAME_SOL", "gpt-5.6-sol"),
+                }
+                api_key = os.getenv("GPT_LITELLM_API_KEY")
+                server_ip = os.getenv("GPT_LITELLM_SERVER_IP")
+                if not api_key or not server_ip:
+                    raise Exception("未設定 GPT LiteLLM 環境變數 (GPT_LITELLM_SERVER_IP, GPT_LITELLM_API_KEY)")
+                base_url = f"http://{server_ip}/v1"
+                model_name = GPT_MODELS[model]
+
             else:
-                api_key = os.getenv("OPENAI_API_KEY")
-                if not api_key:
-                    raise Exception("未設定 OPENAI_API_KEY")
+                raise Exception(f"不支援的模型類型: {model}")
 
             # (3) 建立 SYNC HTTP Client（與原始碼相同設定，確保連線穩定）
             http_client = httpx.Client(

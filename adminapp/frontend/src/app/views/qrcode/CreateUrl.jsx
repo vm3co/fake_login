@@ -44,6 +44,7 @@ import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import DownloadIcon from '@mui/icons-material/Download';
+import FileCopyIcon from '@mui/icons-material/FileCopy';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 
 
@@ -90,7 +91,7 @@ const CreateUrl = ({ user, isAdmin }) => {
     const [openAiDialog, setOpenAiDialog] = useState(false);
     const [aiPrompt, setAiPrompt] = useState('');
     const [aiRefUrl, setAiRefUrl] = useState('');
-    const [aiModel, setAiModel] = useState('gemini');
+    const [aiModel, setAiModel] = useState('gpt_terra');
     const [aiImage, setAiImage] = useState(null);
     const [aiPageType, setAiPageType] = useState('field'); // 'field' 欄位觸發 | 'download' 下載按鍵觸發
     const [generating, setGenerating] = useState(false);
@@ -110,8 +111,12 @@ const CreateUrl = ({ user, isAdmin }) => {
     const [tweakGenerationId, setTweakGenerationId] = useState(null);
     const [tweakNewHtmlFile, setTweakNewHtmlFile] = useState(null);
 
+    // [新增] Logo 微調相關 State
+    const [logoRemoved, setLogoRemoved] = useState(false);
+    const [hasExistingLogo, setHasExistingLogo] = useState(false);
+
     // 支援視覺輸入（圖片）的模型清單
-    const VISION_MODELS = ['gemini', 'gpt', 'gchat_gpt55', 'gchat_gpt54', 'gchat_gpt54mini', 'gchat_gemma12b'];
+    const VISION_MODELS = ['gemini', 'gpt_terra', 'gpt_sol', 'gchat_gpt55', 'gchat_gpt54', 'gchat_gpt54mini', 'gchat_gemma12b'];
     const supportsVision = VISION_MODELS.includes(aiModel);
 
 
@@ -229,6 +234,11 @@ const CreateUrl = ({ user, isAdmin }) => {
                 } catch (err) {
                     console.error("處理 Logo 預覽失敗", err);
                 }
+            } else if (logoRemoved) {
+                const logoContainer = dom.getElementById('custom-brand-logo');
+                if (logoContainer) {
+                    logoContainer.innerHTML = '';
+                }
             }
 
             if (!isMounted) return;
@@ -245,7 +255,7 @@ const CreateUrl = ({ user, isAdmin }) => {
         return () => {
             isMounted = false;
         };
-    }, [tweakTitle, tweakMainTitle, tweakLogo, aiRawHtml, openTweakDialog]);
+    }, [tweakTitle, tweakMainTitle, tweakLogo, aiRawHtml, openTweakDialog, logoRemoved]);
 
     // 監聽是否有新的 HTML 檔案被上傳，若有則更新 aiRawHtml
     useEffect(() => {
@@ -263,6 +273,10 @@ const CreateUrl = ({ user, isAdmin }) => {
                 if (mainTitleElement) {
                     setTweakMainTitle(mainTitleElement.textContent);
                 }
+                // [新增] 同時解析 Logo 存在
+                const logoContainer = dom.getElementById('custom-brand-logo');
+                setHasExistingLogo(!!(logoContainer && logoContainer.querySelector('img')));
+                setLogoRemoved(false); // 重置移除狀態
                 setTweakLogo(null); // 清空舊 logo
             };
             reader.onerror = (err) => enqueueSnackbar(`讀取檔案失敗: ${err}`, { variant: 'error' });
@@ -425,6 +439,9 @@ const CreateUrl = ({ user, isAdmin }) => {
                 // [新增] 同時解析 H1 標題
                 const mainTitleElement = dom.getElementById('custom-main-title');
                 const existingMainTitle = mainTitleElement ? mainTitleElement.textContent : '';
+                // [新增] 同時解析 Logo 存在
+                const logoContainer = dom.getElementById('custom-brand-logo');
+                const hasLogo = !!(logoContainer && logoContainer.querySelector('img'));
 
 
                 // 設定 Tweak Dialog 的狀態
@@ -437,6 +454,8 @@ const CreateUrl = ({ user, isAdmin }) => {
                 setTweakMainTitle(existingMainTitle);
                 setTweakLogo(null);
                 setTweakNewHtmlFile(null); // 清空
+                setLogoRemoved(false);
+                setHasExistingLogo(hasLogo);
                 setTweakGenerationId(null); // 編輯模式沒有 generationId
 
                 // 標記為編輯模式
@@ -698,6 +717,23 @@ const CreateUrl = ({ user, isAdmin }) => {
                             setTweakTitle('登入');
                             setTweakLogo(null);
 
+                            // [新增] 解析 HTML 內容以取得更精確的預設值
+                            const parser = new DOMParser();
+                            const dom = parser.parseFromString(htmlContent, "text/html");
+                            const existingTitle = dom.title || '登入';
+                            const mainTitleElement = dom.getElementById('custom-main-title');
+                            const existingMainTitle = mainTitleElement ? mainTitleElement.textContent : '';
+                            const logoContainer = dom.getElementById('custom-brand-logo');
+                            const hasLogo = !!(logoContainer && logoContainer.querySelector('img'));
+
+                            setTweakTitle(existingTitle);
+                            setTweakMainTitle(existingMainTitle);
+
+                            // 設定 Logo 相關狀態
+                            setLogoRemoved(false);
+                            setHasExistingLogo(hasLogo);
+
+
                             setOpenAiDialog(false);
                             setOpenTweakDialog(true);
 
@@ -725,9 +761,12 @@ const CreateUrl = ({ user, isAdmin }) => {
 
     const handleCloseTweakDialog = () => {
         setOpenTweakDialog(false);
+        // 清空所有微調狀態
         setTweakLogo(null);
         setTweakMainTitle('');
         setTweakNewHtmlFile(null);
+        setLogoRemoved(false);
+        setHasExistingLogo(false);
     };
 
     const handleSaveTweak = async () => {
@@ -804,6 +843,57 @@ const CreateUrl = ({ user, isAdmin }) => {
             window.removeEventListener('beforeunload', handleBeforeUnload);
         };
     }, [generating]);
+
+    // [新增] 複製頁面處理函式
+    const handleCopyPage = async (option) => {
+        enqueueSnackbar('正在準備複製頁面...', { variant: 'info' });
+        try {
+            const accessToken = window.localStorage.getItem("accessToken");
+            const response = await fetch(`/api/trigger_page/download?pageValue=${option.value}`, {
+                headers: { 'Authorization': `Bearer ${accessToken}` }
+            });
+
+            if (!response.ok) {
+                const errData = await response.json();
+                throw new Error(errData.detail || '無法下載頁面原始碼');
+            }
+
+            const htmlContent = await response.text();
+
+            const parser = new DOMParser();
+            const dom = parser.parseFromString(htmlContent, "text/html");
+            const existingTitle = dom.title || '登入';
+            const mainTitleElement = dom.getElementById('custom-main-title');
+            const existingMainTitle = mainTitleElement ? mainTitleElement.textContent : '';
+            const logoContainer = dom.getElementById('custom-brand-logo');
+            const hasLogo = !!(logoContainer && logoContainer.querySelector('img'));
+
+            // 設定 Tweak Dialog 的狀態
+            setAiRawHtml(htmlContent);
+            setPreviewHtml(htmlContent);
+            setTweakPageLabel(`${option.label} (副本)`);
+            const timestamp = new Date().getTime();
+            // 避免 value 變成 xxx_copy_123_copy_456
+            const baseValue = option.value.replace(/_copy_\d+$/, '');
+            setTweakPageValue(`${baseValue}_copy_${timestamp}`);
+            setTweakAllowedDomainId(option.allowed_domain_id ?? '');
+            setTweakTitle(existingTitle);
+            setTweakMainTitle(existingMainTitle);
+            setTweakLogo(null);
+            setTweakNewHtmlFile(null);
+            setTweakGenerationId(null);
+            setLogoRemoved(false);
+            setHasExistingLogo(hasLogo);
+
+            // 複製不是編輯模式
+            setEditMode(null);
+            setOpenTweakDialog(true);
+
+        } catch (err) {
+            console.error("複製頁面失敗:", err);
+            enqueueSnackbar(err.message, { variant: 'error' });
+        }
+    };
 
     // [新增] 刪除處理函式
     const handleOpenDeleteDialog = (option) => {
@@ -1084,6 +1174,14 @@ const CreateUrl = ({ user, isAdmin }) => {
                                                                                     title="下載原始碼"
                                                                                 >
                                                                                     <DownloadIcon fontSize="small" />
+                                                                                </IconButton>
+                                                                                <IconButton
+                                                                                    size="small"
+                                                                                    color="secondary"
+                                                                                    onClick={(e) => { e.stopPropagation(); handleCopyPage(option); }}
+                                                                                    title="複製"
+                                                                                >
+                                                                                    <FileCopyIcon fontSize="small" />
                                                                                 </IconButton>
                                                                                 {(() => {
                                                                                     const isSystemPage = option.owner === null;
@@ -1658,7 +1756,8 @@ const CreateUrl = ({ user, isAdmin }) => {
                                 }}
                             >
                                 <FormControlLabel value="gemini" control={<Radio />} label="Gemini (預設)" />
-                                <FormControlLabel value="gpt" control={<Radio />} label="GPT" />
+                                <FormControlLabel value="gpt_terra" control={<Radio />} label="GPT terra(liteLLM)" />
+                                <FormControlLabel value="gpt_sol" control={<Radio />} label="GPT sol(liteLLM)" />
                                 <FormControlLabel value="litellm" control={<Radio />} label="LiteLLM" />
                                 <FormControlLabel value="gchat_gemma431b" control={<Radio />} label="GChat (Gemma-4-31B)" disabled />
                                 <FormControlLabel value="gchat_gptoss" control={<Radio />} label="GChat (GPT-OSS 20B)" />
@@ -1895,22 +1994,25 @@ const CreateUrl = ({ user, isAdmin }) => {
                                         accept="image/png, image/jpeg, image/webp, image/svg+xml"
                                         onChange={(e) => {
                                             if (e.target.files && e.target.files.length > 0) {
-                                                setTweakLogo(e.target.files[0]);
+                                                const file = e.target.files[0];
+                                                setTweakLogo(file);
+                                                // 當上傳新檔案時，取消"移除"狀態
+                                                setLogoRemoved(false);
                                             }
                                         }}
                                     />
                                 </Button>
-                                {tweakLogo && (
+                                { (tweakLogo || (hasExistingLogo && !logoRemoved)) && (
                                     <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mt: 1, p: 1, border: '1px solid #ddd', borderRadius: 1 }}>
                                         <Typography variant="body2" noWrap sx={{ maxWidth: '80%' }}>
-                                            已選擇: {tweakLogo.name}
+                                            {tweakLogo ? `已選擇: ${tweakLogo.name}` : '目前頁面包含圖標'}
                                         </Typography>
-                                        <IconButton size="small" onClick={() => setTweakLogo(null)}>
+                                        <IconButton size="small" onClick={() => { setTweakLogo(null); setLogoRemoved(true); }} title="移除圖標">
                                             <CloseIcon fontSize="small" />
                                         </IconButton>
                                     </Stack>
                                 )}
-
+                                
                                 {editMode && (
                                     <>
                                     <Divider sx={{ my: 1 }} />
