@@ -119,10 +119,11 @@ class getSe2data:
             all_data = await fetch_function(*args, **kwargs)
         return all_data
 
-    async def get_sendtasks(self, end_time=None, start_time=None) -> pd.DataFrame | None:
+    async def get_sendtasks(self, end_time=None, start_time=None, keyword=None) -> pd.DataFrame | None:
         '''
         抓取執行中專案清單(帶入參數可以指定專案建立時間)(撇除前測任務)
-        
+
+        :param keyword: 任務名稱關鍵字，帶入後由 SE2 端做關鍵字過濾
         :return: DataFrame 包含 sendtask 資料
         '''
         # 要發送 POST 的目標網址
@@ -130,7 +131,7 @@ class getSe2data:
         url = self.url + API_ENDPOINTS["get_sendtasks"]
 
         filter_time_range = 0 if end_time is None and start_time is None else 99
-            
+
         payload_template = {
             "end_time": end_time,
             "filter_time_range": filter_time_range,
@@ -138,7 +139,7 @@ class getSe2data:
             "order_method": "desc",
             "page_sn": 1,
             "record_page": 20,
-            "sendtask_keyword": "",
+            "sendtask_keyword": keyword or "",
             "sendtask_prestart": "no",
             "start_time": start_time,
             "time_field": "CreateTime"

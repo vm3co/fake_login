@@ -476,6 +476,28 @@ class DBUser:
         today_create_tasks_list = today_create_tasks_df[SENDTASKS_COLUMNS].to_dict(orient="records")
         return today_create_tasks_list
 
+    async def search_sendtasks_by_keyword(self, keyword: str) -> list[dict]:
+        """依關鍵字向 SE2 查詢任務（不限定日期），用於快速確認任務是否已建立"""
+        tasks_df = await get_se2_data.get_sendtasks(keyword=keyword)
+        if tasks_df is None or tasks_df.empty:
+            return []
+        tasks_df = await self._fetch_and_apply_metadata(tasks_df)
+        return tasks_df[SENDTASKS_COLUMNS].to_dict(orient="records")
+
+    async def upsert_sendtasks_by_uuids(self, uuids: list[str]) -> dict:
+        """依 uuid 清單，逐一向 SE2 取得最新單筆資料後 upsert 進本地 sendtasks 表"""
+        records = []
+        not_found = []
+        for u in uuids:
+            record = await self._build_sendtask_record_from_detail(u)
+            if record is None:
+                not_found.append(u)
+            else:
+                records.append(record)
+        if records:
+            await db_controller.upsert(SendTask, records, index_elements=["sendtask_uuid"])
+        return {"upserted": [r["sendtask_uuid"] for r in records], "not_found": not_found}
+
 ## sendlog and sendlog_stats相關操作
     async def check_sendlog(self, uuids_and_create_time: dict, ignore_archived: bool = False):
         """

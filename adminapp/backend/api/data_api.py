@@ -278,6 +278,82 @@ def get_router(db_user):
 
         return {"status": "success", "message": "刷新完成", "data": sendlog_stats_status}
 
+    class SearchTaskRequest(BaseModel):
+        keyword: str
+        orgs: list[str] = []
+
+    @router.post(
+        "/search_sendtasks_by_name",
+        tags=["data"]
+        )
+    async def search_sendtasks_by_name(request: SearchTaskRequest):
+        """
+        依任務名稱關鍵字向 SE2 查詢任務，用於快速確認單一任務是否已建立，
+        不像 refresh_today_create_task 需要掃描整天的任務清單。
+        """
+        try:
+            keyword = request.keyword.strip()
+            if not keyword:
+                return {"status": "error", "message": "請輸入任務名稱關鍵字"}
+
+            matched_tasks = await db_user.search_sendtasks_by_keyword(keyword)
+            if request.orgs and request.orgs != ["admin"]:
+                matched_tasks = [
+                    task for task in matched_tasks
+                    if has_common_orgs(task.get("sendtask_owner_gid", []), request.orgs)
+                ]
+
+            if matched_tasks:
+                uuids = [task["sendtask_uuid"] for task in matched_tasks]
+                local_rows = await db_controller.get(SendTask, {"sendtask_uuid": uuids})
+                local_uuid_set = {row.sendtask_uuid for row in local_rows}
+                for task in matched_tasks:
+                    task["exists_locally"] = task["sendtask_uuid"] in local_uuid_set
+
+            return {"status": "success", "data": matched_tasks}
+        except Exception as e:
+            logger.error(f"Error in search_sendtasks_by_name: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
+    class UpsertSelectedTasksRequest(BaseModel):
+        sendtask_uuids: list[str]
+        orgs: list[str] = []
+
+    @router.post(
+        "/upsert_selected_sendtasks",
+        tags=["data"]
+        )
+    async def upsert_selected_sendtasks(request: UpsertSelectedTasksRequest, background_tasks: BackgroundTasks, current_user: dict = Depends(get_current_user)):
+        """
+        將使用者從關鍵字搜尋結果中勾選的任務，重新向 SE2 取得權威最新資料後 upsert 進本地資料庫。
+        """
+        try:
+            if not request.sendtask_uuids:
+                return {"status": "error", "message": "未選擇任何任務"}
+
+            # 若有帶 orgs，先過濾掉不屬於使用者 org 的 uuid，避免越權寫入/探測其他 org 的任務
+            target_uuids = request.sendtask_uuids
+            if request.orgs and request.orgs != ["admin"]:
+                allowed = []
+                for u in target_uuids:
+                    record = await db_user._build_sendtask_record_from_detail(u)
+                    if record and has_common_orgs(record.get("sendtask_owner_gid", []), request.orgs):
+                        allowed.append(u)
+                target_uuids = allowed
+
+            result = await db_user.upsert_sendtasks_by_uuids(target_uuids)
+            if not result["upserted"]:
+                return {"status": "success", "message": "沒有任務被更新", "data": result}
+
+            sendlog_stats_status = await db_user.refresh_sendlog_stats(result["upserted"])
+            username = current_user.get("username", "unknown")
+            background_tasks.add_task(refresh_and_notify, result["upserted"], username)
+
+            return {"status": "success", "message": "更新完成", "data": {**result, "sendlog_stats_status": sendlog_stats_status}}
+        except Exception as e:
+            logger.error(f"Error in upsert_selected_sendtasks: {str(e)}")
+            return {"status": "error", "message": str(e)}
+
     class CustomerGetSendtasksRequest(BaseModel):
         sendtask_uuids: list[str] = []
 

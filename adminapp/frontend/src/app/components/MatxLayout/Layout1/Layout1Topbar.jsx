@@ -1,4 +1,4 @@
-import { memo, useContext } from "react";
+import { memo, useContext, useState } from "react";
 import { useSnackbar } from 'notistack';
 // import { Link } from "react-router-dom";
 import Box from "@mui/material/Box";
@@ -6,6 +6,7 @@ import Typography from "@mui/material/Typography";
 import MenuItem from "@mui/material/MenuItem";
 import IconButton from "@mui/material/IconButton";
 import AssignmentTurnedIn from "@mui/icons-material/AssignmentTurnedIn";
+import Search from "@mui/icons-material/Search";
 import styled from "@mui/material/styles/styled";
 import useTheme from "@mui/material/styles/useTheme";
 import useMediaQuery from "@mui/material/useMediaQuery";
@@ -17,6 +18,7 @@ import useSettings from "app/hooks/useSettings";
 import { useJob } from "app/contexts/JobContext";
 import { NotificationProvider } from "app/contexts/NotificationContext";
 import NotificationBar from "app/components/NotificationBar/NotificationBar";
+import CheckTaskByNameDialog from "app/components/CheckTaskByNameDialog";
 
 import { Span } from "app/components/Typography";
 import { MatxMenu } from "app/components";
@@ -90,6 +92,8 @@ const Layout1Topbar = () => {
 
   // 檢查是否有正在運行的任務 (為了禁用按鈕)
   const isJobRunning = currentJob && ["running", "pending"].includes(currentJob.status);
+
+  const [checkTaskDialogOpen, setCheckTaskDialogOpen] = useState(false);
 
   const updateSidebarMode = (sidebarSettings) => {
     updateSettings({ layout1Settings: { leftSidebar: { ...sidebarSettings } } });
@@ -169,6 +173,11 @@ const Layout1Topbar = () => {
               <Span sx={{ marginInlineStart: 1 }}>檢查今日建立任務</Span>
             </StyledItem>
 
+            <StyledItem onClick={() => setCheckTaskDialogOpen(true)}>
+              <Search />
+              <Span sx={{ marginInlineStart: 1 }}>依名稱更新任務</Span>
+            </StyledItem>
+
             <StyledItem
               onClick={isJobRunning ? undefined : handleUpdateMtmpl}
               disabled={isJobRunning}
@@ -206,6 +215,12 @@ const Layout1Topbar = () => {
           </MatxMenu>
         </Box>
       </TopbarContainer>
+
+      <CheckTaskByNameDialog
+        open={checkTaskDialogOpen}
+        onClose={() => setCheckTaskDialogOpen(false)}
+        orgs={user.orgs}
+      />
     </TopbarRoot>
   );
 };
