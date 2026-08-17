@@ -75,4 +75,29 @@ async def init_db():
         await conn.execute(text(
             "ALTER TABLE sendlog_stats ADD COLUMN IF NOT EXISTS next_plan_time BIGINT"
         ))
+        # sendtasks: 補上 SE2 get_testcase 完整欄位 (idempotent)
+        await conn.execute(text(
+            "ALTER TABLE sendtasks "
+            "ADD COLUMN IF NOT EXISTS testcase_uuid TEXT, "
+            "ADD COLUMN IF NOT EXISTS testcase_id TEXT, "
+            "ADD COLUMN IF NOT EXISTS testcase_unit TEXT, "
+            "ADD COLUMN IF NOT EXISTS testcase_create_ut BIGINT, "
+            "ADD COLUMN IF NOT EXISTS testcase_update_ut BIGINT, "
+            "ADD COLUMN IF NOT EXISTS pre_test_person_count INTEGER, "
+            "ADD COLUMN IF NOT EXISTS test_person_count INTEGER, "
+            "ADD COLUMN IF NOT EXISTS mail_server TEXT[], "
+            "ADD COLUMN IF NOT EXISTS mail_speed INTEGER, "
+            "ADD COLUMN IF NOT EXISTS mail_logic INTEGER, "
+            "ADD COLUMN IF NOT EXISTS mail_logging INTEGER, "
+            "ADD COLUMN IF NOT EXISTS mail_template TEXT[], "
+            "ADD COLUMN IF NOT EXISTS mail_delivery JSONB, "
+            "ADD COLUMN IF NOT EXISTS mail_delivery_d BIGINT[], "
+            "ADD COLUMN IF NOT EXISTS testcase_owner_gid TEXT[], "
+            "ADD COLUMN IF NOT EXISTS testcase_public BOOLEAN, "
+            "ADD COLUMN IF NOT EXISTS alert_content TEXT, "
+            "ADD COLUMN IF NOT EXISTS redirect_url TEXT, "
+            "ADD COLUMN IF NOT EXISTS clicklink_action INTEGER, "
+            "ADD COLUMN IF NOT EXISTS adv_mail_delivery BOOLEAN, "
+            "ADD COLUMN IF NOT EXISTS adv_mail_delivery_val JSONB"
+        ))
 

@@ -114,6 +114,15 @@ SENDLOG_COLUMNS = ["uuid", "target_email", "person_info", "template_uuid", "plan
                    "click_time", "click_src", "click_dev", "file_time", "file_src", "file_dev",
                    "order_no", "template_order", "template_selection", "trigger_man"]
 
+# 來自 SE2 get_testcase 回應、任務啟動當下一次性同步進 sendtasks 的欄位
+TESTCASE_DETAIL_COLUMNS = [
+    "testcase_uuid", "testcase_id", "testcase_unit", "testcase_create_ut", "testcase_update_ut",
+    "pre_test_person_count", "test_person_count", "mail_server", "mail_speed", "mail_logic",
+    "mail_logging", "mail_template", "mail_delivery", "mail_delivery_d", "testcase_owner_gid",
+    "testcase_public", "alert_content", "redirect_url", "clicklink_action",
+    "adv_mail_delivery", "adv_mail_delivery_val",
+]
+
 
 class DBUser:
     def __init__(self):
@@ -265,6 +274,16 @@ class DBUser:
             "stop_time_new": metadata.get("stop_time_new", -1),
             "person_count": summary.get("person_count", 0),
         }
+
+    async def _build_testcase_detail_fields(self, uuid: str) -> dict | None:
+        """
+        從 SE2 get_testcase 取得專案完整資料，僅回傳 TESTCASE_DETAIL_COLUMNS 中定義的欄位。
+        供任務啟動當下一次性同步進 sendtasks 用，回傳 None 表示 API 失敗或無資料。
+        """
+        data = await get_se2_data.get_testcase(uuid)
+        if not data:
+            return None
+        return {col: data.get(col) for col in TESTCASE_DETAIL_COLUMNS}
 
     async def _sync_sendtask_from_se2(self, uuid: str) -> bool:
         """

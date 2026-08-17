@@ -848,11 +848,18 @@ def get_router(db_user):
                     media_type="text/plain"
                 )
 
-            detail_rows = await db_controller.get(SendLogDetail, filters={"sendtask_uuid": request.sendtask_uuid})
+            detail_rows = await db_controller.get(
+                SendLogDetail,
+                filters={"sendtask_uuid": request.sendtask_uuid},
+                order_by=SendLogDetail.target_email
+            )
             details = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in detail_rows]
 
-            # 取得實際使用到的 template_uuid（去重）
-            used_template_uuids = list({d["template_uuid"] for d in details if d.get("template_uuid")})
+            # 任務設計的信件範本清單
+            if task.mail_template:
+                used_template_uuids = list(task.mail_template)
+            else:
+                used_template_uuids = list({d["template_uuid"] for d in details if d.get("template_uuid")})
             mtmpl_rows = await db_controller.get(Mtmpl, filters={"mtmpl_uuid": used_template_uuids}) if used_template_uuids else []
             mtmpl_map = {getattr(r, "mtmpl_uuid"): r for r in mtmpl_rows}
 
@@ -923,16 +930,20 @@ def get_router(db_user):
                 end_ts   = task.test_end_ut
                 sent_end_ts = task.send_end_ut
 
-            # sent_date：呼叫 get_testcase 取得 mail_delivery_d
+            # sent_date：優先用本地已同步的 mail_delivery_d，SE2 當機時也能正常匯出
             sent_date_str = "[]"
-            try:
-                testcase_data = await get_se2_data.get_testcase(request.sendtask_uuid)
-                if testcase_data and "mail_delivery_d" in testcase_data:
-                    mail_delivery_d = testcase_data.get("mail_delivery_d", [])
-                    if isinstance(mail_delivery_d, list):
-                        sent_date_str = "[" + ", ".join(str(d) for d in mail_delivery_d) + "]"
-            except Exception as e:
-                logger.error(f"Error fetching mail_delivery_d for sent_date: {e}")
+            if task.mail_delivery_d:
+                sent_date_str = "[" + ", ".join(str(d) for d in task.mail_delivery_d) + "]"
+            else:
+                # 舊任務尚未回填過 mail_delivery_d，fallback 回即時呼叫 SE2
+                try:
+                    testcase_data = await get_se2_data.get_testcase(request.sendtask_uuid)
+                    if testcase_data and "mail_delivery_d" in testcase_data:
+                        mail_delivery_d = testcase_data.get("mail_delivery_d", [])
+                        if isinstance(mail_delivery_d, list):
+                            sent_date_str = "[" + ", ".join(str(d) for d in mail_delivery_d) + "]"
+                except Exception as e:
+                    logger.error(f"Error fetching mail_delivery_d for sent_date: {e}")
 
             info_data: dict = {
                 "customer_name": "[customer_name]",

@@ -28,6 +28,29 @@ class SendTask(Base):
     sendtask_public = Column(Boolean, nullable=True)
     server_url      = Column(Text, nullable=True)
 
+    # 以下欄位來自 SE2 get_testcase，任務啟動當下一次性同步（詳見 db_user.TESTCASE_DETAIL_COLUMNS）
+    testcase_uuid = Column(Text, nullable=True)
+    testcase_id = Column(Text, nullable=True)
+    testcase_unit = Column(Text, nullable=True)
+    testcase_create_ut = Column(BigInteger, nullable=True)
+    testcase_update_ut = Column(BigInteger, nullable=True)
+    pre_test_person_count = Column(Integer, nullable=True)
+    test_person_count = Column(Integer, nullable=True)
+    mail_server = Column(PG_ARRAY(Text), nullable=True)
+    mail_speed = Column(Integer, nullable=True)
+    mail_logic = Column(Integer, nullable=True)
+    mail_logging = Column(Integer, nullable=True)
+    mail_template = Column(PG_ARRAY(Text), nullable=True)
+    mail_delivery = Column(JSONB, nullable=True)
+    mail_delivery_d = Column(PG_ARRAY(BigInteger), nullable=True)
+    testcase_owner_gid = Column(PG_ARRAY(Text), nullable=True)
+    testcase_public = Column(Boolean, nullable=True)
+    alert_content = Column(Text, nullable=True)
+    redirect_url = Column(Text, nullable=True)
+    clicklink_action = Column(Integer, nullable=True)
+    adv_mail_delivery = Column(Boolean, nullable=True)
+    adv_mail_delivery_val = Column(JSONB, nullable=True)
+
 class SendLogDetail(Base):
     __tablename__ = "send_log_details"
 

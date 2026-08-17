@@ -276,6 +276,9 @@ async def create_sendtask(request: SendtaskUuidRequest):
                 _db_user = DBUser()
                 record = await _db_user._build_sendtask_record_from_detail(final_uuid)
                 if record:
+                    detail_fields = await _db_user._build_testcase_detail_fields(final_uuid)
+                    if detail_fields:
+                        record.update(detail_fields)
                     await db_controller.upsert(
                         SendTask,
                         [record],
