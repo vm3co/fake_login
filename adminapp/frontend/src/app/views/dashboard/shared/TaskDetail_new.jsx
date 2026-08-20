@@ -173,11 +173,12 @@ const formatInputInfo = (info) => {
   }
 };
 
-// 顯示 Log 資訊的共用元件
-const LogInfo = ({ time, src, dev }) => {
+// 顯示 Log 資訊的共用元件（count 為該觸發總次數，>1 時在右下角顯示小徽章）
+const LogInfo = ({ time, src, dev, count }) => {
   if (!time) return '-';
+  const showCount = Number(count) > 1;
   return (
-    <Box>
+    <Box sx={{ position: 'relative', pr: showCount ? 2.5 : 0, pb: showCount ? 1 : 0 }}>
       <Typography variant="body2" sx={{ fontWeight: 'bold' }}>
         {formatDateTime(time)}
       </Typography>
@@ -187,6 +188,27 @@ const LogInfo = ({ time, src, dev }) => {
       <Typography variant="caption" color="text.secondary" sx={{ display: 'block', lineHeight: 1.2, mt: 0.5 }}>
         {dev}
       </Typography>
+      {showCount && (
+        <Typography
+          component="span"
+          title={`共觸發 ${count} 次`}
+          sx={{
+            position: 'absolute',
+            right: 0,
+            bottom: 0,
+            fontSize: '0.7rem',
+            fontWeight: 700,
+            lineHeight: 1.4,
+            color: '#d32f2f',
+            backgroundColor: '#ffebee',
+            border: '1px solid #ffcdd2',
+            borderRadius: '10px',
+            px: 0.7
+          }}
+        >
+          ×{count}
+        </Typography>
+      )}
     </Box>
   );
 };
@@ -872,6 +894,7 @@ export default function TaskDetail({ task, open, onClose }) {
                                 time={log.access_time}
                                 src={log.access_src}
                                 dev={log.access_dev}
+                                count={log.access_count}
                               />
                             </TableCell>
                             <TableCell>
@@ -879,6 +902,7 @@ export default function TaskDetail({ task, open, onClose }) {
                                 time={log.click_time}
                                 src={log.click_src}
                                 dev={log.click_dev}
+                                count={log.click_count}
                               />
                             </TableCell>
                             <TableCell>
@@ -886,6 +910,7 @@ export default function TaskDetail({ task, open, onClose }) {
                                 time={log.file_time}
                                 src={log.file_src}
                                 dev={log.file_dev}
+                                count={log.file_count}
                               />
                             </TableCell>
                             <TableCell>
@@ -893,6 +918,7 @@ export default function TaskDetail({ task, open, onClose }) {
                                 time={log.second_access_time}
                                 src={log.second_access_src}
                                 dev={log.second_access_dev}
+                                count={log.second_access_count}
                               />
                             </TableCell>
                             <TableCell>
@@ -900,6 +926,7 @@ export default function TaskDetail({ task, open, onClose }) {
                                 time={log.second_qrcode_time}
                                 src={log.second_qrcode_src}
                                 dev={log.second_qrcode_dev}
+                                count={log.second_qrcode_count}
                               />
                             </TableCell>
                             <TableCell>
@@ -907,6 +934,7 @@ export default function TaskDetail({ task, open, onClose }) {
                                 time={log.second_input_time}
                                 src={log.second_input_src}
                                 dev={log.second_input_dev}
+                                count={log.second_input_count}
                               />
 
                               {(log.second_input_info && (Array.isArray(log.second_input_info) ? log.second_input_info.length > 0 : true)) && (

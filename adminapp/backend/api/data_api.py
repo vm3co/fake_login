@@ -741,6 +741,9 @@ def get_router(db_user):
                                 filtered_r_list = [r_list[i] for i in keep_indices if i < len(r_list)]
                                 item[r_col] = filtered_r_list if filtered_r_list else None
 
+            # 計算各觸發次數（在陣列被壓成單筆之前，且已套用排除 IP 過濾），供前端顯示
+            item.update(count_trigger_times(item))
+
             # 處理觸發紀錄，只留最後一筆
             for col in trigger_columns:
                 if col in item and isinstance(item[col], list):
