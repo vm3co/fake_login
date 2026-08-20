@@ -152,6 +152,59 @@ def process_data_for_excel(data: List[dict]) -> List[dict]:
         processed_data.append(processed_row)
     return processed_data
 
+
+# 各觸發狀況的計次欄位：(時間欄位, 次數欄位, 插在哪個欄位後面)
+TRIGGER_COUNT_FIELDS = [
+    ("access_time", "access_count", "access_dev"),
+    ("click_time", "click_count", "click_dev"),
+    ("file_time", "file_count", "file_dev"),
+    ("second_access_time", "second_access_count", "second_access_dev"),
+    ("second_qrcode_time", "second_qrcode_count", "second_qrcode_dev"),
+    ("second_input_time", "second_input_count", "second_input_info"),
+]
+
+
+def count_trigger_times(row: dict) -> dict:
+    """
+    由原始 sendlog 資料計算每種觸發的次數。
+    以 *_time 陣列中的有效值計數（陣列即為歷次觸發紀錄）。
+    """
+    counts = {}
+    for time_col, count_col, _anchor in TRIGGER_COUNT_FIELDS:
+        value = row.get(time_col)
+        if isinstance(value, list):
+            times = sum(1 for ts in value if ts)
+        elif value:
+            times = 1
+        else:
+            times = 0
+        counts[count_col] = times
+    return counts
+
+
+def insert_trigger_counts(row: dict, counts: dict) -> dict:
+    """
+    把次數欄位插在對應觸發群組的最後一欄之後，方便在 Excel 中對照；
+    找不到對應欄位時補在最尾端。
+    """
+    anchors = {}
+    for _time_col, count_col, anchor in TRIGGER_COUNT_FIELDS:
+        anchors.setdefault(anchor, []).append(count_col)
+
+    ordered = {}
+    inserted = set()
+    for col_name, value in row.items():
+        ordered[col_name] = value
+        for count_col in anchors.get(col_name, []):
+            ordered[count_col] = counts.get(count_col, 0)
+            inserted.add(count_col)
+
+    for count_col, value in counts.items():
+        if count_col not in inserted:
+            ordered[count_col] = value
+    return ordered
+
+
 def get_router(db_user):
     """
     初始化路由
@@ -739,30 +792,37 @@ def get_router(db_user):
                 )
 
             # --- B. 處理資料 (使用我們提煉的函式) ---
+            # 次數要在原始資料 (陣列型態) 上先算好，之後陣列會被合併成字串
+            trigger_counts = [count_trigger_times(row) for row in data]
             processed_data = process_data_for_excel(data)
 
             # Get templates
             mtmpl_models = await db_controller.get(Mtmpl)
             mtmpl_list = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in mtmpl_models]
 
-            for data in processed_data:
-                # data is a dict here from process_data_for_excel
+            for idx, row in enumerate(processed_data):
+                # row is a dict here from process_data_for_excel
                 # remove uuid if present
-                if "uuid" in data:
-                    del data["uuid"]
-                data["mtmpl_name"] = ""
+                if "uuid" in row:
+                    del row["uuid"]
+                row["mtmpl_name"] = ""
                 for mtmpl in mtmpl_list:
-                    if mtmpl.get("mtmpl_uuid") == data.get("template_uuid"):
-                        data["mtmpl_name"] = mtmpl.get("mtmpl_title", "")
-                        if "template_uuid" in data:
-                            del data["template_uuid"]
+                    if mtmpl.get("mtmpl_uuid") == row.get("template_uuid"):
+                        row["mtmpl_name"] = mtmpl.get("mtmpl_title", "")
+                        if "template_uuid" in row:
+                            del row["template_uuid"]
                         break
-                for col_name, value in data.items():
+                for col_name, value in row.items():
                     if isinstance(value, list) and value:
-                        data[col_name] = "\n".join(value)
+                        # 陣列中可能夾帶 None（SE2 同步或缺 UA/輸入內容時），過濾後再 join，避免 TypeError
+                        joined = "\n".join(str(v) for v in value if v is not None)
+                        row[col_name] = joined if joined else "-"
                     elif not value:
-                        data[col_name] = "-"
-                        
+                        row[col_name] = "-"
+
+                # 次數欄位在清理之後才插入，0 次要保留數字 0 而不是被換成 "-"
+                processed_data[idx] = insert_trigger_counts(row, trigger_counts[idx])
+
             # --- C. 轉換為 Pandas 並存入記憶體 ---
             df = pd.DataFrame(processed_data)
             
@@ -776,24 +836,30 @@ def get_router(db_user):
                 'send_time': '實際寄送時間',
                 'send_res': '寄送結果',
                 'second_access_time': 'url連線時間',
-                'second_access_src': 'url連線IP', 
-                'second_access_dev': 'url連線資訊', 
+                'second_access_src': 'url連線IP',
+                'second_access_dev': 'url連線資訊',
+                'second_access_count': 'url連線次數',
                 'second_qrcode_time': 'QR Code 掃描時間',
                 'second_qrcode_src': 'QR Code 掃描IP',
                 'second_qrcode_dev': 'QR Code 掃描資訊',
-                'second_input_time': '表單填寫時間', 
-                'second_input_src': '表單填寫IP', 
-                'second_input_dev': '表單填寫資訊', 
-                'second_input_info': '表單填寫內容', 
+                'second_qrcode_count': 'QR Code 掃描次數',
+                'second_input_time': '表單填寫時間',
+                'second_input_src': '表單填寫IP',
+                'second_input_dev': '表單填寫資訊',
+                'second_input_info': '表單填寫內容',
+                'second_input_count': '表單填寫次數',
                 'access_time': '郵件讀取時間',
                 'access_src': '郵件讀取IP',
                 'access_dev': '郵件讀取資訊',
+                'access_count': '郵件讀取次數',
                 'click_time': '按鈕點擊時間',
                 'click_src': '按鈕點擊IP',
                 'click_dev': '按鈕點擊資訊',
+                'click_count': '按鈕點擊次數',
                 'file_time': '附件下載時間',
                 'file_src': '附件下載IP',
-                'file_dev': '附件下載資訊'
+                'file_dev': '附件下載資訊',
+                'file_count': '附件下載次數'
             }, inplace=True)
 
             # 建立一個在記憶體中的 Excel 檔案
