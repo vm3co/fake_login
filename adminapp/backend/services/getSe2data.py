@@ -317,7 +317,11 @@ class getSe2data:
             for index, data in enumerate(all_data):
                 acct_uuid = data["acct_uuid"]
                 orgs_df = await self.get_acct_orgs(acct_uuid)
-                all_data[index]["orgs"] = list(orgs_df["uuid"])
+                if orgs_df is None:
+                    logger.warning(f"Could not fetch organizations for account {acct_uuid}; preserving stored organizations.")
+                    all_data[index]["_orgs_lookup_failed"] = True
+                    continue
+                all_data[index]["orgs"] = list(orgs_df["uuid"]) if "uuid" in orgs_df else []
                 
             return pd.DataFrame(all_data)
             

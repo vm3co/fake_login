@@ -11,6 +11,7 @@ import json
 from typing import List, Dict, Any
 from datetime import datetime, timedelta
 import pandas as pd
+from sqlalchemy import func, select
 from zoneinfo import ZoneInfo
 
 from backend.services.log_manager import Logger
@@ -99,8 +100,12 @@ def calc_stats(stats: List[Dict[str, Any]]) -> Dict[str, Any]:
 # ==============================================================================
 # Module Constants (模組常數)
 # ==============================================================================
-ACCTS_COLUMNS = ["acct_uuid", "acct_id", "acct_full_name", "acct_full_name_2nd",
-                 "acct_email", "acct_activate", "orgs"]
+ACCTS_COLUMNS = [
+    "acct_uuid", "acct_id", "acct_full_name", "acct_full_name_2nd", "acct_email",
+    "acct_locale_code", "acct_activate", "acct_create_ut", "acct_update_ut",
+    "acct_update_scrt_ut", "acct_last_login_ut", "acct_last_login_info", "admin_role",
+    "agent_role", "orgs",
+]
 
 SENDTASKS_COLUMNS = ["sendtask_uuid", "sendtask_id", "sendtask_owner_gid", "person_count",
                      "pre_test_end_ut", "pre_test_start_ut", "pre_send_end_ut", "sendtask_create_ut",
@@ -208,13 +213,41 @@ class DBUser:
         :return: accts 資料列表
         """
 
+        acct_columns = acct_columns or ACCTS_COLUMNS
         acct_df = await get_se2_data.get_accts()
         if acct_df is not None and not acct_df.empty:
-            acct_list = acct_df[acct_columns].to_dict(orient="records")
+            available_columns = [column for column in acct_columns if column in acct_df.columns]
+            if "_orgs_lookup_failed" in acct_df.columns:
+                available_columns.append("_orgs_lookup_failed")
+            acct_list = acct_df[available_columns].to_dict(orient="records")
             for acct in acct_list:
-                # 將 acct_activate 欄位轉換為 is_active
-                acct["is_active"] = acct.get("acct_activate", False)
+                for key, value in acct.items():
+                    if not isinstance(value, (list, dict)) and pd.isna(value):
+                        acct[key] = None
+
+                orgs_lookup_failed = acct.pop("_orgs_lookup_failed", False)
+                if orgs_lookup_failed:
+                    acct.pop("orgs", None)
+
+                # 將 SE2 的啟用狀態映射至既有資料庫欄位。
+                acct["is_active"] = str(acct.get("acct_activate", "")).lower() in {"true", "1"}
                 acct.pop("acct_activate", None)
+
+                for timestamp_column in (
+                    "acct_create_ut",
+                    "acct_update_ut",
+                    "acct_update_scrt_ut",
+                    "acct_last_login_ut",
+                ):
+                    if acct.get(timestamp_column) is not None:
+                        acct[timestamp_column] = int(acct[timestamp_column])
+
+                if isinstance(acct.get("acct_last_login_info"), (dict, list)):
+                    acct["acct_last_login_info"] = json.dumps(acct["acct_last_login_info"])
+
+                for role_column in ("admin_role", "agent_role"):
+                    if acct.get(role_column) is not None:
+                        acct[role_column] = str(acct[role_column]).lower() in {"true", "1"}
             return acct_list
         return []
 
@@ -342,7 +375,7 @@ class DBUser:
         from backend.api.data_api import has_common_orgs
 
         remote_tasks = await self.get_se2_sendtasks(SENDTASKS_COLUMNS)
-        if orgs and orgs != ["admin"]:
+        if orgs is not None:
             remote_tasks = [t for t in remote_tasks
                             if has_common_orgs(t.get("sendtask_owner_gid", []), orgs)]
 
@@ -770,14 +803,33 @@ class DBUser:
         return final_data
 
 ## user相關操作
+    async def get_registered_account(
+        self,
+        *,
+        acct_uuid: str | None = None,
+        acct_id: str | None = None,
+    ):
+        """以穩定 UUID 或登入帳號取得本機 User 與權威 Acct 資料。"""
+        if not acct_uuid and not acct_id:
+            raise ValueError("acct_uuid 或 acct_id 至少需要提供一個")
+
+        stmt = select(User, Acct).join(Acct, User.acct_uuid == Acct.acct_uuid)
+        if acct_uuid:
+            stmt = stmt.where(User.acct_uuid == acct_uuid)
+        else:
+            stmt = stmt.where(func.lower(Acct.acct_id) == acct_id.lower())
+
+        async with db_controller.get_session() as session:
+            result = await session.execute(stmt.limit(1))
+            return result.first()
+
     async def user_exists(self, username: str) -> bool:
         """
         檢查使用者是否存在
         :param username: 使用者名稱
         :return: 如果使用者存在，返回 True，否則返回 False
         """
-        user = await db_controller.get_one(User, {"username": username})
-        return user is not None
+        return await self.get_registered_account(acct_id=username) is not None
 
     async def insert_user(self, username: str, password_hash: str):
         """
@@ -786,7 +838,10 @@ class DBUser:
         :param password_hash: 密碼哈希值
         """
         # 檢查 acct 是否存在
-        acct = await db_controller.get_one(Acct, {"acct_id": username})
+        accounts = await db_controller.execute_scalars(
+            select(Acct).where(func.lower(Acct.acct_id) == username.lower()).limit(1)
+        )
+        acct = accounts[0] if accounts else None
 
         if not acct:
             logger.error(f"acct_id {username} does not exist in the main system (accts).")
@@ -795,11 +850,8 @@ class DBUser:
         try:
             new_user = await db_controller.create(User, {
                 "acct_uuid": acct.acct_uuid,
-                "username": username,
+                "username": acct.acct_id,
                 "password_hash": password_hash,
-                "email": acct.acct_email,
-                "full_name": acct.acct_full_name,
-                "orgs": acct.orgs
             })
             
             return {

@@ -69,11 +69,19 @@ async def init_db():
         await conn.execute(text(
             "ALTER TABLE customer_accts ADD COLUMN IF NOT EXISTS max_task_count INTEGER"
         ))
-        # await conn.execute(text(
-        #     "ALTER TABLE mtmpl ADD COLUMN IF NOT EXISTS weight_score DOUBLE PRECISION"
-        # ))
         await conn.execute(text(
             "ALTER TABLE sendlog_stats ADD COLUMN IF NOT EXISTS next_plan_time BIGINT"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE accts "
+            "ADD COLUMN IF NOT EXISTS acct_locale_code TEXT, "
+            "ADD COLUMN IF NOT EXISTS acct_create_ut BIGINT, "
+            "ADD COLUMN IF NOT EXISTS acct_update_ut BIGINT, "
+            "ADD COLUMN IF NOT EXISTS acct_update_scrt_ut BIGINT, "
+            "ADD COLUMN IF NOT EXISTS acct_last_login_ut BIGINT, "
+            "ADD COLUMN IF NOT EXISTS acct_last_login_info TEXT, "
+            "ADD COLUMN IF NOT EXISTS admin_role BOOLEAN, "
+            "ADD COLUMN IF NOT EXISTS agent_role BOOLEAN"
         ))
         # sendtasks: 補上 SE2 get_testcase 完整欄位 (idempotent)
         await conn.execute(text(

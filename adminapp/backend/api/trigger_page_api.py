@@ -30,7 +30,7 @@ import httpx
 from PIL import Image
 
 from backend.services.log_manager import Logger
-from backend.repository.models import TriggerPage, User, Domain
+from backend.repository.models import Acct, TriggerPage, Domain
 from backend.repository.db_controller import db_controller
 from sqlalchemy import select, update, delete, insert
 from backend.services.db_user import DBUser
@@ -118,10 +118,9 @@ def get_router(db_user: DBUser):
         owner_uuids = list({row.owner_uuid for row in rows if row.owner_uuid is not None})
         owner_name_map = {}
         if owner_uuids:
-            user_rows = await db_controller.get(User, filters={"acct_uuid": owner_uuids})
-            for u in user_rows:
-                # 優先使用 full_name，否則 fallback 到 username
-                owner_name_map[u.acct_uuid] = u.full_name or u.username
+            account_rows = await db_controller.get(Acct, filters={"acct_uuid": owner_uuids})
+            for account in account_rows:
+                owner_name_map[account.acct_uuid] = account.acct_full_name or account.acct_id
 
         # 批次查詢綁定 domain
         domain_ids = list({row.allowed_domain_id for row in rows if row.allowed_domain_id})

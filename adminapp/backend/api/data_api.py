@@ -6,7 +6,7 @@ Created on Thu May  8 14:32:44 2025
 
 用api到se2系統抓取資料
 """
-from fastapi import APIRouter, Request, Body, Depends, BackgroundTasks
+from fastapi import APIRouter, Request, Body, Depends, BackgroundTasks, UploadFile, File, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any
@@ -24,17 +24,65 @@ from sqlalchemy import select, update, delete, func, desc, asc, text, String, ca
 from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from backend.repository.db_controller import db_controller
-from backend.repository.models import SendTask, Mtmpl, Notification, SendLogStats, SendLogDetail, CustomerAcct, CustomerTask
+from backend.repository.models import SendTask, Mtmpl, Notification, SendLogStats, SendLogDetail, CustomerAcct, CustomerTask, User
 from backend.services.log_manager import Logger
 from backend.services.getSe2data import get_se2_data
 from backend.services.time_utils import format_datetime
 from backend.core.security import verify_password
 from backend.core.security import hash_password
-from backend.api.user_api import get_current_user
+from backend.api.user_api import get_current_user, ADMIN_EMAIL
 
 
 def has_common_orgs(a: list, b: list) -> bool:
     return any(item in a for item in b)
+
+
+def get_sendtask_scope(current_user: dict) -> list[str] | None:
+    """回傳可信任的組織範圍；None 代表可存取所有任務。"""
+    if current_user.get("admin_role") is True:
+        return None
+    if current_user.get("user_type") == "user":
+        return current_user.get("orgs") or []
+    raise HTTPException(status_code=403, detail="無權存取任務")
+
+
+def filter_tasks_by_scope(tasks: list, orgs: list[str] | None) -> list:
+    if orgs is None:
+        return tasks
+    return [
+        task for task in tasks
+        if has_common_orgs(
+            task.get("sendtask_owner_gid", [])
+            if isinstance(task, dict)
+            else getattr(task, "sendtask_owner_gid", []) or [],
+            orgs,
+        )
+    ]
+
+
+async def require_sendtask_access(sendtask_uuid: str, current_user: dict) -> SendTask:
+    """確認目前身分可讀取或操作指定任務，並回傳該任務。"""
+    task = await db_controller.get_one(SendTask, {"sendtask_uuid": sendtask_uuid})
+    if not task:
+        raise HTTPException(status_code=404, detail="找不到任務")
+
+    if current_user.get("user_type") == "customer":
+        customer = await db_controller.get_one(
+            CustomerAcct, {"customer_name": current_user.get("username")}
+        )
+        allowed_uuids = {
+            item["uuid"]
+            for item in (customer.sendtasks or [])
+            if isinstance(item, dict) and item.get("uuid")
+        } if customer else set()
+        if sendtask_uuid not in allowed_uuids:
+            raise HTTPException(status_code=403, detail="無權存取指定任務")
+        return task
+
+    orgs = get_sendtask_scope(current_user)
+    if orgs is not None and not has_common_orgs(task.sendtask_owner_gid or [], orgs):
+        raise HTTPException(status_code=403, detail="無權存取指定任務")
+    return task
 
 def dict_to_hashable(d):
     return tuple(sorted(
@@ -236,8 +284,9 @@ def get_router(db_user):
         "/get_sendtasks",
         tags=["data"]
         )
-    async def get_sendtasks(request: OrgsRequest):
+    async def get_sendtasks(request: OrgsRequest, current_user: dict = Depends(get_current_user)):
         try:
+            orgs = get_sendtask_scope(current_user)
             tasks = await db_controller.get(SendTask)
             
             # Convert to list of dicts
@@ -246,12 +295,10 @@ def get_router(db_user):
                 # Manually convert or use a helper
                 my_tasksname_list.append({c.name: getattr(t, c.name) for c in t.__table__.columns})
 
-            if request.orgs and request.orgs != ["admin"]:
-                my_tasksname_list = [
-                    task for task in my_tasksname_list
-                    if has_common_orgs(task.get("sendtask_owner_gid", []), request.orgs)
-                ]
+            my_tasksname_list = filter_tasks_by_scope(my_tasksname_list, orgs)
             return {"status": "success", "data": my_tasksname_list}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error in get_sendtasks: {str(e)}")
             return {"status": "error", "message": str(e)}
@@ -260,7 +307,7 @@ def get_router(db_user):
         "/check_sendtasks",
         tags=["data"]
         )
-    async def check_sendtasks(request: OrgsRequest):
+    async def check_sendtasks(request: OrgsRequest, current_user: dict = Depends(get_current_user)):
         """
         檢查sendtask是否有變更
         1. 讀取sendtask清單
@@ -268,7 +315,7 @@ def get_router(db_user):
         3. 新增及刪除到sendtask資料庫
         """
         try:
-            result = await db_user.sync_sendtasks(orgs=request.orgs)
+            result = await db_user.sync_sendtasks(orgs=get_sendtask_scope(current_user))
 
             sendlog_stats_status = {}
             if result["added"]:
@@ -287,6 +334,8 @@ def get_router(db_user):
                 "sendlog_stats_status": sendlog_stats_status,
             }
             return {"status": "success", "data": data}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error in check_sendtasks: {str(e)}")
             return {"status": "error", "message": str(e)}
@@ -302,15 +351,12 @@ def get_router(db_user):
         2. 與資料庫sendtask清單做diff
         3. 新增到sendtask資料庫
 
-        :param request: OrgsRequest, 包含組織列表
+        :param request: OrgsRequest，相容舊版請求但不採用其 orgs
         :return: dict, 包含新增和刪除的任務列表
         """
+        orgs = get_sendtask_scope(current_user)
         today_create_task_list = await db_user.refresh_today_create_task()
-        if request.orgs and request.orgs != ["admin"]:
-            today_create_task_list = [
-                task for task in today_create_task_list
-                if has_common_orgs(task.get("sendtask_owner_gid", []), request.orgs)
-            ]
+        today_create_task_list = filter_tasks_by_scope(today_create_task_list, orgs)
         if not today_create_task_list:
             logger.warning(f"today create task list is empty.")
             return {"status": "success", "data": []}
@@ -339,7 +385,7 @@ def get_router(db_user):
         "/search_sendtasks_by_name",
         tags=["data"]
         )
-    async def search_sendtasks_by_name(request: SearchTaskRequest):
+    async def search_sendtasks_by_name(request: SearchTaskRequest, current_user: dict = Depends(get_current_user)):
         """
         依任務名稱關鍵字向 SE2 查詢任務，用於快速確認單一任務是否已建立，
         不像 refresh_today_create_task 需要掃描整天的任務清單。
@@ -350,11 +396,7 @@ def get_router(db_user):
                 return {"status": "error", "message": "請輸入任務名稱關鍵字"}
 
             matched_tasks = await db_user.search_sendtasks_by_keyword(keyword)
-            if request.orgs and request.orgs != ["admin"]:
-                matched_tasks = [
-                    task for task in matched_tasks
-                    if has_common_orgs(task.get("sendtask_owner_gid", []), request.orgs)
-                ]
+            matched_tasks = filter_tasks_by_scope(matched_tasks, get_sendtask_scope(current_user))
 
             if matched_tasks:
                 uuids = [task["sendtask_uuid"] for task in matched_tasks]
@@ -364,6 +406,8 @@ def get_router(db_user):
                     task["exists_locally"] = task["sendtask_uuid"] in local_uuid_set
 
             return {"status": "success", "data": matched_tasks}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error in search_sendtasks_by_name: {str(e)}")
             return {"status": "error", "message": str(e)}
@@ -384,13 +428,14 @@ def get_router(db_user):
             if not request.sendtask_uuids:
                 return {"status": "error", "message": "未選擇任何任務"}
 
-            # 若有帶 orgs，先過濾掉不屬於使用者 org 的 uuid，避免越權寫入/探測其他 org 的任務
+            # 依伺服器解析的組織範圍過濾，避免前端偽造 orgs 越權。
             target_uuids = request.sendtask_uuids
-            if request.orgs and request.orgs != ["admin"]:
+            orgs = get_sendtask_scope(current_user)
+            if orgs is not None:
                 allowed = []
                 for u in target_uuids:
                     record = await db_user._build_sendtask_record_from_detail(u)
-                    if record and has_common_orgs(record.get("sendtask_owner_gid", []), request.orgs):
+                    if record and has_common_orgs(record.get("sendtask_owner_gid", []), orgs):
                         allowed.append(u)
                 target_uuids = allowed
 
@@ -403,6 +448,8 @@ def get_router(db_user):
             background_tasks.add_task(refresh_and_notify, result["upserted"], username)
 
             return {"status": "success", "message": "更新完成", "data": {**result, "sendlog_stats_status": sendlog_stats_status}}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error in upsert_selected_sendtasks: {str(e)}")
             return {"status": "error", "message": str(e)}
@@ -440,6 +487,18 @@ def get_router(db_user):
                 sendtask_uuids = [u for u in sendtask_uuids if u in allowed_uuids]
                 if not sendtask_uuids:
                     return {"status": "success", "data": []}
+            else:
+                orgs = get_sendtask_scope(current_user)
+                if orgs is not None:
+                    scoped_tasks = await db_controller.get(
+                        SendTask, filters={"sendtask_uuid": sendtask_uuids}
+                    )
+                    sendtask_uuids = [
+                        task.sendtask_uuid
+                        for task in filter_tasks_by_scope(scoped_tasks, orgs)
+                    ]
+                    if not sendtask_uuids:
+                        return {"status": "success", "data": []}
 
             rows = await db_controller.get(SendTask, filters={"sendtask_uuid": sendtask_uuids})
 
@@ -453,6 +512,8 @@ def get_router(db_user):
                 data = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in rows]
 
             return {"status": "success", "data": data}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error in customer_get_sendtasks: {str(e)}")
             return {"status": "error", "message": str(e)}
@@ -466,7 +527,7 @@ def get_router(db_user):
         "/refresh_sendlog_stats",
         tags=["data"]
         )
-    async def refresh_sendlog_stats(request: SendLogRequest):
+    async def refresh_sendlog_stats(request: SendLogRequest, current_user: dict = Depends(get_current_user)):
         """
         刷新寄送任務統計資料
 
@@ -482,8 +543,27 @@ def get_router(db_user):
             if not uuids:
                 return {"status": "error", "message": "沒有收到 uuids"}
 
+            if current_user.get("user_type") == "customer":
+                customer = await db_controller.get_one(
+                    CustomerAcct, {"customer_name": current_user.get("username")}
+                )
+                allowed_uuids = {item["uuid"] for item in (customer.sendtasks or []) if isinstance(item, dict) and item.get("uuid")} if customer else set()
+                uuids = [uuid for uuid in uuids if uuid in allowed_uuids]
+            else:
+                orgs = get_sendtask_scope(current_user)
+                if orgs is not None:
+                    tasks = await db_controller.get(SendTask, filters={"sendtask_uuid": uuids})
+                    uuids = [
+                        task.sendtask_uuid
+                        for task in filter_tasks_by_scope(tasks, orgs)
+                    ]
+            if not uuids:
+                raise HTTPException(status_code=403, detail="無權存取指定任務")
+
             sendlog_stats_status = await db_user.refresh_sendlog_stats(uuids, ignore_archived=request.ignore_archived)
             return {"status": "success", "data": sendlog_stats_status}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error in refresh_sendlog_stats: {str(e)}")
             return {"status": "error", "message": str(e)}
@@ -513,28 +593,34 @@ def get_router(db_user):
             if not sendtask_uuids:
                 return {"status": "error", "message": "沒有收到 sendtask_uuids", "data": []}
 
-            # 客戶身份驗證：確認請求的 sendtask_uuids 屬於該客戶
             if current_user.get("user_type") == "customer":
                 customer = await db_controller.get_one(
                     CustomerAcct, {"customer_name": current_user.get("username")}
                 )
                 if not customer:
                     return {"status": "error", "message": "找不到客戶帳號", "data": []}
-                allowed_uuids = {t["uuid"] for t in (customer.sendtasks or []) if isinstance(t, dict)}
-                sendtask_uuids = [u for u in sendtask_uuids if u in allowed_uuids]
-                if not sendtask_uuids:
-                    return {"status": "success", "data": []}
+                allowed_uuids = {item["uuid"] for item in (customer.sendtasks or []) if isinstance(item, dict) and item.get("uuid")}
+                sendtask_uuids = [uuid for uuid in sendtask_uuids if uuid in allowed_uuids]
+            else:
+                orgs = get_sendtask_scope(current_user)
+                if orgs is not None:
+                    tasks = await db_controller.get(SendTask, filters={"sendtask_uuid": sendtask_uuids})
+                    sendtask_uuids = [
+                        task.sendtask_uuid
+                        for task in filter_tasks_by_scope(tasks, orgs)
+                    ]
+            if not sendtask_uuids:
+                return {"status": "success", "data": []}
 
             rows_obj = await db_controller.get(SendLogStats, filters={"sendtask_uuid": sendtask_uuids})
 
-            # 客戶身份：只回傳精簡欄位；管理員/使用者：回傳全部欄位
             if current_user.get("user_type") == "customer":
                 rows = [
-                    {field: getattr(r, field) for field in CUSTOMER_STATS_FIELDS if hasattr(r, field)}
-                    for r in rows_obj
+                    {field: getattr(row, field) for field in CUSTOMER_STATS_FIELDS if hasattr(row, field)}
+                    for row in rows_obj
                 ]
             else:
-                rows = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in rows_obj]
+                rows = [{c.name: getattr(row, c.name) for c in row.__table__.columns} for row in rows_obj]
 
             return {"status": "success", "data": rows}
         except Exception as e:
@@ -756,7 +842,7 @@ def get_router(db_user):
         "/get_sendlog_detail",
         tags=["data"]
         )
-    async def get_sendlog_detail(request: GetSendlogDetailRequest):
+    async def get_sendlog_detail(request: GetSendlogDetailRequest, current_user: dict = Depends(get_current_user)):
         """
         根據條件取得單一任務的詳細 sendlog 資料 (支援分頁、篩選、排序)
         """
@@ -764,11 +850,14 @@ def get_router(db_user):
             return {"status": "error", "message": "沒有收到 sendtask_uuid"}
 
         try:
+            await require_sendtask_access(request.sendtask_uuid, current_user)
             result = await _query_sendlog_details(request)
             if not result['data']:
                 return {"status": "error", "message": "沒有符合條件的資料", "data": [], "total_count": 0}
             
             return {"status": "success", "data": result['data'], "total_count": result['total_count']}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error in get_sendlog_detail for {request.sendtask_uuid}: {str(e)}")
             if "does not exist" in str(e):
@@ -780,9 +869,10 @@ def get_router(db_user):
         name: str
 
     @router.post("/download_sendlog_xlsx")
-    async def api_download_sendlog_xlsx(request: DownloadRequest):
+    async def api_download_sendlog_xlsx(request: DownloadRequest, current_user: dict = Depends(get_current_user)):
         
         try:
+            await require_sendtask_access(request.sendtask_uuid, current_user)
             # --- A. 獲取資料 (簡化邏輯) ---
             rows = await db_controller.get(SendLogDetail, filters={"sendtask_uuid": request.sendtask_uuid})
             data = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in rows]
@@ -883,6 +973,8 @@ def get_router(db_user):
                 headers=headers
             )
 
+        except HTTPException:
+            raise
         except Exception as e:
             error_message = f"Error generating file: {e}"
             print(f"下載 Excel 失敗: {error_message}", file=sys.stderr)
@@ -898,7 +990,7 @@ def get_router(db_user):
         name: str
 
     @router.post("/download_sendlog_jess")
-    async def api_download_sendlog_jess(request: DownloadJessRequest):
+    async def api_download_sendlog_jess(request: DownloadJessRequest, current_user: dict = Depends(get_current_user)):
         """
         下載 JESS 格式報告，包含五個分頁：
         - log:      寄送紀錄明細 (橫向欄位)
@@ -909,13 +1001,7 @@ def get_router(db_user):
         """
         try:
             # --- A. 獲取資料 ---
-            task = await db_controller.get_one(SendTask, {"sendtask_uuid": request.sendtask_uuid})
-            if not task:
-                return StreamingResponse(
-                    io.BytesIO(b"No sendtask found for this uuid."),
-                    status_code=404,
-                    media_type="text/plain"
-                )
+            task = await require_sendtask_access(request.sendtask_uuid, current_user)
 
             detail_rows = await db_controller.get(
                 SendLogDetail,
@@ -1120,6 +1206,8 @@ def get_router(db_user):
                 headers=headers
             )
 
+        except HTTPException:
+            raise
         except Exception as e:
             error_message = f"Error generating JESS file: {e}"
             print(f"下載 JESS Excel 失敗: {error_message}", file=sys.stderr)
@@ -1148,10 +1236,13 @@ def get_router(db_user):
         sendtask_uuid: str
 
     @router.post("/clear_trigger_data")
-    async def clear_trigger_data(request: ClearTriggerRequest):
+    async def clear_trigger_data(request: ClearTriggerRequest, current_user: dict = Depends(get_current_user)):
         try:
+            await require_sendtask_access(request.sendtask_uuid, current_user)
             await db_user.clear_trigger_data(request.uuid, request.sendtask_uuid)
             return {"status": "success", "message": "已清除觸發紀錄"}
+        except HTTPException:
+            raise
         except Exception as e:
             return {"status": "error", "message": f"清除失敗: {str(e)}"}
 
@@ -1159,13 +1250,14 @@ def get_router(db_user):
         "/download_se2_sendlog_xlsx",
         tags=["data"]
         )
-    async def download_se2_sendlog_xlsx(request: DownloadSendlogRequest):
+    async def download_se2_sendlog_xlsx(request: DownloadSendlogRequest, current_user: dict = Depends(get_current_user)):
         """
         根據條件下載 sendlog 資料為 CSV 檔案。
         如果提供了 selected_uuids，則只下載這些 uuid 的資料。
         否則，下載符合篩選條件的所有資料。
         """
         try:
+            await require_sendtask_access(request.sendtask_uuid, current_user)
             if request.selected_uuids:
                 rows = await db_controller.get(SendLogDetail, filters={"uuid": request.selected_uuids})
                 all_data = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in rows]
@@ -1219,6 +1311,8 @@ def get_router(db_user):
                 headers={"Content-Disposition": f"attachment; filename=sendlog_{request.sendtask_uuid}.csv"}
             )
 
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error in download_se2_sendlog_xlsx for {request.sendtask_uuid}: {str(e)}")
             return {"status": "error", "message": str(e)}
@@ -1311,7 +1405,7 @@ def get_router(db_user):
         "/export_xlsx",
         tags=["data"]
         )
-    async def export_xlsx(request: ExportCsvRequest):
+    async def export_xlsx(request: ExportCsvRequest, current_user: dict = Depends(get_current_user)):
         """
         匯出 sendtask 的參與人員清單
         Body: {sendtask_id_A: [sendtasks_uuid_A, pre_test_enable_A], sendtask_id_B: [sendtasks_uuid_B, pre_test_enable_B], ...}
@@ -1319,6 +1413,11 @@ def get_router(db_user):
         sendtasks = request.sendtasks
         if not sendtasks:
             return {"status": "error", "message": "缺少 sendtasks"}
+
+        for sendtask_content in sendtasks.values():
+            if not isinstance(sendtask_content, list) or not sendtask_content:
+                raise HTTPException(status_code=400, detail="任務資料格式錯誤")
+            await require_sendtask_access(sendtask_content[0], current_user)
 
         zip_buffer = io.BytesIO()
         failed_tasks = []
@@ -1573,6 +1672,9 @@ def get_router(db_user):
         """
         uuid = request.uuid
         try:
+            if get_sendtask_scope(current_user) is not None:
+                raise HTTPException(status_code=403, detail="無權刪除任務")
+            await require_sendtask_access(uuid, current_user)
             # 刪除 sendtasks 資料
             await db_controller.delete(SendTask, {"sendtask_uuid": uuid})
             # 刪除 sendlog_stats 資料
@@ -1581,6 +1683,8 @@ def get_router(db_user):
             await db_controller.delete(SendLogDetail, {"sendtask_uuid": uuid})
             
             return {"status": "success", "message": "任務已刪除"}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Failed to delete sendtask {uuid}: {e}")
             raise HTTPException(status_code=500, detail=str(e))

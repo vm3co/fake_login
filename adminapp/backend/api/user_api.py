@@ -38,13 +38,37 @@ async def get_current_user(request: Request):
     token = auth_header.split(" ")[1]
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        acct_uuid: str = payload.get("acct_uuid")
         username: str = payload.get("username")
-        if username is None:
+        if acct_uuid is None or (username is None and payload.get("user_type") != "user"):
             raise HTTPException(status_code=401, detail="Token 無效")
+
+        if payload.get("user_type") == "user":
+            stmt = (
+                select(Acct)
+                .join(User, User.acct_uuid == Acct.acct_uuid)
+                .where(User.acct_uuid == acct_uuid)
+                .limit(1)
+            )
+            accounts = await db_controller.execute_scalars(stmt)
+            if not accounts:
+                raise HTTPException(status_code=401, detail="找不到使用者")
+            if accounts[0].is_active is False:
+                raise HTTPException(status_code=403, detail="帳號已停用")
+            payload["username"] = accounts[0].acct_id
+            payload["admin_role"] = accounts[0].admin_role is True
+            payload["orgs"] = accounts[0].orgs or []
+        elif payload.get("user_type") == "admin":
+            payload["admin_role"] = True
+            payload["orgs"] = []
+        else:
+            payload["admin_role"] = False
+            payload["orgs"] = []
+
         return payload
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token 已過期")
-    except jwt.InvalidTokenError:
+    except HTTPException:
+        raise
+    except JWTError:
         raise HTTPException(status_code=401, detail="Token 無效")
 
 def get_router(db_user):
@@ -75,7 +99,11 @@ def get_router(db_user):
             return {"status": "error", "message": "註冊失敗，請稍後再試"}
         elif result["status"] == "error":
             return {"status": "error", "message": result["message"]}
-        access_token = create_access_token({"acct_uuid": result["acct_uuid"], "name": result["username"]})
+        access_token = create_access_token({
+            "acct_uuid": result["acct_uuid"],
+            "username": result["username"],
+            "user_type": "user",
+        })
         user_obj = {
             "acct_uuid": result["acct_uuid"],
             "name": result["username"],
@@ -138,6 +166,7 @@ def get_router(db_user):
                 "name": PLATFORM_ADMIN_EMAIL,
                 "orgs": ["platform_admin"],
                 "user_type": "platform_admin",
+                "admin_role": False,
                 "full_name": "Platform Admin"
             }
             await db_user.add_login_log(
@@ -164,8 +193,9 @@ def get_router(db_user):
             user_obj = {
                 "acct_uuid": "admin",
                 "name": ADMIN_EMAIL,
-                "orgs": ["admin"],
+                "orgs": [],
                 "user_type": "admin",
+                "admin_role": True,
                 "full_name": "admin"
             }
             await db_user.add_login_log(
@@ -182,23 +212,26 @@ def get_router(db_user):
                 "user": user_obj
             }
 
-        # 3c. 一般使用者（username 為 email，登入時不分大小寫）
-        # 需要重新查詢 potential_user，因為前面拿掉了
-        potential_user = (await db_controller.execute_scalars(
-            select(User).where(func.lower(User.username) == username_lower).limit(1)
-        ) or [None])[0]
-        if potential_user and verify_password(password, potential_user.password_hash):
+        # 3c. 一般使用者：以 Acct.acct_id 登入，acct_uuid 作為穩定身分。
+        registered_account = await db_user.get_registered_account(acct_id=username)
+        if registered_account:
+            potential_user, acct = registered_account
+        else:
+            potential_user, acct = None, None
+
+        if potential_user and acct.is_active is not False and verify_password(password, potential_user.password_hash):
             access_token = create_access_token({
                 "acct_uuid": potential_user.acct_uuid,
-                "username": potential_user.username,
+                "username": acct.acct_id,
                 "user_type": "user"
             })
             user_obj = {
                 "acct_uuid": potential_user.acct_uuid,
-                "name": potential_user.username,
-                "orgs": potential_user.orgs or [],
+                "name": acct.acct_id,
+                "orgs": acct.orgs or [],
                 "user_type": "user",
-                "full_name": potential_user.full_name or ""
+                "admin_role": acct.admin_role is True,
+                "full_name": acct.acct_full_name or ""
             }
             await db_user.add_login_log(
                 username=username,
@@ -293,8 +326,9 @@ def get_router(db_user):
                 user_obj = {
                     "acct_uuid": "admin", 
                     "name": ADMIN_EMAIL, 
-                    "orgs": ["admin"],
-                    "user_type": "admin"
+                    "orgs": [],
+                    "user_type": "admin",
+                    "admin_role": True,
                 }
                 return {"user": user_obj}
             
@@ -304,23 +338,26 @@ def get_router(db_user):
                     "name": PLATFORM_ADMIN_EMAIL,
                     "orgs": ["platform_admin"],
                     "user_type": "platform_admin",
+                    "admin_role": False,
                     "full_name": "Platform Admin"
                 }
                 return {"user": user_obj}
 
             elif user_type == "user":
-                # 查詢一般使用者
-                user = await db_controller.get_one(User, {"username": username})
-
-                if not user:
+                registered_account = await db_user.get_registered_account(acct_uuid=acct_uuid)
+                if not registered_account:
                     raise HTTPException(status_code=404, detail="找不到使用者")
+                user, acct = registered_account
+                if acct.is_active is False:
+                    raise HTTPException(status_code=403, detail="帳號已停用")
                 
                 user_obj = {
                     "acct_uuid": user.acct_uuid,
-                    "name": user.username,
-                    "orgs": user.orgs or [],
+                    "name": acct.acct_id,
+                    "orgs": acct.orgs or [],
                     "user_type": "user",
-                    "full_name": user.full_name or ""
+                    "admin_role": acct.admin_role is True,
+                    "full_name": acct.acct_full_name or ""
                 }
                 return {"user": user_obj}
             
@@ -348,9 +385,9 @@ def get_router(db_user):
             else:
                 raise HTTPException(status_code=401, detail="無效的使用者類型")
                 
-        except jwt.ExpiredSignatureError:
-            raise HTTPException(status_code=401, detail="Token 已過期")
-        except jwt.InvalidTokenError:
+        except HTTPException:
+            raise
+        except JWTError:
             raise HTTPException(status_code=401, detail="Token 無效")
 
     # 更新密碼
@@ -513,13 +550,15 @@ def get_router(db_user):
             raise HTTPException(status_code=403, detail="權限不足")
         
         try:
-            changed_count = 0
-            se2_list = await db_user.get_se2_accts(db_user.accts_columns)
+            se2_list = await db_user.get_se2_accts()
             
             if se2_list:
                 await db_controller.upsert(Acct, se2_list, index_elements=['acct_uuid'])
             
-            return {"status": "success", "message": f"同步完成。總共處理 {len(se2_list)} 筆帳號。"}
+            return {
+                "status": "success",
+                "message": f"同步完成。總共處理 {len(se2_list)} 筆帳號。"
+            }
         except Exception as e:
             logger.error(f"Error syncing accts: {str(e)}")
             raise HTTPException(status_code=500, detail=f"同步帳號時發生錯誤: {str(e)}")

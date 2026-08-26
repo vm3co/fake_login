@@ -87,7 +87,15 @@ CREATE TABLE IF NOT EXISTS accts (
     acct_full_name TEXT NOT NULL,
     acct_full_name_2nd TEXT,
     acct_email TEXT NOT NULL,
+    acct_locale_code TEXT,
     is_active BOOLEAN DEFAULT TRUE,
+    acct_create_ut BIGINT,
+    acct_update_ut BIGINT,
+    acct_update_scrt_ut BIGINT,
+    acct_last_login_ut BIGINT,
+    acct_last_login_info TEXT,
+    admin_role BOOLEAN,
+    agent_role BOOLEAN,
     orgs TEXT[]
 );
 
@@ -97,11 +105,7 @@ CREATE TABLE IF NOT EXISTS users (
     acct_uuid VARCHAR(36) UNIQUE NOT NULL,
     username TEXT UNIQUE NOT NULL,
     password_hash TEXT NOT NULL,
-    email TEXT,
-    full_name TEXT,
-    orgs TEXT[],
-    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    is_active BOOLEAN DEFAULT TRUE
+    create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- customer accounts

@@ -7,7 +7,7 @@ from backend.services.db_user import DBUser
 from backend.repository.db_controller import db_controller
 from backend.repository.models import SendTask, Mtmpl, Notification, SendLogStats
 from sqlalchemy import select, update, delete
-from backend.api.data_api import has_common_orgs
+from backend.api.data_api import filter_tasks_by_scope, get_sendtask_scope
 from backend.services.log_manager import Logger
 
 logger = Logger().get_logger()
@@ -54,16 +54,11 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
     
     try:
         if job_type == "refresh_today_create_task":
+            orgs = get_sendtask_scope(current_user)
             # Logic from refresh_today_create_task
             async def task_func():
-                orgs = params.get("orgs", [])
                 today_create_task_list = await db_user.refresh_today_create_task()
-                
-                if orgs and orgs != ["admin"]:
-                    today_create_task_list = [
-                        task for task in today_create_task_list
-                        if has_common_orgs(task.get("sendtask_owner_gid", []), orgs)
-                    ]
+                today_create_task_list = filter_tasks_by_scope(today_create_task_list, orgs)
                 
                 if not today_create_task_list:
                     return {"message": "無今日建立任務"}
@@ -136,10 +131,9 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
             await job_manager.start_job(username, "更新郵件樣板列表", task_func)
 
         elif job_type == "check_sendtasks":
+            orgs = get_sendtask_scope(current_user)
             # Logic from check_sendtasks
             async def task_func():
-                orgs = params.get("orgs", [])
-
                 result = await db_user.sync_sendtasks(orgs=orgs)
 
                 # 只對新增的 uuid 刷 sendlog_stats（原本邏輯）；跳過重複的 SendTask sync
@@ -174,12 +168,19 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
             await job_manager.start_job(username, "更新任務列表", task_func)
 
         elif job_type == "refresh_sendlog_stats":
+            orgs = get_sendtask_scope(current_user)
             # Logic from refresh_sendlog_stats
             async def task_func():
                 uuids = params.get("uuids", [])
                 ignore_archived = params.get("ignore_archived", False)
                 if not uuids:
                     return {"message": "未指定任務 UUID"}
+
+                if orgs is not None:
+                    tasks = await db_controller.get(SendTask, filters={"sendtask_uuid": uuids})
+                    uuids = [task.sendtask_uuid for task in filter_tasks_by_scope(tasks, orgs)]
+                    if not uuids:
+                        raise HTTPException(status_code=403, detail="無權存取指定任務")
                 
                 # Chunking is handled by frontend in original code, but here we can handle it or just process all.
                 # Since it's async background job, we can process all (maybe with some sleep to yield if needed).
@@ -211,6 +212,8 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
 
         return {"status": "success", "message": "任務已開始"}
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Failed to start job {job_type}: {e}")
         raise HTTPException(status_code=500, detail=str(e))

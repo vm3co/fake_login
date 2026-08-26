@@ -1,5 +1,4 @@
-import { memo, useContext, useState } from "react";
-import { useSnackbar } from 'notistack';
+import { memo, useState } from "react";
 // import { Link } from "react-router-dom";
 import Box from "@mui/material/Box";
 import Typography from "@mui/material/Typography";
@@ -24,8 +23,6 @@ import { Span } from "app/components/Typography";
 import { MatxMenu } from "app/components";
 import { themeShadows } from "app/components/MatxTheme/themeColors";
 import { topBarHeight } from "app/utils/constant";
-import useAbortOnUnmount from "app/hooks/useAbortOnUnmount";
-import axios from "axios";
 
 
 // STYLED COMPONENTS
@@ -82,7 +79,6 @@ const StyledItem = styled(MenuItem)(({ theme }) => ({
 // }));
 
 const Layout1Topbar = () => {
-  const { enqueueSnackbar } = useSnackbar();
   const theme = useTheme();
   const { settings, updateSettings } = useSettings();
   const { logout, user } = useAuth();
@@ -117,14 +113,12 @@ const Layout1Topbar = () => {
 
   const handleCheckTodayCreateTasks = async () => {
     if (!window.confirm("確定要執行檢查今日建立任務嗎？")) return;
-    // 傳入 user.orgs 以確保後端能正確過濾
-    startJob("refresh_today_create_task", { orgs: user.orgs });
+    startJob("refresh_today_create_task");
   };
 
   const handleCheckTasks = async () => {
     if (!window.confirm("確定要執行任務列表更新嗎？")) return;
-    // 傳入 user.orgs 以確保後端能正確過濾
-    startJob("check_sendtasks", { orgs: user.orgs });
+    startJob("check_sendtasks");
   };
 
 
@@ -219,7 +213,6 @@ const Layout1Topbar = () => {
       <CheckTaskByNameDialog
         open={checkTaskDialogOpen}
         onClose={() => setCheckTaskDialogOpen(false)}
-        orgs={user.orgs}
       />
     </TopbarRoot>
   );

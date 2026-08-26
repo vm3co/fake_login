@@ -24,7 +24,7 @@ import ThemeProvider from "@mui/material/styles/ThemeProvider";
 import useSettings from "app/hooks/useSettings";
 import formatDate from "app/utils/formatDate";
 
-const CheckTaskByNameDialog = ({ open, onClose, orgs }) => {
+const CheckTaskByNameDialog = ({ open, onClose }) => {
   const { enqueueSnackbar } = useSnackbar();
   const { settings } = useSettings();
   const pageTheme = settings.themes[settings.activeTheme];
@@ -65,8 +65,7 @@ const CheckTaskByNameDialog = ({ open, onClose, orgs }) => {
     setSelectedUuids([]);
     try {
       const { data } = await axios.post("/api/search_sendtasks_by_name", {
-        keyword: trimmed,
-        orgs: orgs || []
+        keyword: trimmed
       });
       if (data.status === "success") {
         setResults(data.data || []);
@@ -115,8 +114,7 @@ const CheckTaskByNameDialog = ({ open, onClose, orgs }) => {
     setSubmitting(true);
     try {
       const { data } = await axios.post("/api/upsert_selected_sendtasks", {
-        sendtask_uuids: selectedUuids,
-        orgs: orgs || []
+        sendtask_uuids: selectedUuids
       });
       if (data.status === "success") {
         const updatedCount = data.data?.upserted?.length || 0;

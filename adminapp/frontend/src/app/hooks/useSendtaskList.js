@@ -4,15 +4,6 @@ import useAbortOnUnmount from "app/hooks/useAbortOnUnmount";
 import useAuth from "app/hooks/useAuth";
 import axios from "axios";
 
-// 取得 Cookie 函式
-function getCookie(name) {
-    const value = document.cookie
-        .split("; ")
-        .find(row => row.startsWith(`${name}=`));
-    const valueArr = value ? JSON.parse(decodeURIComponent(value.split("=")[1])) : [];
-    return valueArr;
-}
-
 export default function useSendtaskList() {
     const { enqueueSnackbar } = useSnackbar();
 
@@ -56,10 +47,10 @@ export default function useSendtaskList() {
         setStatsData(statsObj);
     };
 
-    const fetchData = async (orgsArr, controller) => {
+    const fetchData = async (controller) => {
         try {
             const { data: json } = await axios.post("/api/get_sendtasks",
-                { orgs: orgsArr },
+                {},
                 { signal: controller.signal }
             );
 
@@ -122,8 +113,7 @@ export default function useSendtaskList() {
     // 提供 refresh 方法
     function refresh() {
         const controller = createController();
-        const orgs = getCookie("orgs");
-        fetchData(orgs, controller);
+        fetchData(controller);
     }
 
     // 註冊請求控制器

@@ -118,7 +118,15 @@ class Acct(Base):
     acct_full_name = Column(Text, nullable=False)
     acct_full_name_2nd = Column(Text)
     acct_email = Column(Text, nullable=False)
+    acct_locale_code = Column(Text)
     is_active = Column(Boolean, default=True)
+    acct_create_ut = Column(BigInteger)
+    acct_update_ut = Column(BigInteger)
+    acct_update_scrt_ut = Column(BigInteger)
+    acct_last_login_ut = Column(BigInteger)
+    acct_last_login_info = Column(Text)
+    admin_role = Column(Boolean)
+    agent_role = Column(Boolean)
     orgs = Column(PG_ARRAY(Text))
 
 class User(Base):
@@ -128,11 +136,7 @@ class User(Base):
     acct_uuid = Column(String(36), unique=True, nullable=False, index=True)
     username = Column(Text, unique=True, nullable=False, index=True)
     password_hash = Column(Text, nullable=False)
-    email = Column(Text)
-    full_name = Column(Text)
-    orgs = Column(PG_ARRAY(Text))
     create_time = Column(TIMESTAMP, server_default=func.now())
-    is_active = Column(Boolean, default=True)
 
 class CustomerAcct(Base):
     __tablename__ = "customer_accts"
@@ -172,7 +176,6 @@ class Mtmpl(Base):
     mail_from = Column(Text)
     mail_from_address = Column(Text)
     create_time = Column(TIMESTAMP, server_default=func.now())
-    # weight_score = Column(Float, nullable=True)  # 範例信權重分數（可小數；NULL=未設定）
 
 class Notification(Base):
     __tablename__ = "notifications"
