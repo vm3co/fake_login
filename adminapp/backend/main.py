@@ -1,5 +1,6 @@
 import os
 import asyncio
+import uuid
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from fastapi import FastAPI
@@ -12,8 +13,9 @@ from contextlib import asynccontextmanager
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from backend.repository.db_controller import db_controller
-from backend.repository.models import SendTask, SendLogStats
+from backend.repository.models import SendTask, SendLogStats, JobRun, SystemConfig
 from sqlalchemy import select, update, delete, or_
+from sqlalchemy.sql import func
 
 from backend.services.getSe2data import get_se2_data
 from backend.services.db_user import DBUser
@@ -34,7 +36,6 @@ from backend.repository.database import init_db
 # Global worker instances
 sync_worker = SyncWorker()
 archiving_worker = ArchivingWorker()
-worker_tasks = []
 
 db_user = DBUser()
 logger = Logger().get_logger()
@@ -79,6 +80,7 @@ async def refresh_today_create_task_job():
             logger.info(f"refresh_today_create_task_job 完成 - 新增或更新了 {len(refresh_list)} 個今日任務")
     except Exception as e:
         logger.error(f"refresh_today_create_task_job 執行失敗: {str(e)}")
+        raise
 
 async def refresh_notyet_today_tasks_job():
     """
@@ -110,6 +112,7 @@ async def refresh_notyet_today_tasks_job():
 
     except Exception as e:
         logger.error(f"refresh_notyet_today_tasks_job 執行失敗: {str(e)}")
+        raise
 
 async def check_sendtasks_job():
     """
@@ -121,6 +124,7 @@ async def check_sendtasks_job():
         logger.info(f"check_sendtasks_job 完成 - 新增: {len(result['added'])}, 變更: {len(result['changed'])}, 刪除: {result['deleted']}, 封存: {result['archived']}")
     except Exception as e:
         logger.error(f"check_sendtasks_job 執行失敗: {str(e)}")
+        raise
 
 async def nightly_sync_job():
     """每日凌晨統一執行：先同步任務清單，再刷新統計"""
@@ -131,35 +135,92 @@ async def nightly_sync_job():
         logger.info("nightly_sync_job 完成")
     except Exception as e:
         logger.error(f"nightly_sync_job 失敗: {e}")
+        raise
 
-def start_scheduler():
+def tracked_scheduler_job(job_type, job_func):
+    async def wrapper():
+        job_id = str(uuid.uuid4())
+        await db_controller.create(JobRun, {
+            "job_id": job_id,
+            "source": "scheduler",
+            "job_type": job_type,
+            "owner_username": "system",
+            "status": "running",
+            "message": f"系統排程執行中：{job_type}",
+        })
+        try:
+            result = await job_func()
+            await db_controller.update(JobRun, {"job_id": job_id}, {
+                "status": "completed",
+                "result": result,
+                "finished_at": func.now(),
+            })
+            return result
+        except asyncio.CancelledError:
+            await db_controller.update(JobRun, {"job_id": job_id}, {
+                "status": "cancelled",
+                "finished_at": func.now(),
+            })
+            raise
+        except Exception as error:
+            await db_controller.update(JobRun, {"job_id": job_id}, {
+                "status": "failed",
+                "error": str(error),
+                "finished_at": func.now(),
+            })
+            raise
+
+    return wrapper
+
+SCHEDULER_CONFIG = {
+    "scheduler_refresh_token_enabled": "refresh_token",
+    "scheduler_refresh_today_create_task_enabled": "refresh_today_create_task",
+    "scheduler_refresh_notyet_today_tasks_enabled": "refresh_notyet_today_tasks",
+    "scheduler_nightly_sync_enabled": "nightly_sync",
+    "scheduler_archiving_enabled": "archiving_job",
+}
+
+RUNTIME_CONFIG_KEYS = (*SCHEDULER_CONFIG, "startup_cache_warming_enabled", "sync_worker_enabled")
+RUNTIME_CONFIG_DEFAULTS = {
+    key: key == "scheduler_refresh_token_enabled"
+    for key in RUNTIME_CONFIG_KEYS
+}
+
+async def load_runtime_config():
+    values = {}
+    for key in RUNTIME_CONFIG_KEYS:
+        record = await db_controller.get_one(SystemConfig, {"config_key": key})
+        values[key] = record.config_value == "true" if record else RUNTIME_CONFIG_DEFAULTS[key]
+    return values
+
+def start_scheduler(runtime_config):
     scheduler = AsyncIOScheduler(timezone=ZoneInfo("Asia/Taipei"))  # 重點：設定時區
     logger.info(f"目前排程使用時區：{scheduler.timezone}")
 
     # 每10分鐘執行一次
     scheduler.add_job(
-        refresh_token_job, 
+        tracked_scheduler_job("更新 SE2 Token", refresh_token_job),
         'interval', 
         minutes=10,
         id='refresh_token'
     )
     # 每60分鐘執行一次，更新今日建立任務
     scheduler.add_job(
-        refresh_today_create_task_job,
+        tracked_scheduler_job("更新今日建立任務", refresh_today_create_task_job),
         'interval',
         minutes=60,
         id='refresh_today_create_task'
     )
     # 每30分鐘執行一次，刷新今日任務
     scheduler.add_job(
-        refresh_notyet_today_tasks_job,
+        tracked_scheduler_job("刷新今日未完成任務", refresh_notyet_today_tasks_job),
         'interval',
         minutes=30,
         id='refresh_notyet_today_tasks'
     )
     # 每天凌晨 1:00 執行 nightly_sync_job (合併原 check_sendtasks 與 refresh_sendlog_stats)
     scheduler.add_job(
-        nightly_sync_job,
+        tracked_scheduler_job("每日任務清單與統計同步", nightly_sync_job),
         'cron',
         hour=1,
         minute=0,
@@ -167,19 +228,23 @@ def start_scheduler():
     )
     # 每天凌晨 2:00 執行 archiving_worker
     scheduler.add_job(
-        archiving_worker.start,
+        tracked_scheduler_job("封存逾期任務", archiving_worker.start),
         'cron',
         hour=2,
         minute=0,
         id='archiving_job'
     )
     scheduler.start()
+    for config_key, job_id in SCHEDULER_CONFIG.items():
+        if not runtime_config[config_key]:
+            scheduler.pause_job(job_id)
     logger.info("APScheduler 啟動")
     logger.info("refresh_token_job 已排程在每 10 分鐘執行")
     logger.info("refresh_today_create_task_job 已排程在每 60 分鐘執行")
     logger.info("refresh_notyet_today_tasks_job 已排程在每 30 分鐘執行")
     logger.info("nightly_sync_job 已排程在每日 01:00 執行")
     logger.info("archiving_job 已排程在每日 02:00 執行")
+    return scheduler
 
 # 引入資料庫
 @asynccontextmanager
@@ -187,9 +252,10 @@ async def lifespan(app: FastAPI):
     # Initialize ORM (Create tables if they don't exist)
     await init_db()
     
-    await refresh_token_job()   # 測試初始化 token
+    await refresh_token_job()   # 啟動時仍需先取得 Token，開關只控制週期更新
     await db_user.table_initialize()
     logger.info("資料庫初始化完成")
+    runtime_config = await load_runtime_config()
 
     # Cache Warming logic 移到背景執行，避免阻塞啟動
     async def run_cache_warming():
@@ -207,21 +273,83 @@ async def lifespan(app: FastAPI):
                  logger.info("No active tasks found for Cache Warming.")
         except Exception as e:
             logger.error(f"Cache Warming failed: {str(e)}")
-            
-    asyncio.create_task(run_cache_warming())
-    start_scheduler()  # 啟動 APScheduler
+            raise
 
-    # Start workers
-    sync_worker_work = asyncio.create_task(sync_worker.start())
-    worker_tasks.extend([sync_worker_work])
+    scheduler = start_scheduler(runtime_config)
+    runtime_tasks = {"cache_warming": None, "sync_worker": None}
+    runtime_lock = asyncio.Lock()
+
+    def start_runtime_task(name, job_type, job_func):
+        task = runtime_tasks.get(name)
+        if task and not task.done():
+            return task
+        task = asyncio.create_task(tracked_scheduler_job(job_type, job_func)())
+        runtime_tasks[name] = task
+        return task
+
+    def get_runtime_status():
+        status = {
+            config_key: scheduler.get_job(job_id).next_run_time is not None
+            for config_key, job_id in SCHEDULER_CONFIG.items()
+        }
+        status["startup_cache_warming_enabled"] = runtime_config["startup_cache_warming_enabled"]
+        sync_task = runtime_tasks.get("sync_worker")
+        status["sync_worker_enabled"] = bool(sync_task and not sync_task.done())
+        return status
+
+    async def apply_runtime_config(values):
+        async with runtime_lock:
+            previous_cache_warming = runtime_config["startup_cache_warming_enabled"]
+            runtime_config.update(values)
+
+            for config_key, job_id in SCHEDULER_CONFIG.items():
+                if values[config_key]:
+                    scheduler.resume_job(job_id)
+                else:
+                    scheduler.pause_job(job_id)
+
+            cache_task = runtime_tasks.get("cache_warming")
+            if not values["startup_cache_warming_enabled"] and cache_task and not cache_task.done():
+                cache_task.cancel()
+                await asyncio.gather(cache_task, return_exceptions=True)
+            elif values["startup_cache_warming_enabled"] and not previous_cache_warming:
+                start_runtime_task("cache_warming", "啟動快取預熱", run_cache_warming)
+
+            sync_task = runtime_tasks.get("sync_worker")
+            if values["sync_worker_enabled"]:
+                sync_worker.running = True
+                start_runtime_task("sync_worker", "背景任務統計同步服務", sync_worker.start)
+            elif sync_task and not sync_task.done():
+                await sync_worker.stop()
+                sync_task.cancel()
+                await asyncio.gather(sync_task, return_exceptions=True)
+
+            return get_runtime_status()
+
+    app.state.scheduler = scheduler
+    app.state.get_runtime_status = get_runtime_status
+    app.state.apply_runtime_config = apply_runtime_config
+
+    if runtime_config["startup_cache_warming_enabled"]:
+        start_runtime_task("cache_warming", "啟動快取預熱", run_cache_warming)
+    if runtime_config["sync_worker_enabled"]:
+        sync_worker.running = True
+        start_runtime_task("sync_worker", "背景任務統計同步服務", sync_worker.start)
     
     yield
     
     # Shutdown
-    await sync_worker_work.stop()
-    for task in worker_tasks:
-        task.cancel()
-    await asyncio.gather(*worker_tasks, return_exceptions=True)
+    scheduler.shutdown(wait=False)
+    await sync_worker.stop()
+    for task in runtime_tasks.values():
+        if task is None:
+            continue
+        if not task.done():
+            task.cancel()
+    await asyncio.gather(
+        *(task for task in runtime_tasks.values() if task is not None),
+        return_exceptions=True,
+    )
 
 app = FastAPI(
     docs_url="/api/docs",

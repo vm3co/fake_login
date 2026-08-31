@@ -20,9 +20,10 @@ class ArchivingWorker:
         """
         logger.info("ArchivingWorker job triggered.")
         try:
-             await self.archive_old_tasks()
+              await self.archive_old_tasks()
         except Exception as e:
-             logger.error(f"ArchivingWorker error: {e}")
+              logger.error(f"ArchivingWorker error: {e}")
+              raise
 
     async def archive_old_tasks(self):
         """

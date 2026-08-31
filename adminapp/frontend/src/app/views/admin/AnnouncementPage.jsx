@@ -18,17 +18,29 @@ import {
   Alert,
   IconButton
 } from "@mui/material";
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import axios from "axios";
 import { useSnackbar } from "notistack";
 
 const AnnouncementPage = () => {
   const { enqueueSnackbar } = useSnackbar();
+  const runtimeOptions = [
+    ["scheduler_refresh_token_enabled", "更新 SE2 Token", "每 10 分鐘執行"],
+    ["scheduler_refresh_today_create_task_enabled", "更新今日建立任務", "每 60 分鐘執行"],
+    ["scheduler_refresh_notyet_today_tasks_enabled", "刷新今日未完成任務", "每 30 分鐘執行"],
+    ["scheduler_nightly_sync_enabled", "同步任務清單與統計", "每日 01:00 執行"],
+    ["scheduler_archiving_enabled", "封存逾期任務", "每日 02:00 執行"],
+    ["startup_cache_warming_enabled", "啟動時快取預熱", "開啟時立即執行一次，之後每次服務啟動執行"],
+    ["sync_worker_enabled", "持續統計同步服務", "每 10 分鐘刷新所有未封存任務統計"],
+  ];
 
   // 系統設定狀態
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [announcement, setAnnouncement] = useState("");
   const [loading, setLoading] = useState(true);
+  const [runtimeConfig, setRuntimeConfig] = useState({});
+  const [editRuntimeConfig, setEditRuntimeConfig] = useState({});
+  const [runtimeActual, setRuntimeActual] = useState({});
 
   // 密碼確認 Dialog
   const [confirmDialog, setConfirmDialog] = useState({ open: false, action: null, label: "" });
@@ -41,25 +53,32 @@ const AnnouncementPage = () => {
   const [editAnnouncement, setEditAnnouncement] = useState("");
 
   // 載入現有設定
-  const fetchConfig = async () => {
+  const fetchConfig = useCallback(async () => {
     setLoading(true);
     try {
-      const { data } = await axios.get("/api/system/config");
+      const [systemResponse, runtimeResponse] = await Promise.all([
+        axios.get("/api/system/config"),
+        axios.get("/api/system/runtime-config"),
+      ]);
+      const data = systemResponse.data;
       setMaintenanceMode(data.maintenance_mode);
       setAnnouncement(data.announcement || "");
       setEditMaintenance(data.maintenance_mode);
       setEditAnnouncement(data.announcement || "");
+      setRuntimeConfig(runtimeResponse.data.configured);
+      setEditRuntimeConfig(runtimeResponse.data.configured);
+      setRuntimeActual(runtimeResponse.data.actual);
     } catch (error) {
       console.error("取得系統設定失敗:", error);
       enqueueSnackbar("取得系統設定失敗", { variant: "error" });
     } finally {
       setLoading(false);
     }
-  };
+  }, [enqueueSnackbar]);
 
   useEffect(() => {
     fetchConfig();
-  }, []);
+  }, [fetchConfig]);
 
   // 開啟密碼確認 Dialog
   const openConfirm = (action, label) => {
@@ -83,7 +102,16 @@ const AnnouncementPage = () => {
     try {
       const payload = { control_password: controlPassword };
 
-      if (confirmDialog.action === "maintenance") {
+      if (confirmDialog.action === "runtime") {
+        const { data } = await axios.post("/api/system/runtime-config", {
+          control_password: controlPassword,
+          ...editRuntimeConfig,
+        });
+        enqueueSnackbar(data.message, { variant: "success" });
+        setConfirmDialog({ open: false, action: null, label: "" });
+        await fetchConfig();
+        return;
+      } else if (confirmDialog.action === "maintenance") {
         payload.maintenance_mode = editMaintenance;
       } else if (confirmDialog.action === "announcement") {
         payload.announcement = editAnnouncement;
@@ -113,9 +141,9 @@ const AnnouncementPage = () => {
   }
 
   return (
-    <Box sx={{ p: 3, maxWidth: 700 }}>
+    <Box sx={{ p: 3, maxWidth: 820 }}>
       <Typography variant="h5" sx={{ mb: 3 }}>
-        更新公告管理
+        系統設定
       </Typography>
 
       {/* 維護模式區塊 */}
@@ -160,6 +188,65 @@ const AnnouncementPage = () => {
               startIcon={<Icon>save</Icon>}
             >
               儲存維護模式
+            </Button>
+          </Box>
+        </CardContent>
+      </Card>
+
+      {/* 背景服務區塊 */}
+      <Card sx={{ mb: 3 }}>
+        <CardContent>
+          <Box sx={{ display: "flex", alignItems: "center", mb: 1 }}>
+            <Icon sx={{ mr: 1, color: "primary.main" }}>schedule</Icon>
+            <Typography variant="h6">背景服務</Typography>
+          </Box>
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+            關閉排程只會阻止下一次執行，不會中止目前正在執行的工作。設定會保留至服務重新啟動後。
+          </Typography>
+
+          {runtimeOptions.map(([key, label, description]) => {
+            const actualEnabled = runtimeActual[key] === true;
+            return (
+              <Box
+                key={key}
+                sx={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 2,
+                  py: 1.5,
+                  borderBottom: "1px solid",
+                  borderColor: "divider",
+                }}
+              >
+                <Box>
+                  <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+                    <Typography fontWeight="medium">{label}</Typography>
+                    <Typography variant="caption" color={actualEnabled ? "success.main" : "text.disabled"}>
+                      {actualEnabled ? "運作中" : "已停止"}
+                    </Typography>
+                  </Box>
+                  <Typography variant="caption" color="text.secondary">{description}</Typography>
+                </Box>
+                <Switch
+                  checked={editRuntimeConfig[key] === true}
+                  onChange={(event) => setEditRuntimeConfig((current) => ({
+                    ...current,
+                    [key]: event.target.checked,
+                  }))}
+                />
+              </Box>
+            );
+          })}
+
+          <Box sx={{ display: "flex", justifyContent: "flex-end", mt: 2 }}>
+            <Button
+              variant="contained"
+              onClick={() => openConfirm("runtime", "更新背景服務設定")}
+              disabled={JSON.stringify(editRuntimeConfig) === JSON.stringify(runtimeConfig)}
+              startIcon={<Icon>save</Icon>}
+            >
+              儲存背景服務設定
             </Button>
           </Box>
         </CardContent>

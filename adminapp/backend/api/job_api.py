@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, HTTPException, Body
 from pydantic import BaseModel
+from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
 from backend.services.job_manager import JobManager
 from backend.api.user_api import get_current_user
 from backend.services.db_user import DBUser
 from backend.repository.db_controller import db_controller
-from backend.repository.models import SendTask, Mtmpl, Notification, SendLogStats
-from sqlalchemy import select, update, delete
+from backend.repository.models import SendTask, Mtmpl, Notification, SendLogStats, JobRun
+from sqlalchemy import and_, or_, select
 from backend.api.data_api import filter_tasks_by_scope, get_sendtask_scope
 from backend.services.log_manager import Logger
 
@@ -23,6 +24,61 @@ db_user = DBUser()
 class JobRequest(BaseModel):
     job_type: str
     params: Dict[str, Any] = {}
+
+def serialize_datetime(value: Optional[datetime]) -> Optional[str]:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+def serialize_job_run(job: JobRun) -> Dict[str, Any]:
+    return {
+        "job_id": job.job_id,
+        "source": job.source,
+        "type": job.job_type,
+        "owner_username": job.owner_username,
+        "status": job.status,
+        "message": job.message,
+        "result": job.result,
+        "error": job.error,
+        "start_time": serialize_datetime(job.started_at),
+        "finished_at": serialize_datetime(job.finished_at),
+    }
+
+@router.get("")
+async def list_jobs(source: str = "manual", current_user: dict = Depends(get_current_user)):
+    if source not in {"manual", "scheduler"}:
+        raise HTTPException(status_code=400, detail="Unknown job source")
+
+    filters = [JobRun.source == source]
+    if source == "manual" and current_user.get("admin_role") is not True:
+        filters.append(JobRun.owner_username == current_user.get("username"))
+    if source == "scheduler":
+        filters.append(or_(
+            JobRun.job_type != "更新 SE2 Token",
+            and_(JobRun.job_type == "更新 SE2 Token", JobRun.status == "failed"),
+        ))
+
+    running_stmt = (
+        select(JobRun)
+        .where(*filters, JobRun.status.in_(["pending", "running"]))
+        .order_by(JobRun.started_at.desc())
+    )
+    history_stmt = (
+        select(JobRun)
+        .where(*filters, JobRun.status.notin_(["pending", "running"]))
+        .order_by(JobRun.started_at.desc())
+        .limit(100)
+    )
+    running = await db_controller.execute_scalars(running_stmt)
+    history = await db_controller.execute_scalars(history_stmt)
+    jobs = sorted(
+        [*running, *history],
+        key=lambda job: job.started_at,
+        reverse=True,
+    )
+    return [serialize_job_run(job) for job in jobs]
 
 @router.get("/current")
 async def get_current_job(current_user: dict = Depends(get_current_user)):
@@ -176,34 +232,80 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                 if not uuids:
                     return {"message": "未指定任務 UUID"}
 
+                tasks = await db_controller.get(SendTask, filters={"sendtask_uuid": uuids})
                 if orgs is not None:
-                    tasks = await db_controller.get(SendTask, filters={"sendtask_uuid": uuids})
-                    uuids = [task.sendtask_uuid for task in filter_tasks_by_scope(tasks, orgs)]
+                    tasks = filter_tasks_by_scope(tasks, orgs)
+                    uuids = [task.sendtask_uuid for task in tasks]
                     if not uuids:
                         raise HTTPException(status_code=403, detail="無權存取指定任務")
-                
-                # Chunking is handled by frontend in original code, but here we can handle it or just process all.
-                # Since it's async background job, we can process all (maybe with some sleep to yield if needed).
-                # db_user.refresh_sendlog_stats handles list of uuids.
-                
-                result = await db_user.refresh_sendlog_stats(uuids, ignore_archived=ignore_archived)
-                
-                updated_count = len(result) # Rough estimate or use logic
-                
-                updated_uuids = list(result.keys())
-                details_msg = "更新統計資料:\n" + "\n".join(updated_uuids)
 
+                task_names = {task.sendtask_uuid: task.sendtask_id for task in tasks}
+                requested_uuids = list(uuids)
+                statuses = await db_user.refresh_sendlog_stats(
+                    requested_uuids,
+                    ignore_archived=ignore_archived,
+                )
+                successful_tasks = []
+                skipped_tasks = []
+                failed_tasks = []
+
+                for task_uuid in requested_uuids:
+                    task = {
+                        "sendtask_uuid": task_uuid,
+                        "sendtask_id": task_names.get(task_uuid, "Unknown"),
+                    }
+                    status = statuses.get(task_uuid)
+                    if status in {"updated", "unchanged"}:
+                        successful_tasks.append(task)
+                    elif status in {"deleted", "archived"}:
+                        skipped_tasks.append({**task, "reason": status})
+                    else:
+                        failed_tasks.append({**task, "reason": status or "not_found"})
+
+                result = {
+                    "updated_count": len(successful_tasks),
+                    "successful_tasks": successful_tasks,
+                    "skipped_count": len(skipped_tasks),
+                    "skipped_tasks": skipped_tasks,
+                    "failed_count": len(failed_tasks),
+                    "failed_tasks": failed_tasks,
+                }
+                if failed_tasks and successful_tasks:
+                    result["job_status"] = "partial"
+                elif failed_tasks:
+                    result["job_status"] = "failed"
+                    result["error_summary"] = "更新失敗：" + "、".join(
+                        task["sendtask_id"] for task in failed_tasks
+                    )
+
+                details = []
+                if successful_tasks:
+                    details.append("● 已更新任務:\n" + "\n".join(task["sendtask_id"] for task in successful_tasks))
+                if skipped_tasks:
+                    details.append("● 跳過任務:\n" + "\n".join(task["sendtask_id"] for task in skipped_tasks))
+                if failed_tasks:
+                    details.append("● 更新失敗任務:\n" + "\n".join(task["sendtask_id"] for task in failed_tasks))
+
+                if result.get("job_status") == "failed":
+                    title = "任務更新失敗"
+                    icon_color = "error"
+                elif result.get("job_status") == "partial":
+                    title = "任務部分更新完成"
+                    icon_color = "warning"
+                else:
+                    title = "任務更新完成"
+                    icon_color = "primary"
                 await db_controller.create(Notification, {
                     "username": username,
-                    "title": "任務更新完成",
-                    "subtitle": f"已更新 {updated_count} 筆任務",
+                    "title": title,
+                    "subtitle": f"已更新 {len(successful_tasks)} 筆，跳過 {len(skipped_tasks)} 筆，失敗 {len(failed_tasks)} 筆",
                     "heading": "系統通知",
                     "path": "send_list",
                     "icon_name": "update",
-                    "icon_color": "primary",
-                    "details": details_msg
+                    "icon_color": icon_color,
+                    "details": "\n\n".join(details),
                 })
-                return {"stats": result}
+                return result
 
             await job_manager.start_job(username, "更新任務統計", task_func)
             

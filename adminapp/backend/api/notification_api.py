@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from backend.services.log_manager import Logger
 from backend.repository.models import Notification as NotificationModel
 from backend.repository.db_controller import db_controller
@@ -13,6 +13,13 @@ router = APIRouter(
     prefix="/notification",
     tags=["notification"]
 )
+
+def serialize_datetime(value: Optional[datetime]) -> Optional[str]:
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 class Notification(BaseModel):
     id: Optional[int] = None
@@ -76,7 +83,7 @@ async def get_notifications(current_user: dict = Depends(get_current_user)):
                         "name": n.icon_name,
                         "color": n.icon_color
                     },
-                    "timestamp": n.timestamp,
+                    "timestamp": serialize_datetime(n.timestamp),
                     "title": n.title,
                     "subtitle": n.subtitle,
                     "path": n.path,

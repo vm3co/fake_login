@@ -185,12 +185,27 @@ class Notification(Base):
     title = Column(Text)
     subtitle = Column(Text)
     heading = Column(Text)
-    timestamp = Column(TIMESTAMP, server_default=func.now())
+    timestamp = Column(TIMESTAMP(timezone=True), server_default=func.now())
     path = Column(Text)
     icon_name = Column(Text)
     icon_color = Column(Text)
     details = Column(Text)
     is_read = Column(Boolean, default=False)
+
+class JobRun(Base):
+    __tablename__ = "job_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(String(36), unique=True, nullable=False, index=True)
+    source = Column(String(20), nullable=False, index=True)
+    job_type = Column(Text, nullable=False)
+    owner_username = Column(Text, nullable=False, index=True)
+    status = Column(String(20), nullable=False, index=True)
+    message = Column(Text)
+    result = Column(JSONB, nullable=True)
+    error = Column(Text, nullable=True)
+    started_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    finished_at = Column(TIMESTAMP(timezone=True), nullable=True)
 
 class LoginLog(Base):
     __tablename__ = "login_logs"

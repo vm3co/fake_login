@@ -51,6 +51,64 @@ async def init_db():
     async with engine.begin() as conn:
         # await conn.run_sync(Base.metadata.drop_all) # Uncomment to reset DB
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS schema_migrations ("
+            "version TEXT PRIMARY KEY, "
+            "applied_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP"
+            ")"
+        ))
+        migration_version = "20260827_timestamptz_notifications_job_runs"
+        applied = await conn.execute(text(
+            "SELECT 1 FROM schema_migrations WHERE version = :version"
+        ), {"version": migration_version})
+        if applied.scalar_one_or_none() is None:
+            notification_type = await conn.execute(text(
+                "SELECT data_type FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'notifications' "
+                "AND column_name = 'timestamp'"
+            ))
+            job_run_types = await conn.execute(text(
+                "SELECT column_name, data_type FROM information_schema.columns "
+                "WHERE table_schema = 'public' AND table_name = 'job_runs' "
+                "AND column_name IN ('started_at', 'finished_at')"
+            ))
+            notification_type = notification_type.scalar_one_or_none()
+            job_run_types = dict(job_run_types.all())
+
+            # Existing values were written as Asia/Taipei wall time despite the DB UTC session.
+            if notification_type == "timestamp without time zone":
+                await conn.execute(text(
+                    "ALTER TABLE notifications "
+                    "ALTER COLUMN timestamp DROP DEFAULT, "
+                    "ALTER COLUMN timestamp TYPE TIMESTAMPTZ "
+                    "USING timestamp AT TIME ZONE 'Asia/Taipei', "
+                    "ALTER COLUMN timestamp SET DEFAULT CURRENT_TIMESTAMP"
+                ))
+            elif notification_type not in {None, "timestamp with time zone"}:
+                raise RuntimeError(f"Unexpected notifications.timestamp type: {notification_type}")
+
+            started_type = job_run_types.get("started_at")
+            finished_type = job_run_types.get("finished_at")
+            if started_type == "timestamp without time zone" and finished_type == "timestamp without time zone":
+                await conn.execute(text(
+                    "ALTER TABLE job_runs "
+                    "ALTER COLUMN started_at DROP DEFAULT, "
+                    "ALTER COLUMN started_at TYPE TIMESTAMPTZ "
+                    "USING started_at AT TIME ZONE 'Asia/Taipei', "
+                    "ALTER COLUMN started_at SET DEFAULT CURRENT_TIMESTAMP, "
+                    "ALTER COLUMN finished_at TYPE TIMESTAMPTZ "
+                    "USING finished_at AT TIME ZONE 'Asia/Taipei'"
+                ))
+            elif started_type is not None and (
+                started_type != "timestamp with time zone" or finished_type != "timestamp with time zone"
+            ):
+                raise RuntimeError(
+                    f"Unexpected job_runs time types: started_at={started_type}, finished_at={finished_type}"
+                )
+
+            await conn.execute(text(
+                "INSERT INTO schema_migrations (version) VALUES (:version)"
+            ), {"version": migration_version})
         # 補上既有資料表新增欄位 (idempotent)
         await conn.execute(text(
             "ALTER TABLE trigger_pages "

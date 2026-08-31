@@ -195,7 +195,7 @@ export default function useSendtaskList() {
     useEffect(() => {
         const handleJobEvent = (e) => {
             const job = e.detail;
-            if (job && job.type === 'refresh_sendlog_stats') {
+            if (job && job.type === '更新任務統計') {
                 refresh();
             }
         };

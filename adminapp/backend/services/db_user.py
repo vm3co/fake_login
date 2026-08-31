@@ -569,6 +569,8 @@ class DBUser:
             # Use DBController get with in_ filter (assumes DBController supports list for IN)
             archived_tasks = await db_controller.get(SendTask, {"sendtask_uuid": target_uuids, "is_archived": True})
             archived_uuids = set(t.sendtask_uuid for t in archived_tasks)
+            for uuid in archived_uuids:
+                statuses[uuid] = "archived"
             
             # 只保留未封存的任務
             active_uuids_and_time = {
@@ -698,40 +700,48 @@ class DBUser:
 
 
         # 開始刷新 sendlog_stats
-        for uuid in [u for u in uuids_and_create_time.keys() if check_statuses.get(u) not in ["deleted", "error"]]:
+        for uuid in uuids_and_create_time.keys():
+            if check_statuses.get(uuid) in ["deleted", "error", "archived"]:
+                continue
+
+            try:
             # logger.info(f"Refreshing sendlog_stats for {uuid}")
 
             # 同步 SE2 metadata（全欄位更新）
-            if not skip_sendtask_sync:
-                await self._sync_sendtask_from_se2(uuid)
+                if not skip_sendtask_sync:
+                    await self._sync_sendtask_from_se2(uuid)
 
             # 1. 獲取舊的統計數據
-            old_stats = await db_controller.get_one(SendLogStats, {"sendtask_uuid": uuid})
-            old_todaysend = old_stats.todaysend if old_stats else 0
+                old_stats = await db_controller.get_one(SendLogStats, {"sendtask_uuid": uuid})
+                old_todaysend = old_stats.todaysend if old_stats else 0
 
             # 2. 計算新的統計數據
             # get_sendlog implementation is below, it uses session internally or creates one
-            data = await self.get_sendlog(sendtask_uuid=uuid, need_id=False, use_cache=False)
-            new_stats = calc_stats(data)
+                data = await self.get_sendlog(sendtask_uuid=uuid, need_id=False, use_cache=False)
+                new_stats = calc_stats(data)
 
             # 3. 比較並觸發通知
-            new_todaysend = new_stats.get("todaysend", 0)
-            if old_todaysend == 0 and new_todaysend > 0:
-                task_name = task_names.get(uuid, uuid)
-                message = f"🚀 *任務開始執行*\n任務 `{escape_markdown_v2(task_name)}` 今天已開始寄送第一封郵件。"
-                await send_telegram_notification(message)
+                new_todaysend = new_stats.get("todaysend", 0)
+                if old_todaysend == 0 and new_todaysend > 0:
+                    task_name = task_names.get(uuid, uuid)
+                    message = f"🚀 *任務開始執行*\n任務 `{escape_markdown_v2(task_name)}` 今天已開始寄送第一封郵件。"
+                    await send_telegram_notification(message)
 
             # 4. 更新資料庫
-            stats_data = {
-                "sendtask_uuid": uuid,
-                **new_stats
-            }
+                stats_data = {
+                    "sendtask_uuid": uuid,
+                    **new_stats
+                }
             # Upsert SendLogStats
-            await db_controller.upsert(
-                SendLogStats,
-                [stats_data],
-                index_elements=['sendtask_uuid']
-            )
+                await db_controller.upsert(
+                    SendLogStats,
+                    [stats_data],
+                    index_elements=['sendtask_uuid']
+                )
+                check_statuses[uuid] = "updated"
+            except Exception as error:
+                logger.error(f"Failed to refresh sendlog_stats for {uuid}: {error}")
+                check_statuses[uuid] = "error"
             
         logger.info(f"Finished refreshing sendlog_stats.")
 

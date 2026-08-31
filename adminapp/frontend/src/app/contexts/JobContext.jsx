@@ -1,4 +1,4 @@
-import React, { createContext, useState, useEffect, useContext, useRef, useCallback } from 'react';
+import { createContext, useState, useEffect, useContext, useRef, useCallback } from 'react';
 import axios from 'axios';
 import { useSnackbar } from 'notistack';
 import { Box, Button, Typography, CircularProgress } from '@mui/material';
@@ -42,14 +42,14 @@ export const JobProvider = ({ children }) => {
 
             if (job) {
                 // If we have already processed this job's final state, skip it
-                if (job.job_id === lastProcessedJobId.current && ['completed', 'failed', 'cancelled'].includes(job.status)) {
+                if (job.job_id === lastProcessedJobId.current && ['completed', 'partial', 'failed', 'cancelled'].includes(job.status)) {
                     return;
                 }
 
                 // On first poll, if job is already finished, don't show notification, just track it
                 if (isFirstPoll.current) {
                     isFirstPoll.current = false;
-                    if (['completed', 'failed', 'cancelled'].includes(job.status)) {
+                    if (['completed', 'partial', 'failed', 'cancelled'].includes(job.status)) {
                         lastProcessedJobId.current = job.job_id;
                         return;
                     }
@@ -62,6 +62,16 @@ export const JobProvider = ({ children }) => {
                     lastProcessedJobId.current = job.job_id;
                     enqueueSnackbar(`任務完成: ${job.type}`, { variant: 'success' });
                     getNotifications(); // Refresh notifications panel
+                    setCurrentJob(null);
+                    window.dispatchEvent(new CustomEvent('jobCompleted', { detail: job }));
+                    if (snackbarKey.current) {
+                        closeSnackbar(snackbarKey.current);
+                        snackbarKey.current = null;
+                    }
+                } else if (job.status === 'partial') {
+                    lastProcessedJobId.current = job.job_id;
+                    enqueueSnackbar(`任務部分完成: ${job.type}`, { variant: 'warning' });
+                    getNotifications();
                     setCurrentJob(null);
                     window.dispatchEvent(new CustomEvent('jobCompleted', { detail: job }));
                     if (snackbarKey.current) {

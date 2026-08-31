@@ -451,6 +451,44 @@ def get_router(db_user):
         maintenance_mode: bool = None
         announcement: str = None
 
+    RUNTIME_CONFIG_KEYS = (
+        "scheduler_refresh_token_enabled",
+        "scheduler_refresh_today_create_task_enabled",
+        "scheduler_refresh_notyet_today_tasks_enabled",
+        "scheduler_nightly_sync_enabled",
+        "scheduler_archiving_enabled",
+        "startup_cache_warming_enabled",
+        "sync_worker_enabled",
+    )
+    RUNTIME_CONFIG_DEFAULTS = {
+        key: key == "scheduler_refresh_token_enabled"
+        for key in RUNTIME_CONFIG_KEYS
+    }
+
+    class RuntimeConfigUpdateRequest(BaseModel):
+        control_password: str
+        scheduler_refresh_token_enabled: bool
+        scheduler_refresh_today_create_task_enabled: bool
+        scheduler_refresh_notyet_today_tasks_enabled: bool
+        scheduler_nightly_sync_enabled: bool
+        scheduler_archiving_enabled: bool
+        startup_cache_warming_enabled: bool
+        sync_worker_enabled: bool
+
+    async def upsert_system_config(key: str, value: str):
+        existing = await db_controller.get_one(SystemConfig, {"config_key": key})
+        if existing:
+            await db_controller.update(SystemConfig, {"config_key": key}, {"config_value": value})
+        else:
+            await db_controller.create(SystemConfig, {"config_key": key, "config_value": value})
+
+    async def get_runtime_config_values():
+        values = {}
+        for key in RUNTIME_CONFIG_KEYS:
+            record = await db_controller.get_one(SystemConfig, {"config_key": key})
+            values[key] = record.config_value == "true" if record else RUNTIME_CONFIG_DEFAULTS[key]
+        return values
+
     @router.post(
         "/system/config",
         tags=["system"]
@@ -473,20 +511,13 @@ def get_router(db_user):
 
         updated = []
 
-        async def upsert_config(key: str, value: str):
-            existing = await db_controller.get_one(SystemConfig, {"config_key": key})
-            if existing:
-                await db_controller.update(SystemConfig, {"config_key": key}, {"config_value": value})
-            else:
-                await db_controller.create(SystemConfig, {"config_key": key, "config_value": value})
-
         if data.maintenance_mode is not None:
-            await upsert_config("maintenance_mode", "true" if data.maintenance_mode else "false")
+            await upsert_system_config("maintenance_mode", "true" if data.maintenance_mode else "false")
             updated.append(f"維護模式 {'開啟' if data.maintenance_mode else '關閉'}")
             logger.info(f"Admin updated maintenance_mode to: {data.maintenance_mode}")
 
         if data.announcement is not None:
-            await upsert_config("announcement", data.announcement)
+            await upsert_system_config("announcement", data.announcement)
             updated.append("公告內容已更新")
             logger.info(f"Admin updated announcement.")
 
@@ -494,6 +525,55 @@ def get_router(db_user):
             raise HTTPException(status_code=400, detail="未提供任何要更新的設定")
 
         return {"status": "success", "message": "、".join(updated)}
+
+    @router.get(
+        "/system/runtime-config",
+        tags=["system"]
+    )
+    async def get_runtime_config(
+        request: Request,
+        current_user: dict = Depends(get_current_user)
+    ):
+        if current_user.get("user_type") != "platform_admin":
+            raise HTTPException(status_code=403, detail="權限不足")
+
+        configured = await get_runtime_config_values()
+        get_runtime_status = getattr(request.app.state, "get_runtime_status", None)
+        actual = get_runtime_status() if get_runtime_status else configured.copy()
+        return {"configured": configured, "actual": actual}
+
+    @router.post(
+        "/system/runtime-config",
+        tags=["system"]
+    )
+    async def update_runtime_config(
+        data: RuntimeConfigUpdateRequest,
+        request: Request,
+        current_user: dict = Depends(get_current_user)
+    ):
+        if current_user.get("user_type") != "platform_admin":
+            raise HTTPException(status_code=403, detail="權限不足")
+        if not ADMIN_CONTROL_PASSWORD:
+            raise HTTPException(status_code=500, detail="控制密碼未設定，請聯繫系統管理員")
+        if data.control_password != ADMIN_CONTROL_PASSWORD:
+            raise HTTPException(status_code=401, detail="控制密碼錯誤")
+
+        values = {key: getattr(data, key) for key in RUNTIME_CONFIG_KEYS}
+        apply_runtime_config = getattr(request.app.state, "apply_runtime_config", None)
+        if apply_runtime_config is None:
+            raise HTTPException(status_code=503, detail="背景服務控制器尚未就緒")
+
+        actual = await apply_runtime_config(values)
+        for key, enabled in values.items():
+            await upsert_system_config(key, "true" if enabled else "false")
+
+        logger.info(f"Platform admin updated runtime config: {values}")
+        return {
+            "status": "success",
+            "message": "背景服務設定已更新",
+            "configured": values,
+            "actual": actual,
+        }
 
     @router.get(
         "/users/all",

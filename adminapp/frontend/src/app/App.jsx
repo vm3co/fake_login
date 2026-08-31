@@ -9,6 +9,7 @@ import SettingsProvider from "./contexts/SettingsContext";
 // import { AuthProvider } from "./contexts/FirebaseAuthContext";
 import { AuthProvider } from "./contexts/JWTAuthContext";
 import { JobProvider } from "./contexts/JobContext";
+import { NotificationProvider } from "./contexts/NotificationContext";
 // ROUTES
 import routes from "./routes";
 // Global styles
@@ -27,12 +28,14 @@ export default function App() {
     >
       <SettingsProvider>
         <AuthProvider>
-          <JobProvider>
-            <MatxTheme>
-              <CssBaseline />
-              {content}
-            </MatxTheme>
-          </JobProvider>
+          <NotificationProvider>
+            <JobProvider>
+              <MatxTheme>
+                <CssBaseline />
+                {content}
+              </MatxTheme>
+            </JobProvider>
+          </NotificationProvider>
         </AuthProvider>
       </SettingsProvider>
     </SnackbarProvider>

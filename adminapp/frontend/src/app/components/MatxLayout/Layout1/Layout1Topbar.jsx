@@ -15,7 +15,6 @@ import PowerSettingsNew from "@mui/icons-material/PowerSettingsNew";
 import useAuth from "app/hooks/useAuth";
 import useSettings from "app/hooks/useSettings";
 import { useJob } from "app/contexts/JobContext";
-import { NotificationProvider } from "app/contexts/NotificationContext";
 import NotificationBar from "app/components/NotificationBar/NotificationBar";
 import CheckTaskByNameDialog from "app/components/CheckTaskByNameDialog";
 
@@ -140,9 +139,7 @@ const Layout1Topbar = () => {
         <Box display="flex" alignItems="center">
           {/* 使用 JobContext 的全域通知，這邊不再需要額外的 Span */}
 
-          <NotificationProvider>
-            <NotificationBar />
-          </NotificationProvider>
+          <NotificationBar />
 
           <MatxMenu
             menuButton={
