@@ -28,13 +28,11 @@ from backend.api.user_api import get_router as user_router
 from backend.api.trigger_page_api import get_router as page_router
 from backend.api import notification_api, job_api, create_task_api, domain_api
 
-from backend.workers.sync_worker import SyncWorker
 from backend.workers.archiving_worker import ArchivingWorker
 from backend.repository.database import init_db
 
 
 # Global worker instances
-sync_worker = SyncWorker()
 archiving_worker = ArchivingWorker()
 
 db_user = DBUser()
@@ -180,10 +178,17 @@ SCHEDULER_CONFIG = {
     "scheduler_archiving_enabled": "archiving_job",
 }
 
-RUNTIME_CONFIG_KEYS = (*SCHEDULER_CONFIG, "startup_cache_warming_enabled", "sync_worker_enabled")
+RUNTIME_CONFIG_KEYS = (*SCHEDULER_CONFIG, "startup_cache_warming_enabled")
 RUNTIME_CONFIG_DEFAULTS = {
     key: key == "scheduler_refresh_token_enabled"
     for key in RUNTIME_CONFIG_KEYS
+}
+SCHEDULE_CONFIG_DEFAULTS = {
+    "scheduler_refresh_token_minutes": 10,
+    "scheduler_refresh_today_create_task_minutes": 60,
+    "scheduler_refresh_notyet_today_tasks_minutes": 30,
+    "scheduler_nightly_sync_time": "01:00",
+    "scheduler_archiving_time": "02:00",
 }
 
 async def load_runtime_config():
@@ -193,45 +198,56 @@ async def load_runtime_config():
         values[key] = record.config_value == "true" if record else RUNTIME_CONFIG_DEFAULTS[key]
     return values
 
-def start_scheduler(runtime_config):
+async def load_schedule_config():
+    values = {}
+    for key, default in SCHEDULE_CONFIG_DEFAULTS.items():
+        record = await db_controller.get_one(SystemConfig, {"config_key": key})
+        values[key] = int(record.config_value) if record and key.endswith("_minutes") else (
+            record.config_value if record else default
+        )
+    return values
+
+def parse_daily_time(value):
+    hour, minute = value.split(":")
+    return int(hour), int(minute)
+
+def start_scheduler(runtime_config, schedule_config):
     scheduler = AsyncIOScheduler(timezone=ZoneInfo("Asia/Taipei"))  # 重點：設定時區
     logger.info(f"目前排程使用時區：{scheduler.timezone}")
 
-    # 每10分鐘執行一次
+    nightly_hour, nightly_minute = parse_daily_time(schedule_config["scheduler_nightly_sync_time"])
+    archiving_hour, archiving_minute = parse_daily_time(schedule_config["scheduler_archiving_time"])
+
     scheduler.add_job(
         tracked_scheduler_job("更新 SE2 Token", refresh_token_job),
-        'interval', 
-        minutes=10,
+        'interval',
+        minutes=schedule_config["scheduler_refresh_token_minutes"],
         id='refresh_token'
     )
-    # 每60分鐘執行一次，更新今日建立任務
     scheduler.add_job(
         tracked_scheduler_job("更新今日建立任務", refresh_today_create_task_job),
         'interval',
-        minutes=60,
+        minutes=schedule_config["scheduler_refresh_today_create_task_minutes"],
         id='refresh_today_create_task'
     )
-    # 每30分鐘執行一次，刷新今日任務
     scheduler.add_job(
         tracked_scheduler_job("刷新今日未完成任務", refresh_notyet_today_tasks_job),
         'interval',
-        minutes=30,
+        minutes=schedule_config["scheduler_refresh_notyet_today_tasks_minutes"],
         id='refresh_notyet_today_tasks'
     )
-    # 每天凌晨 1:00 執行 nightly_sync_job (合併原 check_sendtasks 與 refresh_sendlog_stats)
     scheduler.add_job(
         tracked_scheduler_job("每日任務清單與統計同步", nightly_sync_job),
         'cron',
-        hour=1,
-        minute=0,
+        hour=nightly_hour,
+        minute=nightly_minute,
         id='nightly_sync'
     )
-    # 每天凌晨 2:00 執行 archiving_worker
     scheduler.add_job(
         tracked_scheduler_job("封存逾期任務", archiving_worker.start),
         'cron',
-        hour=2,
-        minute=0,
+        hour=archiving_hour,
+        minute=archiving_minute,
         id='archiving_job'
     )
     scheduler.start()
@@ -239,11 +255,11 @@ def start_scheduler(runtime_config):
         if not runtime_config[config_key]:
             scheduler.pause_job(job_id)
     logger.info("APScheduler 啟動")
-    logger.info("refresh_token_job 已排程在每 10 分鐘執行")
-    logger.info("refresh_today_create_task_job 已排程在每 60 分鐘執行")
-    logger.info("refresh_notyet_today_tasks_job 已排程在每 30 分鐘執行")
-    logger.info("nightly_sync_job 已排程在每日 01:00 執行")
-    logger.info("archiving_job 已排程在每日 02:00 執行")
+    logger.info(f"refresh_token_job 已排程在每 {schedule_config['scheduler_refresh_token_minutes']} 分鐘執行")
+    logger.info(f"refresh_today_create_task_job 已排程在每 {schedule_config['scheduler_refresh_today_create_task_minutes']} 分鐘執行")
+    logger.info(f"refresh_notyet_today_tasks_job 已排程在每 {schedule_config['scheduler_refresh_notyet_today_tasks_minutes']} 分鐘執行")
+    logger.info(f"nightly_sync_job 已排程在每日 {schedule_config['scheduler_nightly_sync_time']} 執行")
+    logger.info(f"archiving_job 已排程在每日 {schedule_config['scheduler_archiving_time']} 執行")
     return scheduler
 
 # 引入資料庫
@@ -256,6 +272,7 @@ async def lifespan(app: FastAPI):
     await db_user.table_initialize()
     logger.info("資料庫初始化完成")
     runtime_config = await load_runtime_config()
+    schedule_config = await load_schedule_config()
 
     # Cache Warming logic 移到背景執行，避免阻塞啟動
     async def run_cache_warming():
@@ -275,8 +292,8 @@ async def lifespan(app: FastAPI):
             logger.error(f"Cache Warming failed: {str(e)}")
             raise
 
-    scheduler = start_scheduler(runtime_config)
-    runtime_tasks = {"cache_warming": None, "sync_worker": None}
+    scheduler = start_scheduler(runtime_config, schedule_config)
+    runtime_tasks = {"cache_warming": None}
     runtime_lock = asyncio.Lock()
 
     def start_runtime_task(name, job_type, job_func):
@@ -293,14 +310,43 @@ async def lifespan(app: FastAPI):
             for config_key, job_id in SCHEDULER_CONFIG.items()
         }
         status["startup_cache_warming_enabled"] = runtime_config["startup_cache_warming_enabled"]
-        sync_task = runtime_tasks.get("sync_worker")
-        status["sync_worker_enabled"] = bool(sync_task and not sync_task.done())
         return status
 
-    async def apply_runtime_config(values):
+    async def apply_runtime_config(values, new_schedule_config):
         async with runtime_lock:
             previous_cache_warming = runtime_config["startup_cache_warming_enabled"]
             runtime_config.update(values)
+            schedule_config.update(new_schedule_config)
+
+            scheduler.reschedule_job(
+                "refresh_token",
+                trigger="interval",
+                minutes=schedule_config["scheduler_refresh_token_minutes"],
+            )
+            scheduler.reschedule_job(
+                "refresh_today_create_task",
+                trigger="interval",
+                minutes=schedule_config["scheduler_refresh_today_create_task_minutes"],
+            )
+            scheduler.reschedule_job(
+                "refresh_notyet_today_tasks",
+                trigger="interval",
+                minutes=schedule_config["scheduler_refresh_notyet_today_tasks_minutes"],
+            )
+            nightly_hour, nightly_minute = parse_daily_time(schedule_config["scheduler_nightly_sync_time"])
+            scheduler.reschedule_job(
+                "nightly_sync",
+                trigger="cron",
+                hour=nightly_hour,
+                minute=nightly_minute,
+            )
+            archiving_hour, archiving_minute = parse_daily_time(schedule_config["scheduler_archiving_time"])
+            scheduler.reschedule_job(
+                "archiving_job",
+                trigger="cron",
+                hour=archiving_hour,
+                minute=archiving_minute,
+            )
 
             for config_key, job_id in SCHEDULER_CONFIG.items():
                 if values[config_key]:
@@ -315,15 +361,6 @@ async def lifespan(app: FastAPI):
             elif values["startup_cache_warming_enabled"] and not previous_cache_warming:
                 start_runtime_task("cache_warming", "啟動快取預熱", run_cache_warming)
 
-            sync_task = runtime_tasks.get("sync_worker")
-            if values["sync_worker_enabled"]:
-                sync_worker.running = True
-                start_runtime_task("sync_worker", "背景任務統計同步服務", sync_worker.start)
-            elif sync_task and not sync_task.done():
-                await sync_worker.stop()
-                sync_task.cancel()
-                await asyncio.gather(sync_task, return_exceptions=True)
-
             return get_runtime_status()
 
     app.state.scheduler = scheduler
@@ -332,15 +369,11 @@ async def lifespan(app: FastAPI):
 
     if runtime_config["startup_cache_warming_enabled"]:
         start_runtime_task("cache_warming", "啟動快取預熱", run_cache_warming)
-    if runtime_config["sync_worker_enabled"]:
-        sync_worker.running = True
-        start_runtime_task("sync_worker", "背景任務統計同步服務", sync_worker.start)
     
     yield
     
     # Shutdown
     scheduler.shutdown(wait=False)
-    await sync_worker.stop()
     for task in runtime_tasks.values():
         if task is None:
             continue

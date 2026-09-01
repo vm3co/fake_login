@@ -443,7 +443,10 @@ def get_router(db_user):
             if not result["upserted"]:
                 return {"status": "success", "message": "沒有任務被更新", "data": result}
 
-            sendlog_stats_status = await db_user.refresh_sendlog_stats(result["upserted"])
+            sendlog_stats_status = await db_user.refresh_sendlog_stats(
+                result["upserted"],
+                ignore_archived=True,
+            )
             username = current_user.get("username", "unknown")
             background_tasks.add_task(refresh_and_notify, result["upserted"], username)
 

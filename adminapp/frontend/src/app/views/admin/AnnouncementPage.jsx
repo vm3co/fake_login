@@ -25,13 +25,12 @@ import { useSnackbar } from "notistack";
 const AnnouncementPage = () => {
   const { enqueueSnackbar } = useSnackbar();
   const runtimeOptions = [
-    ["scheduler_refresh_token_enabled", "更新 SE2 Token", "每 10 分鐘執行"],
-    ["scheduler_refresh_today_create_task_enabled", "更新今日建立任務", "每 60 分鐘執行"],
-    ["scheduler_refresh_notyet_today_tasks_enabled", "刷新今日未完成任務", "每 30 分鐘執行"],
-    ["scheduler_nightly_sync_enabled", "同步任務清單與統計", "每日 01:00 執行"],
-    ["scheduler_archiving_enabled", "封存逾期任務", "每日 02:00 執行"],
-    ["startup_cache_warming_enabled", "啟動時快取預熱", "開啟時立即執行一次，之後每次服務啟動執行"],
-    ["sync_worker_enabled", "持續統計同步服務", "每 10 分鐘刷新所有未封存任務統計"],
+    ["scheduler_refresh_token_enabled", "更新 SE2 Token", "scheduler_refresh_token_minutes", "分鐘"],
+    ["scheduler_refresh_today_create_task_enabled", "更新今日建立任務", "scheduler_refresh_today_create_task_minutes", "分鐘"],
+    ["scheduler_refresh_notyet_today_tasks_enabled", "刷新今日未完成任務", "scheduler_refresh_notyet_today_tasks_minutes", "分鐘"],
+    ["scheduler_nightly_sync_enabled", "同步任務清單與統計", "scheduler_nightly_sync_time", "time"],
+    ["scheduler_archiving_enabled", "封存逾期任務", "scheduler_archiving_time", "time"],
+    ["startup_cache_warming_enabled", "啟動時快取預熱", null, "開啟時立即執行一次，之後每次服務啟動執行"],
   ];
 
   // 系統設定狀態
@@ -41,6 +40,8 @@ const AnnouncementPage = () => {
   const [runtimeConfig, setRuntimeConfig] = useState({});
   const [editRuntimeConfig, setEditRuntimeConfig] = useState({});
   const [runtimeActual, setRuntimeActual] = useState({});
+  const [scheduleConfig, setScheduleConfig] = useState({});
+  const [editScheduleConfig, setEditScheduleConfig] = useState({});
 
   // 密碼確認 Dialog
   const [confirmDialog, setConfirmDialog] = useState({ open: false, action: null, label: "" });
@@ -68,6 +69,8 @@ const AnnouncementPage = () => {
       setRuntimeConfig(runtimeResponse.data.configured);
       setEditRuntimeConfig(runtimeResponse.data.configured);
       setRuntimeActual(runtimeResponse.data.actual);
+      setScheduleConfig(runtimeResponse.data.schedule);
+      setEditScheduleConfig(runtimeResponse.data.schedule);
     } catch (error) {
       console.error("取得系統設定失敗:", error);
       enqueueSnackbar("取得系統設定失敗", { variant: "error" });
@@ -106,6 +109,7 @@ const AnnouncementPage = () => {
         const { data } = await axios.post("/api/system/runtime-config", {
           control_password: controlPassword,
           ...editRuntimeConfig,
+          ...editScheduleConfig,
         });
         enqueueSnackbar(data.message, { variant: "success" });
         setConfirmDialog({ open: false, action: null, label: "" });
@@ -204,8 +208,14 @@ const AnnouncementPage = () => {
             關閉排程只會阻止下一次執行，不會中止目前正在執行的工作。設定會保留至服務重新啟動後。
           </Typography>
 
-          {runtimeOptions.map(([key, label, description]) => {
+          {runtimeOptions.map(([key, label, scheduleKey, scheduleType]) => {
             const actualEnabled = runtimeActual[key] === true;
+            const hasSchedule = Boolean(scheduleKey);
+            const description = scheduleType === "分鐘"
+              ? `每 ${editScheduleConfig[scheduleKey] || "-"} 分鐘執行`
+              : scheduleType === "time"
+                ? `每日 ${editScheduleConfig[scheduleKey] || "--:--"} 執行（Asia/Taipei）`
+                : scheduleType;
             return (
               <Box
                 key={key}
@@ -219,7 +229,7 @@ const AnnouncementPage = () => {
                   borderColor: "divider",
                 }}
               >
-                <Box>
+                <Box sx={{ flex: 1, minWidth: 0 }}>
                   <Box sx={{ display: "flex", alignItems: "center", gap: 1 }}>
                     <Typography fontWeight="medium">{label}</Typography>
                     <Typography variant="caption" color={actualEnabled ? "success.main" : "text.disabled"}>
@@ -228,6 +238,20 @@ const AnnouncementPage = () => {
                   </Box>
                   <Typography variant="caption" color="text.secondary">{description}</Typography>
                 </Box>
+                {hasSchedule && (
+                  <TextField
+                    size="small"
+                    type={scheduleType === "time" ? "time" : "number"}
+                    label={scheduleType === "time" ? "執行時間" : "頻率（分鐘）"}
+                    value={editScheduleConfig[scheduleKey] ?? ""}
+                    onChange={(event) => setEditScheduleConfig((current) => ({
+                      ...current,
+                      [scheduleKey]: scheduleType === "time" ? event.target.value : Number(event.target.value),
+                    }))}
+                    inputProps={scheduleType === "time" ? {} : { min: 5, max: 1440, step: 1 }}
+                    sx={{ width: { xs: 125, sm: 160 } }}
+                  />
+                )}
                 <Switch
                   checked={editRuntimeConfig[key] === true}
                   onChange={(event) => setEditRuntimeConfig((current) => ({
@@ -243,7 +267,10 @@ const AnnouncementPage = () => {
             <Button
               variant="contained"
               onClick={() => openConfirm("runtime", "更新背景服務設定")}
-              disabled={JSON.stringify(editRuntimeConfig) === JSON.stringify(runtimeConfig)}
+              disabled={
+                JSON.stringify(editRuntimeConfig) === JSON.stringify(runtimeConfig) &&
+                JSON.stringify(editScheduleConfig) === JSON.stringify(scheduleConfig)
+              }
               startIcon={<Icon>save</Icon>}
             >
               儲存背景服務設定
