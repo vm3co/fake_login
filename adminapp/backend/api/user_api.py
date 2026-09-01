@@ -4,6 +4,7 @@ This module provides functions to hash passwords and verify them using bcrypt.
 '''
 import os
 from pathlib import Path
+import re
 from fastapi import APIRouter, HTTPException, Depends, Request
 from pydantic import BaseModel
 from backend.core.security import verify_password
@@ -458,11 +459,17 @@ def get_router(db_user):
         "scheduler_nightly_sync_enabled",
         "scheduler_archiving_enabled",
         "startup_cache_warming_enabled",
-        "sync_worker_enabled",
     )
     RUNTIME_CONFIG_DEFAULTS = {
         key: key == "scheduler_refresh_token_enabled"
         for key in RUNTIME_CONFIG_KEYS
+    }
+    SCHEDULE_CONFIG_DEFAULTS = {
+        "scheduler_refresh_token_minutes": 10,
+        "scheduler_refresh_today_create_task_minutes": 60,
+        "scheduler_refresh_notyet_today_tasks_minutes": 30,
+        "scheduler_nightly_sync_time": "01:00",
+        "scheduler_archiving_time": "02:00",
     }
 
     class RuntimeConfigUpdateRequest(BaseModel):
@@ -473,7 +480,11 @@ def get_router(db_user):
         scheduler_nightly_sync_enabled: bool
         scheduler_archiving_enabled: bool
         startup_cache_warming_enabled: bool
-        sync_worker_enabled: bool
+        scheduler_refresh_token_minutes: int
+        scheduler_refresh_today_create_task_minutes: int
+        scheduler_refresh_notyet_today_tasks_minutes: int
+        scheduler_nightly_sync_time: str
+        scheduler_archiving_time: str
 
     async def upsert_system_config(key: str, value: str):
         existing = await db_controller.get_one(SystemConfig, {"config_key": key})
@@ -487,6 +498,15 @@ def get_router(db_user):
         for key in RUNTIME_CONFIG_KEYS:
             record = await db_controller.get_one(SystemConfig, {"config_key": key})
             values[key] = record.config_value == "true" if record else RUNTIME_CONFIG_DEFAULTS[key]
+        return values
+
+    async def get_schedule_config_values():
+        values = {}
+        for key, default in SCHEDULE_CONFIG_DEFAULTS.items():
+            record = await db_controller.get_one(SystemConfig, {"config_key": key})
+            values[key] = int(record.config_value) if record and key.endswith("_minutes") else (
+                record.config_value if record else default
+            )
         return values
 
     @router.post(
@@ -538,9 +558,10 @@ def get_router(db_user):
             raise HTTPException(status_code=403, detail="權限不足")
 
         configured = await get_runtime_config_values()
+        schedule = await get_schedule_config_values()
         get_runtime_status = getattr(request.app.state, "get_runtime_status", None)
         actual = get_runtime_status() if get_runtime_status else configured.copy()
-        return {"configured": configured, "actual": actual}
+        return {"configured": configured, "schedule": schedule, "actual": actual}
 
     @router.post(
         "/system/runtime-config",
@@ -559,19 +580,30 @@ def get_router(db_user):
             raise HTTPException(status_code=401, detail="控制密碼錯誤")
 
         values = {key: getattr(data, key) for key in RUNTIME_CONFIG_KEYS}
+        schedule = {key: getattr(data, key) for key in SCHEDULE_CONFIG_DEFAULTS}
+        if any(minutes < 5 or minutes > 1440 for key, minutes in schedule.items() if key.endswith("_minutes")):
+            raise HTTPException(status_code=422, detail="排程頻率必須介於 5 至 1440 分鐘")
+        if any(not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", schedule[key]) for key in (
+            "scheduler_nightly_sync_time",
+            "scheduler_archiving_time",
+        )):
+            raise HTTPException(status_code=422, detail="每日排程時間必須為 HH:MM 格式")
         apply_runtime_config = getattr(request.app.state, "apply_runtime_config", None)
         if apply_runtime_config is None:
             raise HTTPException(status_code=503, detail="背景服務控制器尚未就緒")
 
-        actual = await apply_runtime_config(values)
+        actual = await apply_runtime_config(values, schedule)
         for key, enabled in values.items():
             await upsert_system_config(key, "true" if enabled else "false")
+        for key, value in schedule.items():
+            await upsert_system_config(key, str(value))
 
-        logger.info(f"Platform admin updated runtime config: {values}")
+        logger.info(f"Platform admin updated runtime config: {values}, schedule: {schedule}")
         return {
             "status": "success",
             "message": "背景服務設定已更新",
             "configured": values,
+            "schedule": schedule,
             "actual": actual,
         }
 

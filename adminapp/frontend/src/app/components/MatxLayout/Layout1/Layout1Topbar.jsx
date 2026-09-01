@@ -83,10 +83,7 @@ const Layout1Topbar = () => {
   const { logout, user } = useAuth();
   const isMdScreen = useMediaQuery(theme.breakpoints.down("md"));
 
-  const { startJob, currentJob } = useJob();
-
-  // 檢查是否有正在運行的任務 (為了禁用按鈕)
-  const isJobRunning = currentJob && ["running", "pending"].includes(currentJob.status);
+  const { startJob } = useJob();
 
   const [checkTaskDialogOpen, setCheckTaskDialogOpen] = useState(false);
 
@@ -150,15 +147,7 @@ const Layout1Topbar = () => {
               </UserMenu>
             }>
             <StyledItem
-              onClick={isJobRunning ? undefined : handleCheckTodayCreateTasks}
-              disabled={isJobRunning}
-              sx={{
-                opacity: isJobRunning ? 0.5 : 1,
-                cursor: isJobRunning ? 'not-allowed' : 'pointer',
-                '&:hover': {
-                  backgroundColor: isJobRunning ? 'transparent' : 'action.hover'
-                }
-              }}
+              onClick={handleCheckTodayCreateTasks}
             >
               <AssignmentTurnedIn />
               <Span sx={{ marginInlineStart: 1 }}>檢查今日建立任務</Span>
@@ -170,30 +159,14 @@ const Layout1Topbar = () => {
             </StyledItem>
 
             <StyledItem
-              onClick={isJobRunning ? undefined : handleUpdateMtmpl}
-              disabled={isJobRunning}
-              sx={{
-                opacity: isJobRunning ? 0.5 : 1,
-                cursor: isJobRunning ? 'not-allowed' : 'pointer',
-                '&:hover': {
-                  backgroundColor: isJobRunning ? 'transparent' : 'action.hover'
-                }
-              }}
+              onClick={handleUpdateMtmpl}
             >
               <AssignmentTurnedIn />
               <Span sx={{ marginInlineStart: 1 }}>更新郵件樣板列表</Span>
             </StyledItem>
 
             <StyledItem
-              onClick={isJobRunning ? undefined : handleCheckTasks}
-              disabled={isJobRunning}
-              sx={{
-                opacity: isJobRunning ? 0.5 : 1,
-                cursor: isJobRunning ? 'not-allowed' : 'pointer',
-                '&:hover': {
-                  backgroundColor: isJobRunning ? 'transparent' : 'action.hover'
-                }
-              }}
+              onClick={handleCheckTasks}
             >
               <AssignmentTurnedIn />
               <Span sx={{ marginInlineStart: 1 }}>更新任務列表</Span>

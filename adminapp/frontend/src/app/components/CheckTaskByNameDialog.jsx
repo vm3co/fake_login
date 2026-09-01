@@ -22,12 +22,14 @@ import Chip from "@mui/material/Chip";
 import ThemeProvider from "@mui/material/styles/ThemeProvider";
 
 import useSettings from "app/hooks/useSettings";
+import { useJob } from "app/contexts/JobContext";
 import formatDate from "app/utils/formatDate";
 
 const CheckTaskByNameDialog = ({ open, onClose }) => {
   const { enqueueSnackbar } = useSnackbar();
   const { settings } = useSettings();
   const pageTheme = settings.themes[settings.activeTheme];
+  const { startJob } = useJob();
   const [keyword, setKeyword] = useState("");
   const [searching, setSearching] = useState(false);
   const [hasSearched, setHasSearched] = useState(false);
@@ -113,15 +115,12 @@ const CheckTaskByNameDialog = ({ open, onClose }) => {
     if (selectedUuids.length === 0) return;
     setSubmitting(true);
     try {
-      const { data } = await axios.post("/api/upsert_selected_sendtasks", {
-        sendtask_uuids: selectedUuids
-      });
-      if (data.status === "success") {
-        const updatedCount = data.data?.upserted?.length || 0;
-        enqueueSnackbar(`已更新 ${updatedCount} 筆任務`, { variant: "success" });
+      const data = await startJob("upsert_selected_sendtasks", { uuids: selectedUuids });
+      if (data) {
         setSelectedUuids([]);
+        handleClose();
       } else {
-        enqueueSnackbar(data.message || "更新失敗", { variant: "error" });
+        enqueueSnackbar("更新任務啟動失敗", { variant: "error" });
       }
     } catch (error) {
       const detail = error.response?.data?.message || "更新失敗，請稍後再試";

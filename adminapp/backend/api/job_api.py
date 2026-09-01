@@ -6,7 +6,7 @@ from backend.services.job_manager import JobManager
 from backend.api.user_api import get_current_user
 from backend.services.db_user import DBUser
 from backend.repository.db_controller import db_controller
-from backend.repository.models import SendTask, Mtmpl, Notification, SendLogStats, JobRun
+from backend.repository.models import SendTask, Mtmpl, Notification, SendLogStats, JobRun, JobRunItem
 from sqlalchemy import and_, or_, select
 from backend.api.data_api import filter_tasks_by_scope, get_sendtask_scope
 from backend.services.log_manager import Logger
@@ -36,7 +36,9 @@ def serialize_job_run(job: JobRun) -> Dict[str, Any]:
     return {
         "job_id": job.job_id,
         "source": job.source,
+        "job_code": job.job_code,
         "type": job.job_type,
+        "display_name": job.display_name or job.job_type,
         "owner_username": job.owner_username,
         "status": job.status,
         "message": job.message,
@@ -78,29 +80,32 @@ async def list_jobs(source: str = "manual", current_user: dict = Depends(get_cur
         key=lambda job: job.started_at,
         reverse=True,
     )
-    return [serialize_job_run(job) for job in jobs]
+    job_items = await db_controller.get(
+        JobRunItem,
+        filters={"job_id": [job.job_id for job in jobs]},
+    ) if jobs else []
+    items_by_job = {}
+    for item in job_items:
+        items_by_job.setdefault(item.job_id, []).append({
+            "sendtask_uuid": item.sendtask_uuid,
+            "sendtask_id": item.sendtask_id,
+            "status": item.status,
+            "reason": item.reason,
+        })
+    return [{**serialize_job_run(job), "items": items_by_job.get(job.job_id, [])} for job in jobs]
 
-@router.get("/current")
-async def get_current_job(current_user: dict = Depends(get_current_user)):
+@router.post("/{job_id}/cancel")
+async def cancel_job(job_id: str, current_user: dict = Depends(get_current_user)):
     username = current_user.get("username")
-    job = job_manager.get_current_job(username)
-    if job:
-        return {
-            "job_id": job['job_id'],
-            "type": job['type'],
-            "status": job['status'],
-            "start_time": job['start_time'],
-            "message": job.get('message'),
-            "result": job.get('result'),
-            "error": job.get('error')
-        }
-    return None
-
-@router.post("/cancel")
-async def cancel_job(current_user: dict = Depends(get_current_user)):
-    username = current_user.get("username")
-    success = await job_manager.cancel_job(username)
-    return {"status": "success", "cancelled": success}
+    job = await db_controller.get_one(JobRun, {"job_id": job_id, "source": "manual"})
+    if not job or job.owner_username != username:
+        raise HTTPException(status_code=404, detail="找不到可取消的任務")
+    if job.status not in {"pending", "running"}:
+        raise HTTPException(status_code=409, detail="任務已結束，無法取消")
+    success = await job_manager.cancel_job(username, job_id)
+    if not success:
+        raise HTTPException(status_code=409, detail="任務已結束或服務已重新啟動")
+    return {"status": "success", "cancelled": True}
 
 @router.post("/start")
 async def start_job(request: JobRequest, current_user: dict = Depends(get_current_user)):
@@ -131,23 +136,9 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                 # Also refresh stats
                 await db_user.refresh_sendlog_stats(refresh_list)
                 
-                # Add notification
-                details_msg = "更新任務:\n" + "\n".join([t.get("sendtask_id", "Unknown") for t in today_create_task_list])
-                
-                await db_controller.create(Notification, {
-                    "username": username,
-                    "title": "檢查今日建立任務完成",
-                    "subtitle": f"已更新 {len(refresh_list)} 筆任務",
-                    "heading": "系統通知",
-                    "path": "send_list",
-                    "icon_name": "check_circle",
-                    "icon_color": "success",
-                    "details": details_msg
-                })
-
                 return {"updated_count": len(refresh_list)}
 
-            await job_manager.start_job(username, "檢查今日建立任務", task_func)
+            admission = await job_manager.start_job(username, "檢查今日建立任務", task_func, job_code=job_type)
 
         elif job_type == "update_mtmpl":
             async def task_func():
@@ -169,22 +160,9 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                         removed_count += 1
                         logger.info(f"Removed mtmpl {row.mtmpl_uuid}")
 
-                details_msg = f"更新/新增: {upserted} 筆\n刪除: {removed_count} 筆"
-
-                await db_controller.create(Notification, {
-                    "username": username,
-                    "title": "更新郵件樣板完成",
-                    "subtitle": "同步完成",
-                    "heading": "系統通知",
-                    "path": "send_list",
-                    "icon_name": "list_alt",
-                    "icon_color": "info",
-                    "details": details_msg
-                })
-
                 return {"upserted": upserted, "removed": removed_count}
 
-            await job_manager.start_job(username, "更新郵件樣板列表", task_func)
+            admission = await job_manager.start_job(username, "更新郵件樣板列表", task_func, job_code=job_type)
 
         elif job_type == "check_sendtasks":
             orgs = get_sendtask_scope(current_user)
@@ -203,53 +181,45 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
 
                 added_cnt = len(result["added"])
                 changed_cnt = len(result["changed"])
-                details_msg = ""
-                if result["added"]:
-                    details_msg += "● 新增任務:\n" + "\n".join(t.get("sendtask_id", "Unknown") for t in result["added"]) + "\n"
-                if result["changed"]:
-                    details_msg += "● 內容更新任務:\n" + "\n".join(t.get("sendtask_id", "Unknown") for t in result["changed"]) + "\n"
-
-                await db_controller.create(Notification, {
-                    "username": username,
-                    "title": "任務列表更新完成",
-                    "subtitle": f"新增 {added_cnt}，更新 {changed_cnt}，刪除 {result['deleted']}，封存 {result['archived']}",
-                    "heading": "系統通知",
-                    "path": "send_list",
-                    "icon_name": "sync",
-                    "icon_color": "info",
-                    "details": details_msg,
-                })
                 return result
 
-            await job_manager.start_job(username, "更新任務列表", task_func)
+            admission = await job_manager.start_job(username, "更新任務列表", task_func, job_code=job_type)
 
         elif job_type == "refresh_sendlog_stats":
             orgs = get_sendtask_scope(current_user)
             # Logic from refresh_sendlog_stats
-            async def task_func():
-                uuids = params.get("uuids", [])
+            requested_uuids = params.get("uuids", [])
+            if not requested_uuids:
+                raise HTTPException(status_code=400, detail="未指定任務 UUID")
+            tasks = await db_controller.get(SendTask, filters={"sendtask_uuid": requested_uuids})
+            if orgs is not None:
+                tasks = filter_tasks_by_scope(tasks, orgs)
+            items = [
+                {"sendtask_uuid": task.sendtask_uuid, "sendtask_id": task.sendtask_id}
+                for task in tasks
+            ]
+            if not items:
+                raise HTTPException(status_code=403, detail="無權存取指定任務")
+
+            async def task_func(*, accepted_items, job_id):
+                uuids = [item["sendtask_uuid"] for item in accepted_items]
                 ignore_archived = params.get("ignore_archived", False)
-                if not uuids:
-                    return {"message": "未指定任務 UUID"}
-
-                tasks = await db_controller.get(SendTask, filters={"sendtask_uuid": uuids})
-                if orgs is not None:
-                    tasks = filter_tasks_by_scope(tasks, orgs)
-                    uuids = [task.sendtask_uuid for task in tasks]
-                    if not uuids:
-                        raise HTTPException(status_code=403, detail="無權存取指定任務")
-
-                task_names = {task.sendtask_uuid: task.sendtask_id for task in tasks}
-                requested_uuids = list(uuids)
-                statuses = await db_user.refresh_sendlog_stats(
-                    requested_uuids,
-                    ignore_archived=ignore_archived,
-                )
+                task_names = {item["sendtask_uuid"]: item["sendtask_id"] for item in accepted_items}
+                statuses = {}
+                for item in accepted_items:
+                    task_uuid = item["sendtask_uuid"]
+                    await job_manager.mark_item(job_id, task_uuid, "running")
+                    try:
+                        result = await db_user.refresh_sendlog_stats([task_uuid], ignore_archived=ignore_archived)
+                        statuses[task_uuid] = result.get(task_uuid, "error")
+                    except Exception as error:
+                        logger.error(f"Failed to refresh task {task_uuid}: {error}")
+                        statuses[task_uuid] = "error"
                 successful_tasks = []
                 skipped_tasks = []
                 failed_tasks = []
 
-                for task_uuid in requested_uuids:
+                for task_uuid in uuids:
                     task = {
                         "sendtask_uuid": task_uuid,
                         "sendtask_id": task_names.get(task_uuid, "Unknown"),
@@ -257,10 +227,13 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                     status = statuses.get(task_uuid)
                     if status in {"updated", "unchanged"}:
                         successful_tasks.append(task)
+                        await job_manager.mark_item(job_id, task_uuid, "completed")
                     elif status in {"deleted", "archived"}:
                         skipped_tasks.append({**task, "reason": status})
+                        await job_manager.mark_item(job_id, task_uuid, "skipped", status)
                     else:
                         failed_tasks.append({**task, "reason": status or "not_found"})
+                        await job_manager.mark_item(job_id, task_uuid, "failed", status or "not_found")
 
                 result = {
                     "updated_count": len(successful_tasks),
@@ -278,41 +251,93 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                         task["sendtask_id"] for task in failed_tasks
                     )
 
-                details = []
-                if successful_tasks:
-                    details.append("● 已更新任務:\n" + "\n".join(task["sendtask_id"] for task in successful_tasks))
-                if skipped_tasks:
-                    details.append("● 跳過任務:\n" + "\n".join(task["sendtask_id"] for task in skipped_tasks))
-                if failed_tasks:
-                    details.append("● 更新失敗任務:\n" + "\n".join(task["sendtask_id"] for task in failed_tasks))
-
-                if result.get("job_status") == "failed":
-                    title = "任務更新失敗"
-                    icon_color = "error"
-                elif result.get("job_status") == "partial":
-                    title = "任務部分更新完成"
-                    icon_color = "warning"
-                else:
-                    title = "任務更新完成"
-                    icon_color = "primary"
-                await db_controller.create(Notification, {
-                    "username": username,
-                    "title": title,
-                    "subtitle": f"已更新 {len(successful_tasks)} 筆，跳過 {len(skipped_tasks)} 筆，失敗 {len(failed_tasks)} 筆",
-                    "heading": "系統通知",
-                    "path": "send_list",
-                    "icon_name": "update",
-                    "icon_color": icon_color,
-                    "details": "\n\n".join(details),
-                })
                 return result
 
-            await job_manager.start_job(username, "更新任務統計", task_func)
+            admission = await job_manager.start_job(
+                username,
+                "更新任務統計",
+                task_func,
+                job_code=job_type,
+                items=items,
+                request_params={"ignore_archived": params.get("ignore_archived", False)},
+            )
+
+        elif job_type == "upsert_selected_sendtasks":
+            requested_uuids = params.get("uuids", [])
+            if not requested_uuids:
+                raise HTTPException(status_code=400, detail="未指定任務 UUID")
+
+            orgs = get_sendtask_scope(current_user)
+            items = []
+            for task_uuid in dict.fromkeys(requested_uuids):
+                record = await db_user._build_sendtask_record_from_detail(task_uuid)
+                if not record:
+                    continue
+                if orgs is not None and not filter_tasks_by_scope([record], orgs):
+                    continue
+                items.append({
+                    "sendtask_uuid": task_uuid,
+                    "sendtask_id": record.get("sendtask_id", "Unknown"),
+                })
+            if not items:
+                raise HTTPException(status_code=403, detail="無權存取指定任務或任務已不存在")
+
+            async def task_func(*, accepted_items, job_id):
+                successful_tasks = []
+                failed_tasks = []
+                for item in accepted_items:
+                    task_uuid = item["sendtask_uuid"]
+                    await job_manager.mark_item(job_id, task_uuid, "running")
+                    try:
+                        result = await db_user.upsert_sendtasks_by_uuids([task_uuid])
+                        if not result["upserted"]:
+                            raise RuntimeError("任務不存在或無法取得最新資料")
+                        stats = await db_user.refresh_sendlog_stats(
+                            [task_uuid],
+                            ignore_archived=True,
+                        )
+                        status = stats.get(task_uuid, "error")
+                        if status in {"updated", "unchanged"}:
+                            successful_tasks.append(item)
+                            await job_manager.mark_item(job_id, task_uuid, "completed")
+                        else:
+                            failed_tasks.append({**item, "reason": status})
+                            await job_manager.mark_item(job_id, task_uuid, "failed", status)
+                    except Exception as error:
+                        logger.error(f"Failed to update selected task {task_uuid}: {error}")
+                        failed_tasks.append({**item, "reason": str(error)})
+                        await job_manager.mark_item(job_id, task_uuid, "failed", str(error))
+
+                result = {
+                    "updated_count": len(successful_tasks),
+                    "successful_tasks": successful_tasks,
+                    "skipped_count": 0,
+                    "skipped_tasks": [],
+                    "failed_count": len(failed_tasks),
+                    "failed_tasks": failed_tasks,
+                }
+                if successful_tasks and failed_tasks:
+                    result["job_status"] = "partial"
+                elif failed_tasks:
+                    result["job_status"] = "failed"
+                    result["error_summary"] = "更新失敗：" + "、".join(
+                        task["sendtask_id"] for task in failed_tasks
+                    )
+                return result
+
+            admission = await job_manager.start_job(
+                username,
+                "依名稱更新任務",
+                task_func,
+                job_code=job_type,
+                items=items,
+                request_params={"ignore_archived": True},
+            )
             
         else:
             raise HTTPException(status_code=400, detail=f"Unknown job type: {job_type}")
 
-        return {"status": "success", "message": "任務已開始"}
+        return {"status": "success", "message": "任務已開始", **admission}
         
     except HTTPException:
         raise

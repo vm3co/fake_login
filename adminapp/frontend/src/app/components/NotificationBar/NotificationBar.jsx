@@ -2,7 +2,6 @@ import { Fragment, useCallback, useEffect, useState } from "react";
 // import { Link } from "react-router-dom";
 import Box from "@mui/material/Box";
 import Card from "@mui/material/Card";
-import Icon from "@mui/material/Icon";
 import Badge from "@mui/material/Badge";
 import Button from "@mui/material/Button";
 import Drawer from "@mui/material/Drawer";
@@ -10,15 +9,10 @@ import styled from "@mui/material/styles/styled";
 import IconButton from "@mui/material/IconButton";
 import ThemeProvider from "@mui/material/styles/ThemeProvider";
 import Notifications from "@mui/icons-material/Notifications";
-import Clear from "@mui/icons-material/Clear";
 import Refresh from "@mui/icons-material/Refresh";
 import {
   Chip,
   CircularProgress,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
   Tab,
   Tabs,
   Typography
@@ -27,11 +21,8 @@ import axios from "axios";
 
 import useAuth from "app/hooks/useAuth";
 import useSettings from "app/hooks/useSettings";
-import useNotification from "app/hooks/useNotification";
-import { getTimeDifference } from "app/utils/utils.js";
 import { topBarHeight } from "app/utils/constant";
 import { themeShadows } from "../MatxTheme/themeColors";
-import { Paragraph, Small } from "../Typography";
 
 const Notification = styled("div")(() => ({
   padding: "16px",
@@ -46,44 +37,6 @@ const Notification = styled("div")(() => ({
     marginBottom: 0,
     fontWeight: "500"
   }
-}));
-
-const NotificationCard = styled(Box)(({ theme }) => ({
-  position: "relative",
-  "&:hover": {
-    "& .messageTime": { display: "none" },
-    "& .deleteButton": { opacity: "1" }
-  },
-  "& .messageTime": { color: theme.palette.text.secondary },
-  "& .icon": { fontSize: "1.25rem" }
-}));
-
-const DeleteButton = styled(IconButton)(() => ({
-  opacity: "0",
-  position: "absolute",
-  right: 5,
-  marginTop: 9,
-  marginRight: "24px",
-  background: "rgba(0, 0, 0, 0.01)"
-}));
-
-const CardLeftContent = styled("div")(({ theme }) => ({
-  padding: "12px 8px",
-  display: "flex",
-  alignItems: "center",
-  justifyContent: "space-between",
-  background: "rgba(0, 0, 0, 0.01)",
-  "& small": {
-    fontWeight: "500",
-    marginLeft: "16px",
-    color: theme.palette.text.secondary
-  }
-}));
-
-const Heading = styled("span")(({ theme }) => ({
-  fontWeight: "500",
-  marginLeft: "16px",
-  color: theme.palette.text.secondary
 }));
 
 const STATUS_META = {
@@ -120,19 +73,14 @@ export default function NotificationBar({ container }) {
   const { settings } = useSettings();
   const { user } = useAuth();
   const [panelOpen, setPanelOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState("notifications");
+  const [activeTab, setActiveTab] = useState("manual");
   const [jobs, setJobs] = useState([]);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState("");
-  const { deleteNotification, clearNotifications, notifications } = useNotification();
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [selectedNotification, setSelectedNotification] = useState(null);
 
   const handleDrawerToggle = () => setPanelOpen((open) => !open);
 
   const fetchJobs = useCallback(async (showLoading = false) => {
-    if (activeTab === "notifications") return;
-
     if (showLoading) setJobsLoading(true);
     setJobsError("");
     try {
@@ -149,28 +97,28 @@ export default function NotificationBar({ container }) {
   }, [activeTab]);
 
   useEffect(() => {
-    if (!panelOpen || activeTab === "notifications") return undefined;
+    if (!panelOpen) return undefined;
 
     fetchJobs(true);
     const intervalId = window.setInterval(() => fetchJobs(false), 2000);
     return () => window.clearInterval(intervalId);
   }, [panelOpen, activeTab, fetchJobs]);
 
-  const handleNotificationClick = (notification) => {
-    setSelectedNotification(notification);
-    setDialogOpen(true);
-    setPanelOpen(false);
+  const cancelJob = async (jobId) => {
+    try {
+      await axios.post(`/api/jobs/${jobId}/cancel`);
+      fetchJobs(false);
+    } catch (error) {
+      setJobsError(error.response?.data?.detail || "無法取消任務");
+    }
   };
 
-  const handleDialogClose = () => {
-    setDialogOpen(false);
-    setSelectedNotification(null);
-  };
+  const activeManualCount = jobs.filter((job) => ["pending", "running"].includes(job.status)).length;
 
   return (
     <Fragment>
       <IconButton onClick={handleDrawerToggle}>
-        <Badge color="secondary" badgeContent={notifications?.length}>
+        <Badge color="secondary" badgeContent={activeManualCount}>
           <Notifications sx={{ color: "text.primary" }} />
         </Badge>
       </IconButton>
@@ -187,7 +135,7 @@ export default function NotificationBar({ container }) {
           <Box sx={{ width: { xs: "100vw", sm: 420 }, maxWidth: "100vw" }}>
             <Notification>
               <Notifications color="primary" />
-              <h5>通知與更新任務</h5>
+              <h5>更新任務</h5>
             </Notification>
 
             <Tabs
@@ -195,60 +143,10 @@ export default function NotificationBar({ container }) {
               onChange={(_, value) => setActiveTab(value)}
               variant="fullWidth"
               sx={{ borderBottom: 1, borderColor: "divider", mb: 2 }}>
-              <Tab value="notifications" label="通知" />
               <Tab value="manual" label="手動更新" />
               <Tab value="scheduler" label="系統排程" />
             </Tabs>
-
-            {activeTab === "notifications" && (
-              <>
-                {notifications?.map((notification) => (
-                  <NotificationCard key={notification.id}>
-                    <DeleteButton
-                      size="small"
-                      className="deleteButton"
-                      onClick={(event) => {
-                        event.stopPropagation();
-                        deleteNotification(notification.id);
-                      }}>
-                      <Clear className="icon" />
-                    </DeleteButton>
-
-                    <Box
-                      onClick={() => handleNotificationClick(notification)}
-                      sx={{ textDecoration: "none", cursor: "pointer" }}>
-                      <Card sx={{ mx: 2, mb: 2 }} elevation={3}>
-                        <CardLeftContent>
-                          <Box display="flex">
-                            <Icon className="icon" color={notification.icon?.color || "primary"}>
-                              {notification.icon?.name || "notifications"}
-                            </Icon>
-                            <Heading>{notification.heading}</Heading>
-                          </Box>
-
-                          <Small className="messageTime">
-                            {getTimeDifference(new Date(notification.timestamp))} ago
-                          </Small>
-                        </CardLeftContent>
-
-                        <Box px={2} pt={1} pb={2}>
-                          <Paragraph m={0}>{notification.title}</Paragraph>
-                          <Small color="text.secondary">{notification.subtitle}</Small>
-                        </Box>
-                      </Card>
-                    </Box>
-                  </NotificationCard>
-                ))}
-
-                {!!notifications?.length && (
-                  <Button fullWidth onClick={clearNotifications}>
-                    清除通知
-                  </Button>
-                )}
-              </>
-            )}
-
-            {activeTab !== "notifications" && (
+            {
               <Box px={2} pb={3}>
                 <Box display="flex" alignItems="center" justifyContent="space-between" mb={1.5}>
                   <Typography variant="body2" color="text.secondary">
@@ -284,7 +182,7 @@ export default function NotificationBar({ container }) {
                     <Card key={job.job_id} variant="outlined" sx={{ mb: 1.5 }}>
                       <Box p={1.75}>
                         <Box display="flex" alignItems="center" justifyContent="space-between" gap={1}>
-                          <Typography variant="subtitle2">{job.type}</Typography>
+                          <Typography variant="subtitle2">{job.display_name || job.type}</Typography>
                           <Chip
                             size="small"
                             label={status.label}
@@ -296,6 +194,23 @@ export default function NotificationBar({ container }) {
                           <Typography variant="caption" color="text.secondary" display="block" mt={0.75}>
                             啟動者：{job.owner_username}
                           </Typography>
+                        )}
+                        {activeTab === "manual" && isRunning && (
+                          <Button
+                            color="error"
+                            size="small"
+                            variant="outlined"
+                            sx={{ mt: 1 }}
+                            onClick={() => cancelJob(job.job_id)}>
+                            取消更新
+                          </Button>
+                        )}
+                        {activeTab === "manual" && job.items?.length > 0 && (
+                          <TaskResultList
+                            title={isRunning ? "正在更新任務" : "任務項目"}
+                            tasks={job.items}
+                            color={isRunning ? "info.main" : "text.secondary"}
+                          />
                         )}
                         <Typography variant="caption" color="text.secondary" display="block" mt={0.5}>
                           開始：{formatTaipeiTime(job.start_time)}
@@ -341,51 +256,9 @@ export default function NotificationBar({ container }) {
                   );
                 })}
               </Box>
-            )}
+            }
           </Box>
         </Drawer>
-
-        {/* Notification Details Dialog */}
-        {selectedNotification && (
-          <Dialog open={dialogOpen} onClose={handleDialogClose} maxWidth="sm" fullWidth>
-            <DialogTitle>
-              <Box display="flex" alignItems="center">
-                <Icon color={selectedNotification.icon?.color || "primary"} sx={{ mr: 1 }}>
-                  {selectedNotification.icon?.name || "notifications"}
-                </Icon>
-                {selectedNotification.heading || "通知詳情"}
-              </Box>
-            </DialogTitle>
-            <DialogContent>
-              <Box py={2}>
-                <Typography variant="h6" gutterBottom>
-                  {selectedNotification.title}
-                </Typography>
-                <Typography variant="body1" color="textSecondary" paragraph>
-                  {selectedNotification.subtitle}
-                </Typography>
-                <Typography variant="caption" color="textSecondary" display="block">
-                  時間: {formatTaipeiTime(selectedNotification.timestamp)}
-                </Typography>
-                {selectedNotification.details && (
-                  <Typography variant="body2" color="textPrimary" display="block" sx={{ mt: 2, whiteSpace: "pre-wrap" }}>
-                    {selectedNotification.details}
-                  </Typography>
-                )}
-                {selectedNotification.path && (
-                  <Typography variant="caption" color="textSecondary" display="block" sx={{ mt: 1 }}>
-                    相關路徑: {selectedNotification.path}
-                  </Typography>
-                )}
-              </Box>
-            </DialogContent>
-            <DialogActions>
-              <Button onClick={handleDialogClose} color="primary">
-                關閉
-              </Button>
-            </DialogActions>
-          </Dialog>
-        )}
       </ThemeProvider>
     </Fragment>
   );

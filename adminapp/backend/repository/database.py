@@ -109,6 +109,44 @@ async def init_db():
             await conn.execute(text(
                 "INSERT INTO schema_migrations (version) VALUES (:version)"
             ), {"version": migration_version})
+        await conn.execute(text(
+            "ALTER TABLE job_runs "
+            "ADD COLUMN IF NOT EXISTS job_code VARCHAR(64), "
+            "ADD COLUMN IF NOT EXISTS display_name TEXT, "
+            "ADD COLUMN IF NOT EXISTS request_params JSONB"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_job_runs_job_code ON job_runs(job_code)"
+        ))
+        await conn.execute(text(
+            "CREATE TABLE IF NOT EXISTS job_run_items ("
+            "id SERIAL PRIMARY KEY, "
+            "job_id VARCHAR(36) NOT NULL REFERENCES job_runs(job_id) ON DELETE CASCADE, "
+            "sendtask_uuid VARCHAR(36) NOT NULL, "
+            "sendtask_id TEXT NOT NULL, "
+            "status VARCHAR(20) NOT NULL DEFAULT 'pending', "
+            "reason TEXT, "
+            "started_at TIMESTAMPTZ, "
+            "finished_at TIMESTAMPTZ"
+            ")"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_job_run_items_job_id ON job_run_items(job_id)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_job_run_items_sendtask_uuid ON job_run_items(sendtask_uuid)"
+        ))
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_job_run_items_active_sendtask "
+            "ON job_run_items(sendtask_uuid) "
+            "WHERE status IN ('pending', 'running')"
+        ))
+        await conn.execute(text(
+            "UPDATE job_runs SET status = 'failed', "
+            "error = COALESCE(error, '服務重新啟動前未完成的舊版背景任務'), "
+            "finished_at = CURRENT_TIMESTAMP "
+            "WHERE source = 'manual' AND status IN ('pending', 'running')"
+        ))
         # 補上既有資料表新增欄位 (idempotent)
         await conn.execute(text(
             "ALTER TABLE trigger_pages "

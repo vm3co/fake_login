@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, String, Boolean, BigInteger, Text,
-    TIMESTAMP, ForeignKey, JSON, ARRAY, Float
+    TIMESTAMP, ForeignKey, JSON, ARRAY, Float, Index, text
 )
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY as PG_ARRAY
@@ -198,14 +198,38 @@ class JobRun(Base):
     id = Column(Integer, primary_key=True, index=True)
     job_id = Column(String(36), unique=True, nullable=False, index=True)
     source = Column(String(20), nullable=False, index=True)
+    job_code = Column(String(64), nullable=True, index=True)
     job_type = Column(Text, nullable=False)
+    display_name = Column(Text, nullable=True)
     owner_username = Column(Text, nullable=False, index=True)
     status = Column(String(20), nullable=False, index=True)
     message = Column(Text)
     result = Column(JSONB, nullable=True)
     error = Column(Text, nullable=True)
+    request_params = Column(JSONB, nullable=True)
     started_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     finished_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
+class JobRunItem(Base):
+    __tablename__ = "job_run_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    job_id = Column(String(36), ForeignKey("job_runs.job_id", ondelete="CASCADE"), nullable=False, index=True)
+    sendtask_uuid = Column(String(36), nullable=False, index=True)
+    sendtask_id = Column(Text, nullable=False)
+    status = Column(String(20), nullable=False, default="pending", index=True)
+    reason = Column(Text, nullable=True)
+    started_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    finished_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
+    __table_args__ = (
+        Index(
+            "uq_job_run_items_active_sendtask",
+            "sendtask_uuid",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'running')"),
+        ),
+    )
 
 class LoginLog(Base):
     __tablename__ = "login_logs"
