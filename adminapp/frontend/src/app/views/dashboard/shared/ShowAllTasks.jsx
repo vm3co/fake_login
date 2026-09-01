@@ -1,0 +1,745 @@
+import { useEffect, useState, useContext } from "react";
+import { useSnackbar } from 'notistack';
+import {
+  Box,
+  Table,
+  styled,
+  TableRow,
+  TableBody,
+  TableCell,
+  TableHead,
+  TablePagination,
+  Button,
+  TableContainer,
+  Paper,
+  Stack,
+  Chip,
+  CircularProgress,
+  Typography,
+  TextField,
+  Checkbox,
+  FormControlLabel,
+  LinearProgress,
+  IconButton,
+  Tooltip,
+} from "@mui/material";
+import DownloadIcon from "@mui/icons-material/Download";
+import DeleteIcon from "@mui/icons-material/Delete";
+import SimpleCard from "app/components/SimpleCard";
+
+import { SendtaskListContext } from "app/contexts/SendtaskListContext";
+import formatDate from "app/utils/formatDate";
+// import { useCheckSends } from "app/hooks/useCheckSends";
+import { useJob } from "app/contexts/JobContext";
+import TaskDetail from './TaskDetail_new';
+import axios from "axios";
+
+
+// STYLED COMPONENT
+const StyledTable = styled(Table)(() => ({
+  whiteSpace: "normal",
+  "& thead": {
+    "& tr": {
+      "& th": {
+        textAlign: "center", // align="center"
+        whiteSpace: "normal", // sx={{ whiteSpace: 'normal' }}
+        lineHeight: 1.2, // sx={{ lineHeight: 1.2 }}
+        borderRight: "1px solid #e0e0e0", // 垂直框線
+        cursor: "pointer", // 滑鼠移到欄位上顯示可按的形狀
+        "&:hover": {
+          backgroundColor: "#f1f1f1", // 提示使用者可以點擊
+        },
+        "&:last-child": {
+          borderRight: "none", // 最後一欄不需要右邊框線
+        },
+        // 特定欄位寬度設定
+        "&:nth-of-type(1)": { width: "60px" }, // 勾選框
+        "&:nth-of-type(2)": { width: "160px" }, // 任務名稱
+        "&:nth-of-type(3)": { width: "60px" }, // 任務期間
+        "&:nth-of-type(4)": { width: "60px" }, // 信件總數量
+        "&:nth-of-type(5)": { width: "60px" }, // 已寄出總數
+        "&:nth-of-type(6)": { width: "60px" }, // 成功
+        "&:nth-of-type(7)": { width: "60px" }, // 失敗
+        "&:nth-of-type(8)": { width: "80px" }, // 第一封寄出預計日期
+        "&:nth-of-type(9)": { width: "80px" }, // 最後一封寄出預計日期
+        "&:nth-of-type(10)": { width: "80px" }, // 下一封寄出預計日期
+        "&:nth-of-type(11)": { width: "60px" }, // 是否暫停
+        "&:nth-of-type(12)": { width: "120px" }, // 更新/刪除
+      }
+    }
+  },
+  "& tbody": {
+    "& tr": {
+      "& td": {
+        textAlign: "center",
+        whiteSpace: "normal",
+        lineHeight: 1.2,
+        wordBreak: "keep-all", // 保持單詞完整，不斷字
+        overflowWrap: "break-word", // 當單詞太長時才斷字
+        borderRight: "1px solid #e0e0e0",
+        "&:last-child": {
+          borderRight: "none",
+        },
+        "&:nth-of-type(3), &:nth-of-type(4)": {
+          fontWeight: "bold",
+          // color: "#FF6A00" // 橘色
+        },
+
+      }
+    }
+  }
+}));
+
+function getTodayTimestamps() {
+  const timeZone = "Asia/Taipei";
+
+  const now = new Date();
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+
+  const parts = formatter.formatToParts(now);
+  const year = parts.find(p => p.type === 'year').value;
+  const month = parts.find(p => p.type === 'month').value;
+  const day = parts.find(p => p.type === 'day').value;
+
+  const startDate = new Date(`${year}-${month}-${day}T00:00:00`);
+  const todayStartTs = Math.floor(startDate.getTime() / 1000);
+  const todayEndTs = todayStartTs + 24 * 60 * 60 * 1000;
+
+  return [todayStartTs, todayEndTs];
+};
+
+
+export default function ShowAllTasks() {
+  const { enqueueSnackbar } = useSnackbar();
+
+  const [page, setPage] = useState(0);
+  const [rowsPerPage, setRowsPerPage] = useState(10);
+  const [sortBy, setSortBy] = useState("test_start_ut");  // 預設排序為任務開始日期
+  const [sortOrder, setSortOrder] = useState("asc"); // 排序方向：asc 或 desc
+  const {
+    loading,
+    statsData,
+    tasksData,
+    refresh,
+    isCheckingSends,
+    setIsCheckingSends,
+    exportCsv,
+  } = useContext(SendtaskListContext);
+  const [loadingDots, setLoadingDots] = useState(0);
+  const [updatedTodayUuids, setUpdatedTodayUuids] = useState([]);
+  // const { fetchCheckSends } = useCheckSends({ refresh, setIsCheckingSends, setUpdatedTodayUuids });
+  const { startJob } = useJob();
+  const [searchText, setSearchText] = useState("");  // 搜尋任務名稱
+  const [selectedUuids, setSelectedUuids] = useState([]);  // 勾選任務並只更新這些任務
+  const [isExporting, setIsExporting] = useState(false); // 匯出狀態
+  const [progress, setProgress] = useState(0); // 匯出進度
+
+  const [detailDialog, setDetailDialog] = useState({
+    open: false,
+    task: null
+  });
+
+  // 顯示狀況
+  const [showExpiredOnly, setShowExpiredOnly] = useState(false);  // 是否只顯示已過期的任務
+  const [showNotStartedOnly, setShowNotStartedOnly] = useState(false);  // 是否只顯示已過期的任務
+  const [showRunningOnly, setShowRunningOnly] = useState(false);  // 是否只顯示已過期的任務
+  const [showFailedOnly, setShowFailedOnly] = useState(false);
+  const [todayStartTs, todayEndTs] = getTodayTimestamps();
+
+  // 排序邏輯
+  const sortedTasks = [...(tasksData || [])].sort((a, b) => {
+    if (!sortBy) return 0; // 如果未指定排序欄位，保持原順序
+    let valueA, valueB;
+    if (["test_start_ut", "person_count", "is_pause"].includes(sortBy)) {
+      valueA = a[sortBy];
+      valueB = b[sortBy];
+    } else if (sortBy === "sendtask_id") {
+      valueA = a[sortBy]?.toLowerCase();
+      valueB = b[sortBy]?.toLowerCase();
+    } else {
+      valueA = statsData[a.sendtask_uuid]?.[sortBy];
+      valueB = statsData[b.sendtask_uuid]?.[sortBy];
+    }
+    if (valueA < valueB) return sortOrder === "asc" ? -1 : 1;
+    if (valueA > valueB) return sortOrder === "asc" ? 1 : -1;
+    return 0;
+  });
+
+  // 任務顯示模式
+  const filteredTasks = sortedTasks.filter(row => {
+    // 搜尋任務名稱或 UUID
+    if (searchText) {
+      const searchLower = searchText.toLowerCase();
+      const matchesId = row.sendtask_id?.toLowerCase().includes(searchLower);
+      const matchesUuid = row.sendtask_uuid?.toLowerCase().includes(searchLower);
+
+      if (!(matchesId || matchesUuid)) {
+        return false; // 如果兩者都不符合，則過濾掉
+      }
+    }
+
+    // 過濾
+    const start = (row.pre_test_enable)
+      ? row.pre_test_start_ut
+      : row.test_start_ut;
+    const end = (row.stop_time_new && row.stop_time_new !== -1)
+      ? row.stop_time_new
+      : (row.pre_test_enable)
+        ? row.pre_test_end_ut
+        : row.test_end_ut;
+    const stats = statsData[row.sendtask_uuid] || {};
+    const sendFailed = stats.totalsend - stats.totalsuccess;
+    let show = true;
+    if (showExpiredOnly) {
+      if (!end || end > todayStartTs) show = false;
+    }
+    if (showNotStartedOnly) {
+      if (!start || start < todayEndTs) show = false;
+    }
+    if (showRunningOnly) {
+      if (end < todayStartTs || start > todayEndTs) show = false;
+    }
+    if (showFailedOnly) {
+      if (sendFailed === 0) show = false;
+    }
+    return show;
+  }) || [];
+
+  const pagedTasks = Array.isArray(filteredTasks)
+    ? filteredTasks.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
+    : [];
+
+  const handleExportSelected = async () => {
+    if (selectedUuids.length === 0) {
+      enqueueSnackbar("請先勾選要匯出的任務", { variant: 'warning' });
+      return;
+    }
+
+    setIsExporting(true);
+    setProgress(0);
+
+    try {
+      const sendtasks = {};
+      selectedUuids.forEach((uuid) => {
+        const task = tasksData.find((t) => t.sendtask_uuid === uuid);
+        if (task) sendtasks[task.sendtask_id] = [uuid, task.pre_test_enable];
+      });
+
+      await exportCsv(sendtasks, {
+        onDownloadProgress: (progressEvent) => {
+          const total = progressEvent.total || 1; // 總大小
+          const current = progressEvent.loaded; // 已下載大小
+          setProgress(Math.round((current / total) * 100)); // 計算百分比
+        },
+      });
+    } catch (error) {
+      enqueueSnackbar(`匯出任務時發生錯誤：${error}`, { variant: 'warning' });
+
+    } finally {
+      setIsExporting(false);
+      setProgress(0);
+    }
+  };
+
+  const handleExportJessSelected = async () => {
+    if (selectedUuids.length === 0) {
+      enqueueSnackbar("請先勾選要匯出的任務", { variant: 'warning' });
+      return;
+    }
+
+    if (!window.confirm("此功能資料來源為dashboard，非Se2系統即時資料，請確認該任務是否更新過，以及郵件樣板列表是否更新過(網頁右上角可點選更新)")) {
+      return;
+    }
+
+    setIsExporting(true);
+    setProgress(0);
+
+    try {
+      for (let i = 0; i < selectedUuids.length; i++) {
+        const uuid = selectedUuids[i];
+        const task = tasksData?.find((t) => t.sendtask_uuid === uuid);
+        const name = task ? task.sendtask_id : "export";
+
+        setProgress(Math.round((i / selectedUuids.length) * 100));
+
+        const response = await axios.post(
+          "/api/download_sendlog_jess",
+          { sendtask_uuid: uuid, name: name },
+          { responseType: "blob" }
+        );
+
+        const url = window.URL.createObjectURL(new Blob([response.data]));
+        const link = document.createElement("a");
+        link.href = url;
+        link.setAttribute("download", `${name}_jess.xlsx`);
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.URL.revokeObjectURL(url);
+      }
+      setProgress(100);
+      enqueueSnackbar("匯出成功", { variant: "success" });
+    } catch (error) {
+      enqueueSnackbar(`匯出任務時發生錯誤：${error}`, { variant: 'warning' });
+    } finally {
+      setIsExporting(false);
+      setProgress(0);
+    }
+  };
+
+  // 動態「...」效果
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setLoadingDots(dots => (dots + 1) % 4);
+    }, 400);
+    return () => clearInterval(interval);
+  });
+
+  const handleSort = (column) => {
+    if (sortBy === column) {
+      setSortOrder(sortOrder === "asc" ? "desc" : "asc"); // 切換排序方向
+    } else {
+      setSortBy(column);
+      setSortOrder("asc"); // 默認升序
+    }
+  };
+
+  const handleChangePage = (_, newPage) => {
+    setPage(newPage);
+  };
+
+  const handleChangeRowsPerPage = (event) => {
+    setRowsPerPage(+event.target.value);
+    setPage(0);
+  };
+
+  const handleTaskClick = (taskRow, taskStats) => {
+
+    // 建立 "task" 物件
+    const adminControls = {
+      send: true,
+      failed: true,
+      notyet: true,
+      notTriggered: true,
+      triggered: true
+    };
+
+    setDetailDialog({
+      open: true,
+      task: {
+        sendtask_uuid: taskRow.sendtask_uuid,
+        name: taskRow.sendtask_id, // TaskDetail 使用 'name' 欄位
+        ...taskStats, // 傳入統計資料，讓 TaskDetail 的標頭能顯示
+        ...adminControls // 傳入所有權限旗標
+      }
+    });
+  };
+
+  const handleDeleteTask = async (uuid) => {
+    if (window.confirm("是否確認要刪除任務?刪除後qrcode及假網頁觸發紀錄將會消失，其餘紀錄需重新向主系統更新取得")) {
+      try {
+        const response = await axios.post("/api/delete_sendtask", { uuid });
+        if (response.data.status === "success") {
+          enqueueSnackbar("任務已刪除", { variant: "success" });
+          refresh(); // 重新載入任務列表
+        }
+      } catch (error) {
+        console.error("Failed to delete task:", error);
+        enqueueSnackbar("刪除任務失敗: " + error.message, { variant: "error" });
+      }
+    }
+  };
+
+  if (loading)
+    return (
+      <Box display="flex" alignItems="center" justifyContent="center" minHeight="300px">
+        <CircularProgress />
+        <Typography sx={{ ml: 2 }}>載入中...</Typography>
+      </Box>
+    );
+
+  return (
+    <Box width="100%" overflow="hidden">
+      <SimpleCard sx={{ padding: 1 }}>
+        <Stack direction="row" spacing={2} mb={2}>
+          <Button
+            variant="contained"
+            color="warning"
+            startIcon={<DownloadIcon />}
+            disabled={selectedUuids.length === 0 || isCheckingSends || isExporting}
+            onClick={handleExportSelected}
+            size="small"
+          >
+            {isExporting ? "資料匯出中" : "匯出勾選任務(來源為Se2)"}
+          </Button>
+          <Button
+            variant="contained"
+            color="success"
+            startIcon={<DownloadIcon />}
+            disabled={selectedUuids.length === 0 || isCheckingSends || isExporting}
+            onClick={handleExportJessSelected}
+            size="small"
+          >
+            {isExporting ? "資料匯出中" : "匯出勾選任務(來源為dashboard)"}
+          </Button>
+          <Button
+            variant="contained"
+            color="primary"
+            disabled={selectedUuids.length === 0 || isCheckingSends}
+            onClick={() => {
+              if (window.confirm("確定要執行寄送狀態更新嗎？")) {
+                startJob("refresh_sendlog_stats", { uuids: selectedUuids, ignore_archived: true });
+              }
+            }}
+            size="small"
+          >
+            更新勾選任務
+          </Button>
+          {isCheckingSends && (
+            <Typography color="primary" sx={{ ml: 2, fontSize: '0.875rem' }}>
+              任務更新中{".".repeat(loadingDots)}
+            </Typography>
+          )}
+        </Stack>
+        <Stack
+          direction="row"
+          spacing={2}
+          mb={2}
+          alignItems="center"
+        >
+          {isExporting && (
+            <Box sx={{ width: "100%", mt: 2 }}>
+              <Typography variant="body2" color="textSecondary">
+                {progress === 0 ? `匯出資料中${".".repeat(loadingDots)}` : `下載資料中${".".repeat(loadingDots)}`}
+              </Typography>
+              <LinearProgress variant="determinate" value={progress} />
+            </Box>
+          )}
+        </Stack>
+        <Stack
+          direction="row"
+          spacing={2}
+          mb={2}
+          alignItems="center"
+          sx={{
+            flexWrap: 'wrap',
+            gap: 1,
+            '@media (max-width: 768px)': {
+              flexDirection: 'column',
+              alignItems: 'stretch'
+            }
+          }}
+        >
+          <TextField
+            size="small"
+            label="搜尋任務名稱或UUID"
+            value={searchText}
+            onChange={e => {
+              setSearchText(e.target.value);
+              setPage(0);
+            }}
+            sx={{
+              width: 200,
+              '@media (max-width: 768px)': {
+                width: '100%'
+              }
+            }}
+          />
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1 }}>
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={showRunningOnly}
+                  onChange={e => {
+                    setShowRunningOnly(e.target.checked);
+                    setShowNotStartedOnly(false);
+                    setShowExpiredOnly(false);
+                    setPage(0);
+                  }}
+                  size="small"
+                />
+              }
+              label="執行中"
+              sx={{ margin: 0 }}
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={showNotStartedOnly}
+                  onChange={e => {
+                    setShowNotStartedOnly(e.target.checked);
+                    setShowRunningOnly(false);
+                    setShowExpiredOnly(false);
+                    setPage(0);
+                  }}
+                  size="small"
+                />
+              }
+              label="未開始"
+              sx={{ margin: 0 }}
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={showExpiredOnly}
+                  onChange={e => {
+                    setShowExpiredOnly(e.target.checked);
+                    setShowRunningOnly(false);
+                    setShowNotStartedOnly(false);
+                    setPage(0);
+                  }}
+                  size="small"
+                />
+              }
+              label="已結束"
+              sx={{ margin: 0 }}
+            />
+            <FormControlLabel
+              control={
+                <Checkbox
+                  checked={showFailedOnly}
+                  onChange={e => {
+                    setShowFailedOnly(e.target.checked);
+                    setPage(0);
+                  }}
+                  size="small"
+                />
+              }
+              label="有失敗寄送"
+              sx={{ margin: 0, color: "red" }}
+            />
+          </Box>
+          {selectedUuids.length > 0 &&
+            <Button
+              onClick={() => {
+                setSelectedUuids([]);
+              }}
+              variant="text"
+              size="small"
+              sx={{
+                textTransform: 'none',
+                minWidth: 'unset',
+                padding: '0 4px',
+                verticalAlign: 'baseline'
+              }}
+            >
+              清除所有選取任務
+            </Button>
+          }
+        </Stack>
+        <TableContainer
+          component={Paper}
+          sx={{
+            overflow: 'auto',
+            maxHeight: '70vh', // 限制最大高度
+            '&::-webkit-scrollbar': {
+              width: '8px',
+              height: '8px',
+            },
+            '&::-webkit-scrollbar-track': {
+              backgroundColor: '#f1f1f1',
+            },
+            '&::-webkit-scrollbar-thumb': {
+              backgroundColor: '#888',
+              borderRadius: '4px',
+            },
+            '&::-webkit-scrollbar-thumb:hover': {
+              backgroundColor: '#555',
+            },
+          }}
+        >
+          <StyledTable>
+            <TableHead>
+              <TableRow>
+                <TableCell align="center">
+                  <Checkbox
+                    checked={pagedTasks.length > 0 && pagedTasks.every(row => selectedUuids.includes(row.sendtask_uuid))}
+                    indeterminate={pagedTasks.some(row => selectedUuids.includes(row.sendtask_uuid)) && !pagedTasks.every(row => selectedUuids.includes(row.sendtask_uuid))}
+                    onChange={e => {
+                      if (e.target.checked) {
+                        setSelectedUuids([
+                          ...new Set([...selectedUuids, ...pagedTasks.map(row => row.sendtask_uuid)])
+                        ]);
+                      } else {
+                        setSelectedUuids(selectedUuids.filter(uuid => !pagedTasks.map(row => row.sendtask_uuid).includes(uuid)));
+                      }
+                    }}
+                  />
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("sendtask_id")}>
+                  任務名稱 {sortBy === "sendtask_id" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("test_start_ut")}>
+                  任務期間 {sortBy === "test_start_ut" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("totalsend")}>
+                  信件<br />總數量 {sortBy === "totalsend" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("person_count")}>
+                  總人數 {sortBy === "person_count" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("totalsuccess")}>
+                  成功<br />總數量 {sortBy === "totalsuccess" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("totalfailed")}>
+                  失敗<br />總數量 {sortBy === "totalfailed" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("all_earliest_plan_time")}>
+                  第一封寄出<br />預計日期 {sortBy === "all_earliest_plan_time" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("all_latest_plan_time")}>
+                  最後一封寄出<br />預計日期 {sortBy === "all_latest_plan_time" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("next_plan_time")}>
+                  下一封寄出<br />預計日期 {sortBy === "next_plan_time" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell align="center" onClick={() => handleSort("is_pause")}>
+                  是否暫停 {sortBy === "is_pause" && (sortOrder === "asc" ? "▲" : "▼")}
+                </TableCell>
+                <TableCell>
+                  更新/刪除
+                </TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {pagedTasks.map((row, index) => {
+                const stats = statsData[row.sendtask_uuid] || { planned: "-", send: "-", success: "-" };
+                const rowNumber = page * rowsPerPage + index + 1; // 全域編號
+                const start = (row.pre_test_enable)
+                  ? formatDate(row.pre_test_start_ut, "date")
+                  : formatDate(row.test_start_ut, "date");
+                const end = (row.stop_time_new && row.stop_time_new !== -1)
+                  ? formatDate(row.stop_time_new, "date")
+                  : (row.pre_test_enable)
+                    ? formatDate(row.pre_test_end_ut, "date")
+                    : formatDate(row.test_end_ut, "date");
+                return (
+                  <TableRow
+                    key={index}
+                    sx={{
+                      backgroundColor: updatedTodayUuids.includes(row.sendtask_uuid)
+                        ? "rgba(170, 210, 25, 0.18)" // 更新後的高亮色
+                        : index % 2 === 0
+                          ? "rgba(25, 118, 210, 0.14)" // 偶數行背景色
+                          : "transparent",
+                      "&:hover": {
+                        backgroundColor: updatedTodayUuids.includes(row.sendtask_uuid)
+                          ? "rgba(107, 133, 16, 0.38)" // 更新後的懸停色
+                          : "rgba(0, 0, 0, 0.24)", // 一般懸停色
+                      },
+                    }}
+                  >
+                    <TableCell align="center">
+                      <Checkbox
+                        checked={selectedUuids.includes(row.sendtask_uuid)}
+                        onChange={e => {
+                          if (e.target.checked) {
+                            setSelectedUuids([...selectedUuids, row.sendtask_uuid]);
+                          } else {
+                            setSelectedUuids(selectedUuids.filter(uuid => uuid !== row.sendtask_uuid));
+                          }
+                        }}
+                      /><strong>{rowNumber}</strong>
+                    </TableCell>
+                    <TableCell align="center"
+                      onClick={() => handleTaskClick(row, stats)}
+                      sx={{
+                        cursor: 'pointer',
+                        color: 'primary.main',
+                        fontWeight: 'bold',
+                        '&:hover': {
+                          textDecoration: 'underline',
+                          backgroundColor: 'rgba(0, 0, 0, 0.04)'
+                        }
+                      }}
+                    >
+                      {row.sendtask_id}
+                    </TableCell>
+                    <TableCell align="center">{start}<br />-<br />{end}</TableCell>
+                    <TableCell align="center">{stats.totalplanned}</TableCell>
+                    <TableCell align="center">{row.person_count}</TableCell>
+                    <TableCell align="center">{stats.totalsuccess}</TableCell>
+                    <TableCell align="center">{stats.totalfailed}</TableCell>
+                    <TableCell align="center">
+                      {stats.all_earliest_plan_time === 0 || stats.all_earliest_plan_time === undefined
+                        ? " - "
+                        : formatDate(stats.all_earliest_plan_time, "date")}
+                    </TableCell>
+                    <TableCell align="center">
+                      {stats.all_latest_plan_time === 0 || stats.all_latest_plan_time === undefined
+                        ? " - "
+                        : formatDate(stats.all_latest_plan_time, "date")}
+                    </TableCell>
+                    <TableCell align="center">
+                      {stats.next_plan_time === 0 || stats.next_plan_time === undefined
+                        ? " - "
+                        : (
+                          <span style={{ color: stats.next_plan_time < Math.floor(Date.now() / 1000) ? "red" : "inherit" }}>
+                            {formatDate(stats.next_plan_time, "date")}
+                            {stats.next_plan_time < Math.floor(Date.now() / 1000) && " (逾期)"}
+                          </span>
+                        )}
+                    </TableCell>
+                    <TableCell align="center">
+                      {row.is_pause ? (
+                        <Chip label="是" color="warning" size="small" />
+                      ) : (
+                        <Chip label="否" color="success" size="small" />
+                      )}
+                    </TableCell>
+                    <TableCell align="center">
+                      <Stack direction="row" spacing={1} justifyContent="center">
+                        <Button
+                          variant="outlined"
+                          size="small"
+                          onClick={() => {
+                            if (window.confirm("確定要執行寄送狀態更新嗎？")) {
+                              startJob("refresh_sendlog_stats", { uuids: [row.sendtask_uuid], ignore_archived: true });
+                            }
+                          }}
+                          disabled={isCheckingSends}
+                        >
+                          更新
+                        </Button>
+                        <Tooltip title="刪除任務">
+                          <IconButton
+                            color="error"
+                            size="small"
+                            onClick={() => handleDeleteTask(row.sendtask_uuid)}
+                          >
+                            <DeleteIcon />
+                          </IconButton>
+                        </Tooltip>
+                      </Stack>
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
+            </TableBody>
+          </StyledTable>
+        </TableContainer>
+      </SimpleCard>
+
+      <TablePagination
+        sx={{ px: 2 }}
+        page={page}
+        component="div"
+        rowsPerPage={rowsPerPage}
+        count={filteredTasks.length}
+        onPageChange={handleChangePage}
+        rowsPerPageOptions={[5, 10, 25, 50, 100]}
+        onRowsPerPageChange={handleChangeRowsPerPage}
+      />
+      <TaskDetail
+        task={detailDialog.task}
+        open={detailDialog.open}
+        onClose={() => setDetailDialog({ open: false, task: null })}
+      />
+    </Box>
+  );
+}

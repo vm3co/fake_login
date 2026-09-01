@@ -1,0 +1,92 @@
+import useAbortOnUnmount from "app/hooks/useAbortOnUnmount";
+import { useSnackbar } from 'notistack';
+import axios from "axios";
+
+
+export function useCheckSends({ refresh, setIsCheckingSends, setUpdatedTodayUuids }) {
+    const { enqueueSnackbar } = useSnackbar();
+    const { createController } = useAbortOnUnmount();
+
+    // 更新寄送任務的狀態
+    const fetchCheckSends = async (uuids = []) => {
+        // 彈出確認視窗
+        if (!window.confirm("確定要執行寄送狀態更新嗎？")) {
+            return false;
+        }
+
+        setIsCheckingSends(true);
+        // 建立新的 controller，並中斷前一個請求
+        const controller = createController();
+        // 只取今日未寄送最早的 plan_time 非0的任務
+        if (!uuids || uuids.length === 0) {
+            // 如果沒有任務就直接結束
+            enqueueSnackbar("無任務可更新", { variant: 'info' });
+            setIsCheckingSends(false);
+            return false;
+        }
+
+        const chunkSize = Math.ceil(uuids.length / 3); // 將 UUID 分成三等份
+        const uuidChunks = [];
+        for (let i = 0; i < uuids.length; i += chunkSize) {
+            uuidChunks.push(uuids.slice(i, i + chunkSize));
+        }
+
+        try {
+            const results = await Promise.all(
+                uuidChunks.map(async (chunk) => {
+                    const response = await axios.post("/api/refresh_sendlog_stats",
+                        { sendtask_uuids: chunk },
+                        { signal: controller.signal }
+                    );
+                    return response.data;
+                })
+            );
+
+            // 提取所有 "updated" 的 UUID
+            const updatedUuids = results.flatMap(json => {
+                const stats = json.data || {};
+                return Object.entries(stats)
+                    .filter(([, status]) => status === "changed")
+                    .map(([uuid]) => uuid);
+            });
+            const deletedUuids = results.flatMap(json => {
+                const stats = json.data || {};
+                return Object.entries(stats)
+                    .filter(([, status]) => status === "deleted")
+                    .map(([uuid]) => uuid);
+            });
+            const errorUuids = results.flatMap(json => {
+                const stats = json.data || {};
+                return Object.entries(stats)
+                    .filter(([, status]) => status === "error")
+                    .map(([uuid]) => uuid);
+            });
+
+            if (updatedUuids.length + deletedUuids.length + errorUuids.length === 0) {
+                enqueueSnackbar("任務已是最新狀態", { variant: 'info' });
+            } else {
+                const message =
+                    `更新 ${updatedUuids.length} 筆：\n${updatedUuids.join("\n")}\n\n` +
+                    `刪除 ${deletedUuids.length} 筆：\n${deletedUuids.join("\n")}\n\n` +
+                    `錯誤 ${errorUuids.length} 筆：\n${errorUuids.join("\n")}`;
+                enqueueSnackbar(message, { variant: 'success' });
+                refresh(); // 重新載入任務列表
+            }
+            if (setUpdatedTodayUuids) {
+                setUpdatedTodayUuids(updatedUuids);
+            }
+        } catch (err) {
+            if (err.name === "AbortError") {
+                // 請求被中止，不顯示錯誤
+            } else {
+                console.error("發生錯誤", err);
+                enqueueSnackbar("伺服器錯誤，請稍後再試", { variant: 'error' });
+            }
+        } finally {
+            setIsCheckingSends(false);
+        }
+        return true;
+    };
+
+    return { fetchCheckSends };
+}

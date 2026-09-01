@@ -1,0 +1,20 @@
+# 讓後端知道原始請求的網域是什麼
+proxy_set_header Host $host;
+
+# 將使用者的真實 IP 傳給後端
+proxy_set_header X-Real-IP $remote_addr;
+
+# 記錄完整的代理路徑，這在經過 Cloudflare 等 CDN 時特別重要
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+
+# 讓後端知道使用者是用 http 還是 https 連線的
+proxy_set_header X-Forwarded-Proto $scheme;
+
+# 防止網頁被嵌入到 iframe 中 (防止點擊劫持)
+add_header X-Frame-Options "SAMEORIGIN";
+
+# 啟用瀏覽器的 XSS 篩選器
+add_header X-XSS-Protection "1; mode=block";
+
+# 防止瀏覽器猜測 MIME 類型
+add_header X-Content-Type-Options "nosniff";

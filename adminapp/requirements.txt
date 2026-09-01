@@ -8,3 +8,13 @@ aiofiles
 requests
 pandas
 httpx
+passlib
+apscheduler
+python-jose
+openpyxl
+google-generativeai
+openai
+redis
+pillow
+sqlalchemy
+playwright

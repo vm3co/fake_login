@@ -1,0 +1,62 @@
+const navigations = [
+  { name: "Dashboard", path: "/dashboard/default", icon: "dashboard" },
+  { name: "郵件範本權重", path: "/mtmpl", icon: "email" },
+  { name: "客戶帳號", path: "/customers", icon: "perm_contact_calendar", disabled: true },
+  { name: "網頁生成", path: "/qrcode", icon: "list", disabled: true },
+  { name: "更換密碼", path: "/change-password", icon: "lock", disabled: true },
+  // { label: "PAGES", type: "label" },
+  {
+    name: "平台設定",
+    icon: "security",
+    auth: "platform_admin", // 只有 platform_admin 看得到
+    children: [
+      { name: "使用者", iconText: "AC", icon: "account_circle", path: "/admin/accts" },
+      { name: "登入登出紀錄", iconText: "LOG", icon: "history", path: "/admin/logs" },
+      { name: "系統設定", iconText: "SYS", icon: "settings", path: "/admin/announcement" },
+      { name: "Domain 管理", iconText: "DM", icon: "language", path: "/admin/domains" },
+      // { name: "Forgot Password", iconText: "FP", path: "/session/forgot-password" },
+      // { name: "Error", iconText: "404", path: "/session/404" }
+    ]
+  },
+  // { label: "Components", type: "label" },
+  // {
+  //   name: "Components",
+  //   icon: "favorite",
+  //   badge: { value: "30+", color: "secondary" },
+  //   children: [
+  //     { name: "Auto Complete", path: "/material/autocomplete", iconText: "A" },
+  //     { name: "Buttons", path: "/material/buttons", iconText: "B" },
+  //     { name: "Checkbox", path: "/material/checkbox", iconText: "C" },
+  //     { name: "Dialog", path: "/material/dialog", iconText: "D" },
+  //     { name: "Expansion Panel", path: "/material/expansion-panel", iconText: "E" },
+  //     { name: "Form", path: "/material/form", iconText: "F" },
+  //     { name: "Icons", path: "/material/icons", iconText: "I" },
+  //     { name: "Menu", path: "/material/menu", iconText: "M" },
+  //     { name: "Progress", path: "/material/progress", iconText: "P" },
+  //     { name: "Radio", path: "/material/radio", iconText: "R" },
+  //     { name: "Switch", path: "/material/switch", iconText: "S" },
+  //     { name: "Slider", path: "/material/slider", iconText: "S" },
+  //     { name: "Snackbar", path: "/material/snackbar", iconText: "S" },
+  //     { name: "Table", path: "/material/table", iconText: "T" }
+  //   ]
+  // },
+  // {
+  //   name: "Charts",
+  //   icon: "trending_up",
+  //   children: [{ name: "Echarts", path: "/charts/echarts", iconText: "E" }]
+  // },
+  {
+    name: "使用手冊",
+    icon: "book",
+    type: "extLink",
+    path: "https://hackmd.io/@MikeXu/HJUO4uGreg"
+  },
+  {
+    name: "ACSI 社交工程演練平台",
+    icon: "launch",
+    type: "extLink",
+    path: "https://se.acsicook.info/"
+  }
+];
+
+export default navigations;
