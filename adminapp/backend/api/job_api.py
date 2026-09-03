@@ -248,10 +248,17 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                     await job_manager.mark_item(job_id, task_uuid, "running")
                     try:
                         result = await db_user.refresh_sendlog_stats([task_uuid], ignore_archived=ignore_archived)
-                        statuses[task_uuid] = result.get(task_uuid, "error")
+                        status = result.get(task_uuid, "error")
                     except Exception as error:
                         logger.error(f"Failed to refresh task {task_uuid}: {error}")
-                        statuses[task_uuid] = "error"
+                        status = "error"
+                    statuses[task_uuid] = status
+                    if status in {"updated", "unchanged"}:
+                        await job_manager.mark_item(job_id, task_uuid, "completed")
+                    elif status in {"deleted", "archived"}:
+                        await job_manager.mark_item(job_id, task_uuid, "skipped", status)
+                    else:
+                        await job_manager.mark_item(job_id, task_uuid, "failed", status or "not_found")
                 successful_tasks = []
                 skipped_tasks = []
                 failed_tasks = []
@@ -264,13 +271,10 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                     status = statuses.get(task_uuid)
                     if status in {"updated", "unchanged"}:
                         successful_tasks.append(task)
-                        await job_manager.mark_item(job_id, task_uuid, "completed")
                     elif status in {"deleted", "archived"}:
                         skipped_tasks.append({**task, "reason": status})
-                        await job_manager.mark_item(job_id, task_uuid, "skipped", status)
                     else:
                         failed_tasks.append({**task, "reason": status or "not_found"})
-                        await job_manager.mark_item(job_id, task_uuid, "failed", status or "not_found")
 
                 result = {
                     "updated_count": len(successful_tasks),

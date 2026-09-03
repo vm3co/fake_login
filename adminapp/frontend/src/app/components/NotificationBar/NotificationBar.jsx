@@ -10,6 +10,7 @@ import IconButton from "@mui/material/IconButton";
 import ThemeProvider from "@mui/material/styles/ThemeProvider";
 import Notifications from "@mui/icons-material/Notifications";
 import Refresh from "@mui/icons-material/Refresh";
+import Error from "@mui/icons-material/Error";
 import {
   Chip,
   CircularProgress,
@@ -21,6 +22,7 @@ import axios from "axios";
 
 import useAuth from "app/hooks/useAuth";
 import useSettings from "app/hooks/useSettings";
+import { useJob } from "app/contexts/JobContext";
 import { topBarHeight } from "app/utils/constant";
 import { themeShadows } from "../MatxTheme/themeColors";
 
@@ -108,37 +110,53 @@ const TaskItemList = ({ title, tasks, color }) => {
 export default function NotificationBar({ container }) {
   const { settings } = useSettings();
   const { user } = useAuth();
+  const {
+    manualJobs,
+    activeCount,
+    unseenCompletedCount,
+    hasUnseenFailure,
+    jobsLoading: manualJobsLoading,
+    refreshManualJobs,
+    markManualJobsSeen,
+  } = useJob();
   const [panelOpen, setPanelOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("manual");
-  const [jobs, setJobs] = useState([]);
+  const [schedulerJobs, setSchedulerJobs] = useState([]);
   const [jobsLoading, setJobsLoading] = useState(false);
   const [jobsError, setJobsError] = useState("");
 
   const handleDrawerToggle = () => setPanelOpen((open) => !open);
 
   const fetchJobs = useCallback(async (showLoading = false) => {
+    if (activeTab === "manual") {
+      return refreshManualJobs({ silent: !showLoading });
+    }
     if (showLoading) setJobsLoading(true);
     setJobsError("");
     try {
       const response = await axios.get("/api/jobs", {
         params: { source: activeTab === "manual" ? "manual" : "scheduler" }
       });
-      setJobs(Array.isArray(response.data) ? response.data : []);
+      setSchedulerJobs(Array.isArray(response.data) ? response.data : []);
     } catch (error) {
       console.error("Error fetching jobs:", error);
       setJobsError(error.response?.data?.detail || "無法載入任務紀錄");
     } finally {
       if (showLoading) setJobsLoading(false);
     }
-  }, [activeTab]);
+  }, [activeTab, refreshManualJobs]);
 
   useEffect(() => {
     if (!panelOpen) return undefined;
 
     fetchJobs(true);
-    const intervalId = window.setInterval(() => fetchJobs(false), 2000);
-    return () => window.clearInterval(intervalId);
-  }, [panelOpen, activeTab, fetchJobs]);
+    if (activeTab === "manual") markManualJobsSeen();
+    if (activeTab === "scheduler") {
+      const intervalId = window.setInterval(() => fetchJobs(false), 5000);
+      return () => window.clearInterval(intervalId);
+    }
+    return undefined;
+  }, [panelOpen, activeTab, fetchJobs, markManualJobsSeen]);
 
   const cancelJob = async (jobId) => {
     try {
@@ -149,16 +167,27 @@ export default function NotificationBar({ container }) {
     }
   };
 
-  const activeManualCount = activeTab === "manual"
-    ? jobs.filter((job) => ["queued", "claiming", "running", "cancel_requested"].includes(job.status)).length
-    : 0;
+  const jobs = activeTab === "manual" ? manualJobs : schedulerJobs;
+  const displayLoading = activeTab === "manual" ? manualJobsLoading : jobsLoading;
 
   return (
     <Fragment>
       <IconButton onClick={handleDrawerToggle}>
-        <Badge color="secondary" badgeContent={activeManualCount}>
-          <Notifications sx={{ color: "text.primary" }} />
-        </Badge>
+        <Box sx={{ position: "relative", display: "inline-flex" }}>
+          <Badge
+            color={hasUnseenFailure ? "error" : "success"}
+            badgeContent={hasUnseenFailure ? <Error sx={{ fontSize: 14 }} /> : unseenCompletedCount}
+            invisible={!hasUnseenFailure && unseenCompletedCount === 0}>
+            <Notifications sx={{ color: "text.primary" }} />
+          </Badge>
+          {activeCount > 0 && (
+            <CircularProgress
+              size={13}
+              thickness={6}
+              sx={{ position: "absolute", right: -5, bottom: -4, color: "info.main", bgcolor: "background.paper", borderRadius: "50%" }}
+            />
+          )}
+        </Box>
       </IconButton>
 
       <ThemeProvider theme={settings.themes[settings.activeTheme]}>
@@ -195,7 +224,7 @@ export default function NotificationBar({ container }) {
                   </IconButton>
                 </Box>
 
-                {jobsLoading && !jobs.length && (
+                {displayLoading && !jobs.length && (
                   <Box display="flex" justifyContent="center" py={5}>
                     <CircularProgress size={28} />
                   </Box>
@@ -207,7 +236,7 @@ export default function NotificationBar({ container }) {
                   </Typography>
                 )}
 
-                {!jobsLoading && !jobsError && !jobs.length && (
+                {!displayLoading && !jobsError && !jobs.length && (
                   <Typography color="text.secondary" textAlign="center" py={5}>
                     尚無任務紀錄
                   </Typography>

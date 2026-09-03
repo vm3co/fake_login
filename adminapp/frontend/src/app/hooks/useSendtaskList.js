@@ -19,6 +19,9 @@ export default function useSendtaskList() {
 
     // 用於追蹤所有進行中的請求
     const activeRequestsRef = useRef(new Set());
+    const pendingRefreshUuidsRef = useRef(new Set());
+    const refreshTimerRef = useRef(null);
+    const refreshTasksByUuidsRef = useRef(null);
 
     useEffect(() => {
         if (isAuthenticated && !isCustomer) {
@@ -46,6 +49,40 @@ export default function useSendtaskList() {
         });
         setStatsData(statsObj);
     };
+
+    const refreshTasksByUuids = async (uuids) => {
+        const uniqueUuids = [...new Set(uuids)].filter(Boolean);
+        if (!uniqueUuids.length || isCustomer) return;
+
+        try {
+            const [tasksResponse, statsResponse] = await Promise.all([
+                axios.post("/api/customer_get_sendtasks", { sendtask_uuids: uniqueUuids }),
+                axios.post("/api/get_sendlog_stats", { sendtask_uuids: uniqueUuids }),
+            ]);
+            const updatedTasks = tasksResponse.data?.data || [];
+            const updatedStats = statsResponse.data?.data || [];
+            const taskMap = new Map(updatedTasks.map((task) => [task.sendtask_uuid, task]));
+
+            setTasksData((current) => {
+                const existingUuids = new Set(current.map((task) => task.sendtask_uuid));
+                const merged = current.map((task) => taskMap.get(task.sendtask_uuid) || task);
+                updatedTasks.forEach((task) => {
+                    if (!existingUuids.has(task.sendtask_uuid)) merged.push(task);
+                });
+                return merged;
+            });
+            setStatsData((current) => {
+                const next = { ...current };
+                updatedStats.forEach((stats) => {
+                    next[stats.sendtask_uuid] = stats;
+                });
+                return next;
+            });
+        } catch (error) {
+            console.error("局部更新 Dashboard 任務失敗", error);
+        }
+    };
+    refreshTasksByUuidsRef.current = refreshTasksByUuids;
 
     const fetchData = async (controller) => {
         try {
@@ -193,21 +230,22 @@ export default function useSendtaskList() {
     }, []);
 
     useEffect(() => {
-        const handleJobEvent = (e) => {
-            const job = e.detail;
-            if (job && job.type === '更新任務統計') {
-                refresh();
-            }
+        const handleItemsCompleted = (event) => {
+            (event.detail?.uuids || []).forEach((uuid) => pendingRefreshUuidsRef.current.add(uuid));
+            if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+            refreshTimerRef.current = window.setTimeout(() => {
+                const uuids = [...pendingRefreshUuidsRef.current];
+                pendingRefreshUuidsRef.current.clear();
+                refreshTasksByUuidsRef.current?.(uuids);
+            }, 250);
         };
 
-        window.addEventListener('jobCompleted', handleJobEvent);
-        window.addEventListener('jobFailed', handleJobEvent);
-
+        window.addEventListener('jobItemsCompleted', handleItemsCompleted);
         return () => {
-            window.removeEventListener('jobCompleted', handleJobEvent);
-            window.removeEventListener('jobFailed', handleJobEvent);
+            window.removeEventListener('jobItemsCompleted', handleItemsCompleted);
+            if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
         };
-    }, [isAuthenticated]); // Re-bind when auth changes is enough, as refresh creates a new controller each time
+    }, [isAuthenticated, isCustomer]);
 
     const todayTasks = tasksData.filter(row => {
         const stats = statsData[row.sendtask_uuid];
@@ -221,6 +259,7 @@ export default function useSendtaskList() {
         tasksData,
         todayTasks,
         refresh,
+        refreshTasksByUuids,
         isCheckingSends,
         setIsCheckingSends,
         registerRequest,    // 註冊請求
