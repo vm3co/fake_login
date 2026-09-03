@@ -314,31 +314,7 @@ def get_router(db_user):
         2. 與資料庫sendtask清單做diff
         3. 新增及刪除到sendtask資料庫
         """
-        try:
-            result = await db_user.sync_sendtasks(orgs=get_sendtask_scope(current_user))
-
-            sendlog_stats_status = {}
-            if result["added"]:
-                refresh_list = [task["sendtask_uuid"] for task in result["added"]]
-                sendlog_stats_status = await db_user.refresh_sendlog_stats(
-                    refresh_list,
-                    ignore_archived=True,
-                    skip_sendtask_sync=True,
-                )
-
-            data = {
-                "added": result["added"],
-                "changed": result["changed"],
-                "archived": result["archived"],
-                "removed": result["deleted"],
-                "sendlog_stats_status": sendlog_stats_status,
-            }
-            return {"status": "success", "data": data}
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Error in check_sendtasks: {str(e)}")
-            return {"status": "error", "message": str(e)}
+        raise HTTPException(status_code=410, detail="請改用 /api/jobs/start 啟動更新任務")
         
     @router.post(
         "/refresh_today_create_task",
@@ -354,28 +330,7 @@ def get_router(db_user):
         :param request: OrgsRequest，相容舊版請求但不採用其 orgs
         :return: dict, 包含新增和刪除的任務列表
         """
-        orgs = get_sendtask_scope(current_user)
-        today_create_task_list = await db_user.refresh_today_create_task()
-        today_create_task_list = filter_tasks_by_scope(today_create_task_list, orgs)
-        if not today_create_task_list:
-            logger.warning(f"today create task list is empty.")
-            return {"status": "success", "data": []}
-        
-        
-        refresh_list = [task["sendtask_uuid"] for task in today_create_task_list]
-        await db_controller.upsert(
-            SendTask,
-            today_create_task_list,
-            index_elements=['sendtask_uuid']
-        )
-
-        sendlog_stats_status = await db_user.refresh_sendlog_stats(refresh_list)
-
-        # Send notification in background
-        username = current_user.get("username", "unknown")
-        background_tasks.add_task(refresh_and_notify, refresh_list, username)
-
-        return {"status": "success", "message": "刷新完成", "data": sendlog_stats_status}
+        raise HTTPException(status_code=410, detail="請改用 /api/jobs/start 啟動更新任務")
 
     class SearchTaskRequest(BaseModel):
         keyword: str
@@ -424,38 +379,7 @@ def get_router(db_user):
         """
         將使用者從關鍵字搜尋結果中勾選的任務，重新向 SE2 取得權威最新資料後 upsert 進本地資料庫。
         """
-        try:
-            if not request.sendtask_uuids:
-                return {"status": "error", "message": "未選擇任何任務"}
-
-            # 依伺服器解析的組織範圍過濾，避免前端偽造 orgs 越權。
-            target_uuids = request.sendtask_uuids
-            orgs = get_sendtask_scope(current_user)
-            if orgs is not None:
-                allowed = []
-                for u in target_uuids:
-                    record = await db_user._build_sendtask_record_from_detail(u)
-                    if record and has_common_orgs(record.get("sendtask_owner_gid", []), orgs):
-                        allowed.append(u)
-                target_uuids = allowed
-
-            result = await db_user.upsert_sendtasks_by_uuids(target_uuids)
-            if not result["upserted"]:
-                return {"status": "success", "message": "沒有任務被更新", "data": result}
-
-            sendlog_stats_status = await db_user.refresh_sendlog_stats(
-                result["upserted"],
-                ignore_archived=True,
-            )
-            username = current_user.get("username", "unknown")
-            background_tasks.add_task(refresh_and_notify, result["upserted"], username)
-
-            return {"status": "success", "message": "更新完成", "data": {**result, "sendlog_stats_status": sendlog_stats_status}}
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Error in upsert_selected_sendtasks: {str(e)}")
-            return {"status": "error", "message": str(e)}
+        raise HTTPException(status_code=410, detail="請改用 /api/jobs/start 啟動更新任務")
 
     class CustomerGetSendtasksRequest(BaseModel):
         sendtask_uuids: list[str] = []
@@ -541,35 +465,7 @@ def get_router(db_user):
         :param data: dict, POST request body, keys: uuids
         :return: dict, response data, keys: status, message, updated
         """
-        try:
-            uuids = request.sendtask_uuids
-            if not uuids:
-                return {"status": "error", "message": "沒有收到 uuids"}
-
-            if current_user.get("user_type") == "customer":
-                customer = await db_controller.get_one(
-                    CustomerAcct, {"customer_name": current_user.get("username")}
-                )
-                allowed_uuids = {item["uuid"] for item in (customer.sendtasks or []) if isinstance(item, dict) and item.get("uuid")} if customer else set()
-                uuids = [uuid for uuid in uuids if uuid in allowed_uuids]
-            else:
-                orgs = get_sendtask_scope(current_user)
-                if orgs is not None:
-                    tasks = await db_controller.get(SendTask, filters={"sendtask_uuid": uuids})
-                    uuids = [
-                        task.sendtask_uuid
-                        for task in filter_tasks_by_scope(tasks, orgs)
-                    ]
-            if not uuids:
-                raise HTTPException(status_code=403, detail="無權存取指定任務")
-
-            sendlog_stats_status = await db_user.refresh_sendlog_stats(uuids, ignore_archived=request.ignore_archived)
-            return {"status": "success", "data": sendlog_stats_status}
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Error in refresh_sendlog_stats: {str(e)}")
-            return {"status": "error", "message": str(e)}
+        raise HTTPException(status_code=410, detail="請改用 /api/jobs/start 啟動更新任務")
 
     # 客戶端只需要看到的 sendlog_stats 欄位
     CUSTOMER_STATS_FIELDS = [

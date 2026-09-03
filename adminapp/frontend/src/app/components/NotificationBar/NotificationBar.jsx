@@ -40,12 +40,16 @@ const Notification = styled("div")(() => ({
 }));
 
 const STATUS_META = {
+  queued: { label: "排隊中", color: "warning" },
+  claiming: { label: "準備執行", color: "info" },
   pending: { label: "等待中", color: "warning" },
   running: { label: "執行中", color: "info" },
+  cancel_requested: { label: "正在取消", color: "warning" },
   completed: { label: "已完成", color: "success" },
   partial: { label: "部分完成", color: "warning" },
   failed: { label: "失敗", color: "error" },
-  cancelled: { label: "已取消", color: "default" }
+  cancelled: { label: "已取消", color: "default" },
+  interrupted: { label: "已中斷", color: "error" }
 };
 
 const formatTaipeiTime = (value) => value
@@ -113,7 +117,9 @@ export default function NotificationBar({ container }) {
     }
   };
 
-  const activeManualCount = jobs.filter((job) => ["pending", "running"].includes(job.status)).length;
+  const activeManualCount = activeTab === "manual"
+    ? jobs.filter((job) => ["queued", "claiming", "running", "cancel_requested"].includes(job.status)).length
+    : 0;
 
   return (
     <Fragment>
@@ -177,7 +183,8 @@ export default function NotificationBar({ container }) {
 
                 {jobs.map((job) => {
                   const status = STATUS_META[job.status] || { label: job.status, color: "default" };
-                  const isRunning = ["pending", "running"].includes(job.status);
+                  const isRunning = ["claiming", "running"].includes(job.status);
+                  const isActive = ["queued", "claiming", "running", "cancel_requested"].includes(job.status);
                   return (
                     <Card key={job.job_id} variant="outlined" sx={{ mb: 1.5 }}>
                       <Box p={1.75}>
@@ -195,7 +202,12 @@ export default function NotificationBar({ container }) {
                             啟動者：{job.owner_username}
                           </Typography>
                         )}
-                        {activeTab === "manual" && isRunning && (
+                        {job.blocked_by_display_name && (
+                          <Typography variant="caption" color="warning.main" display="block" mt={0.75}>
+                            系統正在等待或執行「{job.blocked_by_display_name}」，此任務排隊中
+                          </Typography>
+                        )}
+                        {activeTab === "manual" && isActive && job.owner_username === user?.name && job.status !== "cancel_requested" && (
                           <Button
                             color="error"
                             size="small"
@@ -207,7 +219,7 @@ export default function NotificationBar({ container }) {
                         )}
                         {activeTab === "manual" && job.items?.length > 0 && (
                           <TaskResultList
-                            title={isRunning ? "正在更新任務" : "任務項目"}
+                            title={isActive ? "等待／正在更新任務" : "任務項目"}
                             tasks={job.items}
                             color={isRunning ? "info.main" : "text.secondary"}
                           />

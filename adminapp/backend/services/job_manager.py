@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from backend.services.log_manager import Logger
 from backend.repository.db_controller import db_controller
 from backend.repository.models import JobRun, JobRunItem
+from backend.services.job_queue import job_queue
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.sql import func as sql_func
 
@@ -51,8 +52,9 @@ class JobManager:
             "job_type": job_type,
             "display_name": display_name,
             "owner_username": username,
-            "status": "pending",
-            "message": f"正在執行：{display_name}",
+            "status": "queued",
+            "execution_class": "manual_shared",
+            "message": f"已排入更新佇列：{display_name}",
             "request_params": request_params or {},
         })
 
@@ -75,7 +77,6 @@ class JobManager:
 
         async def wrapper():
             try:
-                await db_controller.update(JobRun, {"job_id": job_id}, {"status": "running"})
                 self.jobs[job_id]["status"] = "running"
                 async with self.semaphore:
                     if requested_items:
@@ -89,49 +90,38 @@ class JobManager:
                 job_status = result.get("job_status", "completed")
                 if job_status not in {"completed", "partial", "failed"}:
                     raise ValueError(f"Unsupported job status: {job_status}")
-                await db_controller.update(JobRun, {"job_id": job_id}, {
-                    "status": job_status,
-                    "result": result,
-                    "error": result.get("error_summary"),
-                    "finished_at": sql_func.now(),
-                })
                 self.jobs[job_id].update(status=job_status, result=result, error=result.get("error_summary"))
             except asyncio.CancelledError:
                 await self._finish_pending_items(job_id, "cancelled", "cancelled")
-                await db_controller.update(JobRun, {"job_id": job_id}, {
-                    "status": "cancelled",
-                    "finished_at": sql_func.now(),
-                })
                 self.jobs[job_id]["status"] = "cancelled"
                 raise
             except Exception as error:
                 logger.error(f"Job {job_id} ({job_type}) failed for {username}: {error}")
                 await self._finish_pending_items(job_id, "failed", str(error))
-                await db_controller.update(JobRun, {"job_id": job_id}, {
-                    "status": "failed",
-                    "error": str(error),
-                    "finished_at": sql_func.now(),
-                })
                 self.jobs[job_id].update(status="failed", error=str(error))
+                raise
 
-        task = asyncio.create_task(wrapper())
+        async def queue_handler(_job_id: str):
+            await wrapper()
+            job = self.jobs.get(job_id, {})
+            return job.get("result") or {}
+
+        job_queue.register_job(job_id, queue_handler)
         self.jobs[job_id] = {
             "job_id": job_id,
             "owner_username": username,
             "type": job_type,
-            "status": "pending",
+            "status": "queued",
             "start_time": datetime.now(timezone.utc).isoformat(),
-            "task": task,
-            "message": f"正在執行：{display_name}",
+            "task": None,
+            "result": None,
+            "message": f"已排入更新佇列：{display_name}",
         }
+        job_queue.wake()
         return {"job_id": job_id, "accepted": accepted_items, "excluded": excluded_items}
 
     async def cancel_job(self, username: str, job_id: str) -> bool:
-        job = self.jobs.get(job_id)
-        if not job or job["owner_username"] != username or job["task"].done():
-            return False
-        job["task"].cancel()
-        return True
+        return await job_queue.cancel(username, job_id) in {"cancelled", "requested"}
 
     async def mark_item(self, job_id: str, sendtask_uuid: str, status: str, reason: Optional[str] = None):
         values = {"status": status}

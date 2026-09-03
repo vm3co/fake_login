@@ -1,6 +1,7 @@
 import os
 import asyncio
 import uuid
+from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from fastapi import FastAPI
@@ -21,6 +22,7 @@ from backend.services.getSe2data import get_se2_data
 from backend.services.db_user import DBUser
 from backend.services.get_token import get_token
 from backend.services.log_manager import Logger
+from backend.services.job_queue import job_queue
 
 # 引入分離的路由模組
 from backend.api.data_api import get_router as log_router
@@ -135,6 +137,34 @@ async def nightly_sync_job():
         logger.error(f"nightly_sync_job 失敗: {e}")
         raise
 
+async def enqueue_scheduler_job(job_code, job_type, execution_class, job_func):
+    scheduled_for = datetime.now(tz=ZoneInfo("Asia/Taipei")).replace(second=0, microsecond=0)
+    dedupe_key = f"scheduler:{job_code}:{scheduled_for.isoformat()}"
+    try:
+        await db_controller.create(JobRun, {
+            "job_id": str(uuid.uuid4()),
+            "source": "scheduler",
+            "job_code": job_code,
+            "job_type": job_type,
+            "display_name": job_type,
+            "owner_username": "system",
+            "status": "queued",
+            "execution_class": execution_class,
+            "message": f"系統排程已排隊：{job_type}",
+            "scheduled_for": scheduled_for,
+            "dedupe_key": dedupe_key,
+        })
+    except Exception as error:
+        if "dedupe" not in str(error).lower() and "unique" not in str(error).lower():
+            raise
+    job_queue.wake()
+
+def scheduler_enqueue_callback(job_code, job_type, execution_class, job_func):
+    async def callback():
+        await enqueue_scheduler_job(job_code, job_type, execution_class, job_func)
+
+    return callback
+
 def tracked_scheduler_job(job_type, job_func):
     async def wrapper():
         job_id = str(uuid.uuid4())
@@ -222,33 +252,41 @@ def start_scheduler(runtime_config, schedule_config):
         tracked_scheduler_job("更新 SE2 Token", refresh_token_job),
         'interval',
         minutes=schedule_config["scheduler_refresh_token_minutes"],
-        id='refresh_token'
+        id='refresh_token', max_instances=1, coalesce=True, misfire_grace_time=300
     )
     scheduler.add_job(
-        tracked_scheduler_job("更新今日建立任務", refresh_today_create_task_job),
+        scheduler_enqueue_callback(
+            "refresh_today_create_task", "更新今日建立任務", "maintenance_exclusive", refresh_today_create_task_job
+        ),
         'interval',
         minutes=schedule_config["scheduler_refresh_today_create_task_minutes"],
-        id='refresh_today_create_task'
+        id='refresh_today_create_task', max_instances=1, coalesce=True, misfire_grace_time=1800
     )
     scheduler.add_job(
-        tracked_scheduler_job("刷新今日未完成任務", refresh_notyet_today_tasks_job),
+        scheduler_enqueue_callback(
+            "refresh_notyet_today_tasks", "刷新今日未完成任務", "scheduler_itemized", refresh_notyet_today_tasks_job
+        ),
         'interval',
         minutes=schedule_config["scheduler_refresh_notyet_today_tasks_minutes"],
-        id='refresh_notyet_today_tasks'
+        id='refresh_notyet_today_tasks', max_instances=1, coalesce=True, misfire_grace_time=900
     )
     scheduler.add_job(
-        tracked_scheduler_job("每日任務清單與統計同步", nightly_sync_job),
+        scheduler_enqueue_callback(
+            "nightly_sync", "每日任務清單與統計同步", "maintenance_exclusive", nightly_sync_job
+        ),
         'cron',
         hour=nightly_hour,
         minute=nightly_minute,
-        id='nightly_sync'
+        id='nightly_sync', max_instances=1, coalesce=True, misfire_grace_time=21600
     )
     scheduler.add_job(
-        tracked_scheduler_job("封存逾期任務", archiving_worker.start),
+        scheduler_enqueue_callback(
+            "archiving_job", "封存逾期任務", "maintenance_exclusive", archiving_worker.start
+        ),
         'cron',
         hour=archiving_hour,
         minute=archiving_minute,
-        id='archiving_job'
+        id='archiving_job', max_instances=1, coalesce=True, misfire_grace_time=21600
     )
     scheduler.start()
     for config_key, job_id in SCHEDULER_CONFIG.items():
@@ -273,6 +311,11 @@ async def lifespan(app: FastAPI):
     logger.info("資料庫初始化完成")
     runtime_config = await load_runtime_config()
     schedule_config = await load_schedule_config()
+    job_queue.register("refresh_today_create_task", lambda _job_id: refresh_today_create_task_job())
+    job_queue.register("refresh_notyet_today_tasks", lambda _job_id: refresh_notyet_today_tasks_job())
+    job_queue.register("nightly_sync", lambda _job_id: nightly_sync_job())
+    job_queue.register("archiving_job", lambda _job_id: archiving_worker.start())
+    await job_queue.start()
 
     # Cache Warming logic 移到背景執行，避免阻塞啟動
     async def run_cache_warming():
@@ -374,6 +417,7 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     scheduler.shutdown(wait=False)
+    await job_queue.stop()
     for task in runtime_tasks.values():
         if task is None:
             continue

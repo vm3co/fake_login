@@ -10,6 +10,7 @@ from backend.repository.models import SendTask, Mtmpl, Notification, SendLogStat
 from sqlalchemy import and_, or_, select
 from backend.api.data_api import filter_tasks_by_scope, get_sendtask_scope
 from backend.services.log_manager import Logger
+from backend.services.job_queue import job_queue
 
 logger = Logger().get_logger()
 router = APIRouter(
@@ -41,6 +42,9 @@ def serialize_job_run(job: JobRun) -> Dict[str, Any]:
         "display_name": job.display_name or job.job_type,
         "owner_username": job.owner_username,
         "status": job.status,
+        "execution_class": job.execution_class,
+        "queue_position": job.queue_sequence,
+        "cancel_requested_at": serialize_datetime(job.cancel_requested_at),
         "message": job.message,
         "result": job.result,
         "error": job.error,
@@ -64,12 +68,12 @@ async def list_jobs(source: str = "manual", current_user: dict = Depends(get_cur
 
     running_stmt = (
         select(JobRun)
-        .where(*filters, JobRun.status.in_(["pending", "running"]))
+        .where(*filters, JobRun.status.in_(["queued", "claiming", "running", "cancel_requested"]))
         .order_by(JobRun.started_at.desc())
     )
     history_stmt = (
         select(JobRun)
-        .where(*filters, JobRun.status.notin_(["pending", "running"]))
+        .where(*filters, JobRun.status.notin_(["queued", "claiming", "running", "cancel_requested"]))
         .order_by(JobRun.started_at.desc())
         .limit(100)
     )
@@ -92,7 +96,28 @@ async def list_jobs(source: str = "manual", current_user: dict = Depends(get_cur
             "status": item.status,
             "reason": item.reason,
         })
-    return [{**serialize_job_run(job), "items": items_by_job.get(job.job_id, [])} for job in jobs]
+    exclusive_jobs = [
+        job for job in jobs
+        if job.execution_class == "maintenance_exclusive"
+        and job.status in {"queued", "claiming", "running", "cancel_requested"}
+    ]
+    response = []
+    for job in jobs:
+        blocked_by = next(
+            (
+                exclusive.display_name or exclusive.job_type
+                for exclusive in exclusive_jobs
+                if exclusive.queue_sequence < job.queue_sequence
+                or exclusive.status in {"claiming", "running", "cancel_requested"}
+            ),
+            None,
+        ) if job.execution_class == "manual_shared" and job.status == "queued" else None
+        response.append({
+            **serialize_job_run(job),
+            "blocked_by_display_name": blocked_by,
+            "items": items_by_job.get(job.job_id, []),
+        })
+    return response
 
 @router.post("/{job_id}/cancel")
 async def cancel_job(job_id: str, current_user: dict = Depends(get_current_user)):
@@ -100,11 +125,13 @@ async def cancel_job(job_id: str, current_user: dict = Depends(get_current_user)
     job = await db_controller.get_one(JobRun, {"job_id": job_id, "source": "manual"})
     if not job or job.owner_username != username:
         raise HTTPException(status_code=404, detail="找不到可取消的任務")
-    if job.status not in {"pending", "running"}:
+    if job.status not in {"queued", "claiming", "running", "cancel_requested"}:
         raise HTTPException(status_code=409, detail="任務已結束，無法取消")
-    success = await job_manager.cancel_job(username, job_id)
-    if not success:
-        raise HTTPException(status_code=409, detail="任務已結束或服務已重新啟動")
+    result = await job_queue.cancel(username, job_id)
+    if result == "finished":
+        raise HTTPException(status_code=409, detail="任務已結束，無法取消")
+    if result == "not_found":
+        raise HTTPException(status_code=404, detail="找不到可取消的任務")
     return {"status": "success", "cancelled": True}
 
 @router.post("/start")

@@ -115,6 +115,35 @@ async def init_db():
             "ADD COLUMN IF NOT EXISTS display_name TEXT, "
             "ADD COLUMN IF NOT EXISTS request_params JSONB"
         ))
+        await conn.execute(text("CREATE SEQUENCE IF NOT EXISTS job_run_queue_sequence"))
+        await conn.execute(text(
+            "ALTER TABLE job_runs "
+            "ADD COLUMN IF NOT EXISTS queue_sequence BIGINT DEFAULT nextval('job_run_queue_sequence'), "
+            "ADD COLUMN IF NOT EXISTS execution_class VARCHAR(32) NOT NULL DEFAULT 'manual_shared', "
+            "ADD COLUMN IF NOT EXISTS priority INTEGER NOT NULL DEFAULT 0, "
+            "ADD COLUMN IF NOT EXISTS available_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+            "ADD COLUMN IF NOT EXISTS claimed_by TEXT, "
+            "ADD COLUMN IF NOT EXISTS lease_expires_at TIMESTAMPTZ, "
+            "ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMPTZ, "
+            "ADD COLUMN IF NOT EXISTS attempt_count INTEGER NOT NULL DEFAULT 0, "
+            "ADD COLUMN IF NOT EXISTS cancel_requested_at TIMESTAMPTZ, "
+            "ADD COLUMN IF NOT EXISTS scheduled_for TIMESTAMPTZ, "
+            "ADD COLUMN IF NOT EXISTS dedupe_key TEXT"
+        ))
+        await conn.execute(text(
+            "UPDATE job_runs SET queue_sequence = nextval('job_run_queue_sequence') "
+            "WHERE queue_sequence IS NULL"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_job_runs_queue_sequence ON job_runs(queue_sequence)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_job_runs_execution_class ON job_runs(execution_class)"
+        ))
+        await conn.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_job_runs_dedupe_key "
+            "ON job_runs(dedupe_key) WHERE dedupe_key IS NOT NULL"
+        ))
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_job_runs_job_code ON job_runs(job_code)"
         ))
@@ -142,10 +171,24 @@ async def init_db():
             "WHERE status IN ('pending', 'running')"
         ))
         await conn.execute(text(
-            "UPDATE job_runs SET status = 'failed', "
-            "error = COALESCE(error, '服務重新啟動前未完成的舊版背景任務'), "
+            "UPDATE job_runs SET status = 'interrupted', "
+            "error = COALESCE(error, '服務重新啟動前未完成的背景任務'), "
             "finished_at = CURRENT_TIMESTAMP "
-            "WHERE source = 'manual' AND status IN ('pending', 'running')"
+            "WHERE status IN ('claiming', 'running') "
+            "AND (lease_expires_at IS NULL OR lease_expires_at < CURRENT_TIMESTAMP)"
+        ))
+        await conn.execute(text(
+            "UPDATE job_runs SET status = 'interrupted', "
+            "error = COALESCE(error, '服務重新啟動，排隊中的手動任務需重新送出'), "
+            "finished_at = CURRENT_TIMESTAMP "
+            "WHERE source = 'manual' AND status = 'queued'"
+        ))
+        await conn.execute(text(
+            "UPDATE job_run_items SET status = 'failed', reason = 'worker_interrupted', "
+            "finished_at = CURRENT_TIMESTAMP "
+            "WHERE status IN ('pending', 'running') AND job_id IN ("
+            "SELECT job_id FROM job_runs WHERE status = 'interrupted'"
+            ")"
         ))
         # 補上既有資料表新增欄位 (idempotent)
         await conn.execute(text(
