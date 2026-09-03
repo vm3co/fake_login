@@ -96,6 +96,8 @@ async def list_jobs(source: str = "manual", current_user: dict = Depends(get_cur
             "status": item.status,
             "reason": item.reason,
         })
+    for items in items_by_job.values():
+        items.sort(key=lambda item: (item["status"] == "skipped", item["sendtask_id"]))
     exclusive_jobs = [
         job for job in jobs
         if job.execution_class == "maintenance_exclusive"
@@ -103,6 +105,11 @@ async def list_jobs(source: str = "manual", current_user: dict = Depends(get_cur
     ]
     response = []
     for job in jobs:
+        items = items_by_job.get(job.job_id, [])
+        excluded_count = sum(
+            item["status"] == "skipped" and item["reason"] in {"duplicate_active", "claim_failed"}
+            for item in items
+        )
         blocked_by = next(
             (
                 exclusive.display_name or exclusive.job_type
@@ -115,7 +122,10 @@ async def list_jobs(source: str = "manual", current_user: dict = Depends(get_cur
         response.append({
             **serialize_job_run(job),
             "blocked_by_display_name": blocked_by,
-            "items": items_by_job.get(job.job_id, []),
+            "requested_count": len(items),
+            "accepted_count": len(items) - excluded_count,
+            "excluded_count": excluded_count,
+            "items": items,
         })
     return response
 

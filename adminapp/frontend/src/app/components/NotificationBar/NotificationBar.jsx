@@ -52,6 +52,15 @@ const STATUS_META = {
   interrupted: { label: "已中斷", color: "error" }
 };
 
+const ITEM_STATUS_META = {
+  pending: { label: "等待中", color: "warning" },
+  running: { label: "更新中", color: "info" },
+  completed: { label: "完成", color: "success" },
+  skipped: { label: "已排除", color: "default" },
+  failed: { label: "失敗", color: "error" },
+  cancelled: { label: "已取消", color: "default" }
+};
+
 const formatTaipeiTime = (value) => value
   ? new Date(value).toLocaleString("zh-TW", { timeZone: "Asia/Taipei" })
   : "--";
@@ -69,6 +78,29 @@ const TaskResultList = ({ title, tasks, color }) => {
           {task.sendtask_id}{task.reason ? ` (${task.reason})` : ""}
         </Typography>
       ))}
+    </Box>
+  );
+};
+
+const TaskItemList = ({ title, tasks, color }) => {
+  if (!tasks?.length) return null;
+
+  return (
+    <Box sx={{ mt: 1.25 }}>
+      <Typography variant="caption" color={color} fontWeight={600} display="block" mb={0.5}>
+        {title}
+      </Typography>
+      {tasks.map((task) => {
+        const itemStatus = ITEM_STATUS_META[task.status] || { label: task.status, color: "default" };
+        return (
+          <Box key={task.sendtask_uuid} display="flex" alignItems="center" justifyContent="space-between" gap={1} py={0.35}>
+            <Typography variant="caption" sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
+              {task.sendtask_id}
+            </Typography>
+            <Chip size="small" variant="outlined" label={itemStatus.label} color={itemStatus.color} />
+          </Box>
+        );
+      })}
     </Box>
   );
 };
@@ -185,6 +217,9 @@ export default function NotificationBar({ container }) {
                   const status = STATUS_META[job.status] || { label: job.status, color: "default" };
                   const isRunning = ["claiming", "running"].includes(job.status);
                   const isActive = ["queued", "claiming", "running", "cancel_requested"].includes(job.status);
+                  const duplicateItems = job.items?.filter((item) => item.reason === "duplicate_active") || [];
+                  const failedItems = job.items?.filter((item) => item.status === "failed") || [];
+                  const activeItems = job.items?.filter((item) => !["skipped", "failed"].includes(item.status)) || [];
                   return (
                     <Card key={job.job_id} variant="outlined" sx={{ mb: 1.5 }}>
                       <Box p={1.75}>
@@ -207,6 +242,15 @@ export default function NotificationBar({ container }) {
                             系統正在等待或執行「{job.blocked_by_display_name}」，此任務排隊中
                           </Typography>
                         )}
+                        {activeTab === "manual" && job.requested_count > 0 && (
+                          <Box display="flex" flexWrap="wrap" gap={0.75} mt={1}>
+                            <Chip size="small" label={`要求更新 ${job.requested_count} 筆`} />
+                            <Chip size="small" color="info" variant="outlined" label={`實際執行 ${job.accepted_count} 筆`} />
+                            {job.excluded_count > 0 && (
+                              <Chip size="small" color="warning" variant="outlined" label={`重複排除 ${job.excluded_count} 筆`} />
+                            )}
+                          </Box>
+                        )}
                         {activeTab === "manual" && isActive && job.owner_username === user?.name && job.status !== "cancel_requested" && (
                           <Button
                             color="error"
@@ -217,12 +261,12 @@ export default function NotificationBar({ container }) {
                             取消更新
                           </Button>
                         )}
-                        {activeTab === "manual" && job.items?.length > 0 && (
-                          <TaskResultList
-                            title={isActive ? "等待／正在更新任務" : "任務項目"}
-                            tasks={job.items}
-                            color={isRunning ? "info.main" : "text.secondary"}
-                          />
+                        {activeTab === "manual" && isActive && (
+                          <>
+                            <TaskItemList title="等待／正在更新" tasks={activeItems} color="info.main" />
+                            <TaskItemList title="已排除重複" tasks={duplicateItems} color="warning.main" />
+                            <TaskItemList title="更新失敗" tasks={failedItems} color="error.main" />
+                          </>
                         )}
                         <Typography variant="caption" color="text.secondary" display="block" mt={0.5}>
                           開始：{formatTaipeiTime(job.start_time)}

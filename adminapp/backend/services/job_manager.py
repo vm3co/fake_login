@@ -187,8 +187,4 @@ class JobManager:
     def _display_name(job_type: str, items: List[Dict[str, str]]) -> str:
         if not items:
             return job_type
-        names = [item["sendtask_id"] for item in items]
-        suffix = "、".join(names[:3])
-        if len(names) > 3:
-            suffix += f" 等 {len(names)} 筆"
-        return f"{job_type}：{suffix}"
+        return f"{job_type}：計 {len(items)} 筆任務"
