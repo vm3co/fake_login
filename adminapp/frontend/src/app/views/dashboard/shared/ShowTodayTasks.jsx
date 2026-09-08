@@ -36,6 +36,7 @@ import formatDate from "app/utils/formatDate";
 // import { useCheckSends } from "app/hooks/useCheckSends";
 import { useJob } from "app/contexts/JobContext";
 import TaskDetail from './TaskDetail_new';
+import { matchesTodayTaskState } from "../utils/todayTaskStatus";
 import axios from "axios";
 
 
@@ -166,28 +167,7 @@ export default function ShowTodayTasks({ taskState, setTaskState }) {
       }
     }
 
-    const stats = statsData[row.sendtask_uuid] || {};
-    const todayunsend = Number(stats.todayunsend) || 0;
-    const todaysuccess = Number(stats.todaysuccess) || 0;
-    const todayfailed = Number(stats.todayfailed) || 0;;
-
-    if (taskState === "doing") {
-      // 執行中：今日尚未寄出>0 且 今日成功寄出>0 且 今日寄出失敗為0
-      return todayunsend > 0 && todaysuccess > 0 && todayfailed === 0;
-    }
-    if (taskState === "notyet") {
-      // 尚未開始：今日尚未寄出>0 且 今日成功寄出=0 且 今日寄出失敗=0
-      return todayunsend > 0 && todaysuccess === 0 && todayfailed === 0;
-    }
-    if (taskState === "done") {
-      // 已完成：今日尚未寄出=0 且 今日寄出失敗=0
-      return todayunsend === 0 && todayfailed === 0;
-    }
-    if (taskState === "warning") {
-      // 異常：今日寄出失敗非0
-      return todayfailed !== 0;
-    }
-    return true;
+    return matchesTodayTaskState(statsData[row.sendtask_uuid] || {}, taskState);
   }) || [];
 
   const pagedTasks = Array.isArray(filteredTasks)

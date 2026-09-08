@@ -11,6 +11,7 @@ import { Small } from "app/components/Typography";
 
 import { useContext } from "react";
 import { SendtaskListContext } from "app/contexts/SendtaskListContext";
+import { getTodayTaskState, isTodayTaskWarning } from "../utils/todayTaskStatus";
 
 // STYLED COMPONENTS
 const StyledCard = styled(Card)(({ theme, selected }) => ({
@@ -49,36 +50,20 @@ const Heading = styled("h6")(({ theme }) => ({
 
 export default function StatCards({ setShowTodayOnly, taskState, setTaskState }) {
   const { todayTasks, statsData } = useContext(SendtaskListContext);
-  
-  // 執行中任務：今日尚未寄出>0 且 今日成功寄出>0 且 今日寄出失敗為0
-  const runningCount = todayTasks.filter(row => {
-    const stats = statsData[row.sendtask_uuid] || {};
-    return Number(stats.todayunsend) > 0 && Number(stats.todaysuccess) > 0;
-  });
 
-  // 尚未開始任務：今日尚未寄出>0 且 今日成功寄出=0 且 今日寄出失敗=0
-  const notStartedCount = todayTasks.filter(row => {
+  const stateCounts = todayTasks.reduce((counts, row) => {
     const stats = statsData[row.sendtask_uuid] || {};
-    return Number(stats.todayunsend) > 0 && Number(stats.todaysuccess) === 0 && Number(stats.todaysend) - Number(stats.todaysuccess) === 0;
-  });
-
-  // 已完成任務：今日尚未寄出=0 且 今日寄出失敗=0
-  const completedCount = todayTasks.filter(row => {
-    const stats = statsData[row.sendtask_uuid] || {};
-    return Number(stats.todayunsend) === 0 && Number(stats.todaysend) - Number(stats.todaysuccess) === 0;
-  });
-
-  // 異常任務：今日寄出失敗非0
-  const warningCount = todayTasks.filter(row => {
-    const stats = statsData[row.sendtask_uuid] || {};
-    return Number(stats.todaysend) - Number(stats.todaysuccess) > 0;
-  });
+    const state = getTodayTaskState(stats);
+    counts[state] += 1;
+    if (isTodayTaskWarning(stats)) counts.warning += 1;
+    return counts;
+  }, { doing: 0, notyet: 0, done: 0, warning: 0 });
 
   const cardList = [
-    { id: "doing", name: "今日執行中", amount: runningCount.length, Icon: AssignmentLate },
-    { id: "notyet", name: "今日尚未開始", amount: notStartedCount.length, Icon: AssignmentLate },
-    { id: "done", name: "今日已完成", amount: completedCount.length, Icon: AssignmentLate },
-    { id: "warning", name: "今日異常任務", amount: warningCount.length, Icon: AssignmentLate },
+    { id: "doing", name: "今日執行中", amount: stateCounts.doing, Icon: AssignmentLate },
+    { id: "notyet", name: "今日尚未開始", amount: stateCounts.notyet, Icon: AssignmentLate },
+    { id: "done", name: "今日已完成", amount: stateCounts.done, Icon: AssignmentLate },
+    { id: "warning", name: "今日異常任務", amount: stateCounts.warning, Icon: AssignmentLate },
   ];
 
   const handleCardClick = (value) => {
