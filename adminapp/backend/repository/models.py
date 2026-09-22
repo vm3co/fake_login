@@ -230,6 +230,7 @@ class JobRunItem(Base):
     sendtask_id = Column(Text, nullable=False)
     status = Column(String(20), nullable=False, default="pending", index=True)
     reason = Column(Text, nullable=True)
+    blocking_job_id = Column(String(36), nullable=True, index=True)
     started_at = Column(TIMESTAMP(timezone=True), nullable=True)
     finished_at = Column(TIMESTAMP(timezone=True), nullable=True)
 

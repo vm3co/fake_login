@@ -430,14 +430,18 @@ class DBUser:
 
         # removed：本地有但遠端 7 天窗口內沒有
         missing_uuids = set(local_map.keys()) - set(remote_map.keys())
-        del_count = archive_count = 0
+        deleted_tasks = []
+        archived_tasks = []
         for uuid in missing_uuids:
             data = await get_se2_data.get_sendtask(uuid)
             if data and data.get("error", {}).get("code") == 404:
+                deleted_tasks.append({
+                    "sendtask_uuid": uuid,
+                    "sendtask_id": local_map[uuid].get("sendtask_id", "Unknown"),
+                })
                 await db_controller.delete(SendTask, {"sendtask_uuid": uuid})
                 await db_controller.delete(SendLogStats, {"sendtask_uuid": uuid})
                 await db_controller.delete(SendLogDetail, {"sendtask_uuid": uuid})
-                del_count += 1
             elif data is None:
                 logger.warning(f"SE2 returned None for {uuid}, skipping.")
             else:
@@ -445,13 +449,18 @@ class DBUser:
                 local = local_map.get(uuid)
                 if not local.get("is_archived"):
                     await db_controller.update(SendTask, {"sendtask_uuid": uuid}, {"is_archived": True})
-                    archive_count += 1
+                    archived_tasks.append({
+                        "sendtask_uuid": uuid,
+                        "sendtask_id": local.get("sendtask_id", "Unknown"),
+                    })
 
         return {
             "added": added_list,
             "changed": changed_list,
-            "archived": archive_count,
-            "deleted": del_count,
+            "archived": len(archived_tasks),
+            "archived_tasks": archived_tasks,
+            "deleted": len(deleted_tasks),
+            "deleted_tasks": deleted_tasks,
         }
     
     # Mtmpl model 允許的欄位名稱（來自 SE2 同步）
@@ -481,13 +490,46 @@ class DBUser:
 
     async def refresh_mtmpl(self) -> dict:
         """
-        全量同步郵件範本資料到 DB（upsert by mtmpl_uuid）
-        :return: {"upserted": N}
+        全量同步郵件範本資料到 DB（upsert by mtmpl_uuid），並回傳新增與刪除摘要。
         """
         mtmpl_list = await self.get_se2_mtmpl()
         if not mtmpl_list:
             logger.warning("No mtmpl data fetched from SE2.")
-            return {"upserted": 0}
+            return {
+                "upserted": 0,
+                "synced_count": 0,
+                "added_count": 0,
+                "added_templates": [],
+                "removed_count": 0,
+                "removed_templates": [],
+            }
+
+        local_rows = await db_controller.get(Mtmpl)
+        local_by_uuid = {row.mtmpl_uuid: row for row in local_rows}
+        remote_by_uuid = {item["mtmpl_uuid"]: item for item in mtmpl_list}
+
+        def template_summary(template, template_uuid=None):
+            if isinstance(template, dict):
+                title = template.get("mtmpl_name") or template.get("mtmpl_title")
+                uuid_value = template.get("mtmpl_uuid") or template_uuid
+            else:
+                title = getattr(template, "mtmpl_name", None) or getattr(template, "mtmpl_title", None)
+                uuid_value = getattr(template, "mtmpl_uuid", None) or template_uuid
+            return {
+                "mtmpl_uuid": uuid_value,
+                "title": title or "未命名樣板",
+            }
+
+        added_uuids = set(remote_by_uuid) - set(local_by_uuid)
+        removed_uuids = set(local_by_uuid) - set(remote_by_uuid)
+        added_templates = [
+            template_summary(remote_by_uuid[template_uuid], template_uuid)
+            for template_uuid in sorted(added_uuids)
+        ]
+        removed_templates = [
+            template_summary(local_by_uuid[template_uuid], template_uuid)
+            for template_uuid in sorted(removed_uuids)
+        ]
 
         update_cols = [c for c in mtmpl_list[0].keys() if c != "mtmpl_uuid"]
         await db_controller.upsert(
@@ -496,8 +538,18 @@ class DBUser:
             index_elements=["mtmpl_uuid"],
             update_columns=update_cols,
         )
+        for template_uuid in removed_uuids:
+            await db_controller.delete(Mtmpl, {"mtmpl_uuid": template_uuid})
+
         logger.info(f"Upserted {len(mtmpl_list)} mtmpl records.")
-        return {"upserted": len(mtmpl_list)}
+        return {
+            "upserted": len(mtmpl_list),
+            "synced_count": len(mtmpl_list),
+            "added_count": len(added_templates),
+            "added_templates": added_templates,
+            "removed_count": len(removed_templates),
+            "removed_templates": removed_templates,
+        }
 
     
     async def get_se2_sendlog(self, sendtask_uuid: str, sendlog_columns=None) -> list[dict]:

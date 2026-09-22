@@ -22,6 +22,24 @@ export const useJob = () => useContext(JobContext);
 
 const jobSummary = (job) => {
     const result = job.result || {};
+    if (job.job_code === 'refresh_today_create_task') {
+        return [
+            `今日任務同步完成：新增 ${result.added_count || 0} 筆，重新同步 ${result.updated_count || 0} 筆`,
+            'success'
+        ];
+    }
+    if (job.job_code === 'update_mtmpl') {
+        return [
+            `郵件樣板同步完成：同步 ${result.synced_count ?? result.upserted ?? 0} 筆，新增 ${result.added_count || 0} 筆，刪除 ${result.removed_count ?? result.removed ?? 0} 筆`,
+            'success'
+        ];
+    }
+    if (job.job_code === 'check_sendtasks') {
+        return [
+            `任務列表更新完成：新增 ${result.added_count || 0} 筆，更新 ${result.updated_count || 0} 筆，刪除 ${result.deleted_count || 0} 筆，封存 ${result.archived_count || 0} 筆`,
+            'success'
+        ];
+    }
     const succeeded = result.updated_count ?? result.successful_tasks?.length ?? 0;
     const skipped = result.skipped_count ?? result.skipped_tasks?.length ?? 0;
     const failed = result.failed_count ?? result.failed_tasks?.length ?? 0;

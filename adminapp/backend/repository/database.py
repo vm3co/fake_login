@@ -163,6 +163,13 @@ async def init_db():
             "CREATE INDEX IF NOT EXISTS ix_job_run_items_job_id ON job_run_items(job_id)"
         ))
         await conn.execute(text(
+            "ALTER TABLE job_run_items ADD COLUMN IF NOT EXISTS blocking_job_id VARCHAR(36)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_job_run_items_blocking_job_id "
+            "ON job_run_items(blocking_job_id)"
+        ))
+        await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_job_run_items_sendtask_uuid ON job_run_items(sendtask_uuid)"
         ))
         await conn.execute(text(

@@ -88,13 +88,25 @@ async def list_jobs(source: str = "manual", current_user: dict = Depends(get_cur
         JobRunItem,
         filters={"job_id": [job.job_id for job in jobs]},
     ) if jobs else []
+    blocking_job_ids = {
+        item.blocking_job_id
+        for item in job_items
+        if item.blocking_job_id
+    }
+    blocking_jobs = await db_controller.get(
+        JobRun,
+        filters={"job_id": list(blocking_job_ids)},
+    ) if blocking_job_ids else []
+    blocking_jobs_by_id = {job.job_id: job for job in blocking_jobs}
     items_by_job = {}
     for item in job_items:
+        blocking_job = blocking_jobs_by_id.get(item.blocking_job_id)
         items_by_job.setdefault(item.job_id, []).append({
             "sendtask_uuid": item.sendtask_uuid,
             "sendtask_id": item.sendtask_id,
             "status": item.status,
             "reason": item.reason,
+            "blocking_username": blocking_job.owner_username if blocking_job else None,
         })
     for items in items_by_job.values():
         items.sort(key=lambda item: (item["status"] == "skipped", item["sendtask_id"]))
@@ -110,6 +122,11 @@ async def list_jobs(source: str = "manual", current_user: dict = Depends(get_cur
             item["status"] == "skipped" and item["reason"] in {"duplicate_active", "claim_failed"}
             for item in items
         )
+        blocking_usernames = sorted({
+            item["blocking_username"]
+            for item in items
+            if item["reason"] == "duplicate_active" and item["blocking_username"]
+        })
         blocked_by = next(
             (
                 exclusive.display_name or exclusive.job_type
@@ -125,6 +142,7 @@ async def list_jobs(source: str = "manual", current_user: dict = Depends(get_cur
             "requested_count": len(items),
             "accepted_count": len(items) - excluded_count,
             "excluded_count": excluded_count,
+            "blocking_usernames": blocking_usernames,
             "items": items,
         })
     return response
@@ -159,9 +177,38 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                 today_create_task_list = filter_tasks_by_scope(today_create_task_list, orgs)
                 
                 if not today_create_task_list:
-                    return {"message": "無今日建立任務"}
+                    return {
+                        "today_count": 0,
+                        "added_count": 0,
+                        "added_tasks": [],
+                        "updated_count": 0,
+                        "updated_tasks": [],
+                        "message": "無今日建立任務",
+                    }
 
                 refresh_list = [task["sendtask_uuid"] for task in today_create_task_list]
+                local_rows = await db_controller.get(
+                    SendTask,
+                    filters={"sendtask_uuid": refresh_list},
+                )
+                existing_uuids = {row.sendtask_uuid for row in local_rows}
+
+                def task_summary(task):
+                    return {
+                        "sendtask_uuid": task.get("sendtask_uuid"),
+                        "sendtask_id": task.get("sendtask_id", "Unknown"),
+                    }
+
+                added_tasks = [
+                    task_summary(task)
+                    for task in today_create_task_list
+                    if task["sendtask_uuid"] not in existing_uuids
+                ]
+                updated_tasks = [
+                    task_summary(task)
+                    for task in today_create_task_list
+                    if task["sendtask_uuid"] in existing_uuids
+                ]
                 
                 # Batch upsert sendtasks
                 await db_controller.upsert(
@@ -173,31 +220,28 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                 # Also refresh stats
                 await db_user.refresh_sendlog_stats(refresh_list)
                 
-                return {"updated_count": len(refresh_list)}
+                return {
+                    "today_count": len(today_create_task_list),
+                    "added_count": len(added_tasks),
+                    "added_tasks": added_tasks,
+                    "updated_count": len(updated_tasks),
+                    "updated_tasks": updated_tasks,
+                }
 
             admission = await job_manager.start_job(username, "檢查今日建立任務", task_func, job_code=job_type)
 
         elif job_type == "update_mtmpl":
             async def task_func():
-                # 1. 從 SE2 全量 upsert（含所有 model 欄位）
                 result = await db_user.refresh_mtmpl()
-                upserted = result.get("upserted", 0)
-                if upserted == 0:
+                if result.get("synced_count", 0) == 0:
                     raise Exception("從 SE2 獲取郵件樣板失敗")
-
-                # 2. 找出本地已不在 SE2 的樣板並刪除
-                se2_mtmpl_list = await db_user.get_se2_mtmpl()
-                se2_uuids = {item["mtmpl_uuid"] for item in se2_mtmpl_list}
-
-                local_rows = await db_controller.get(Mtmpl)
-                removed_count = 0
-                for row in local_rows:
-                    if row.mtmpl_uuid not in se2_uuids:
-                        await db_controller.delete(Mtmpl, {"mtmpl_uuid": row.mtmpl_uuid})
-                        removed_count += 1
-                        logger.info(f"Removed mtmpl {row.mtmpl_uuid}")
-
-                return {"upserted": upserted, "removed": removed_count}
+                return {
+                    "synced_count": result["synced_count"],
+                    "added_count": result["added_count"],
+                    "added_templates": result["added_templates"],
+                    "removed_count": result["removed_count"],
+                    "removed_templates": result["removed_templates"],
+                }
 
             admission = await job_manager.start_job(username, "更新郵件樣板列表", task_func, job_code=job_type)
 
@@ -216,9 +260,22 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                         skip_sendtask_sync=True,
                     )
 
-                added_cnt = len(result["added"])
-                changed_cnt = len(result["changed"])
-                return result
+                def task_summary(task):
+                    return {
+                        "sendtask_uuid": task.get("sendtask_uuid"),
+                        "sendtask_id": task.get("sendtask_id", "Unknown"),
+                    }
+
+                return {
+                    "added_count": len(result["added"]),
+                    "added_tasks": [task_summary(task) for task in result["added"]],
+                    "updated_count": len(result["changed"]),
+                    "updated_tasks": [task_summary(task) for task in result["changed"]],
+                    "deleted_count": result["deleted"],
+                    "deleted_tasks": result.get("deleted_tasks", []),
+                    "archived_count": result["archived"],
+                    "archived_tasks": result.get("archived_tasks", []),
+                }
 
             admission = await job_manager.start_job(username, "更新任務列表", task_func, job_code=job_type)
 

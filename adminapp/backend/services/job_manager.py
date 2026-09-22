@@ -6,6 +6,7 @@ from backend.services.log_manager import Logger
 from backend.repository.db_controller import db_controller
 from backend.repository.models import JobRun, JobRunItem
 from backend.services.job_queue import job_queue
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.sql import func as sql_func
 
@@ -145,7 +146,18 @@ class JobManager:
                 })
                 accepted.append(item)
             except IntegrityError:
-                excluded_item = {**item, "reason": "duplicate_active"}
+                active_items = await db_controller.execute_scalars(
+                    select(JobRunItem).where(
+                        JobRunItem.sendtask_uuid == item["sendtask_uuid"],
+                        JobRunItem.status.in_(["pending", "running"]),
+                    ).limit(1)
+                )
+                blocking_job_id = active_items[0].job_id if active_items else None
+                excluded_item = {
+                    **item,
+                    "reason": "duplicate_active",
+                    "blocking_job_id": blocking_job_id,
+                }
                 await self._record_excluded_item(job_id, excluded_item)
                 excluded.append(excluded_item)
             except Exception as error:
@@ -162,6 +174,7 @@ class JobManager:
             "sendtask_id": item["sendtask_id"],
             "status": "skipped",
             "reason": item["reason"],
+            "blocking_job_id": item.get("blocking_job_id"),
             "finished_at": sql_func.now(),
         })
 

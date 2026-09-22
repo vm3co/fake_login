@@ -84,6 +84,84 @@ const TaskResultList = ({ title, tasks, color }) => {
   );
 };
 
+const SyncTaskResult = ({ result }) => {
+  const groups = [
+    ["新增任務", result.added_tasks, "success.main"],
+    ["更新任務", result.updated_tasks, "info.main"],
+    ["刪除任務", result.deleted_tasks, "error.main"],
+    ["封存任務", result.archived_tasks, "warning.main"],
+  ];
+
+  return (
+    <Box sx={{ mt: 1 }}>
+      <Typography variant="caption" color="text.secondary" display="block">
+        新增 {result.added_count || 0} 筆 · 更新 {result.updated_count || 0} 筆 · 刪除 {result.deleted_count || 0} 筆 · 封存 {result.archived_count || 0} 筆
+      </Typography>
+      {groups.map(([title, tasks, color]) => (
+        <TaskResultList key={title} title={title} tasks={tasks} color={color} />
+      ))}
+    </Box>
+  );
+};
+
+const TodayTaskResult = ({ result }) => {
+  const isLegacy = !Array.isArray(result.added_tasks) && !Array.isArray(result.updated_tasks);
+  if (isLegacy) {
+    return (
+      <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+        已同步 {result.updated_count || 0} 筆今日建立任務
+      </Typography>
+    );
+  }
+
+  return (
+    <Box sx={{ mt: 1 }}>
+      <Typography variant="caption" color="text.secondary" display="block">
+        今日建立 {result.today_count || 0} 筆 · 本地新增 {result.added_count || 0} 筆 · 重新同步 {result.updated_count || 0} 筆
+      </Typography>
+      <TaskResultList title="新增任務" tasks={result.added_tasks} color="success.main" />
+      <TaskResultList title="已重新同步任務" tasks={result.updated_tasks} color="info.main" />
+    </Box>
+  );
+};
+
+const TemplateResultList = ({ title, templates, color }) => {
+  if (!templates?.length) return null;
+  return (
+    <Box sx={{ mt: 1 }}>
+      <Typography variant="caption" color={color} display="block">
+        {title}
+      </Typography>
+      {templates.map((template) => (
+        <Typography key={template.mtmpl_uuid} variant="caption" display="block" sx={{ pl: 1 }}>
+          {template.title}
+        </Typography>
+      ))}
+    </Box>
+  );
+};
+
+const TemplateSyncResult = ({ result }) => {
+  const isLegacy = !Array.isArray(result.added_templates) && !Array.isArray(result.removed_templates);
+  if (isLegacy) {
+    return (
+      <Typography variant="caption" color="text.secondary" display="block" sx={{ mt: 1 }}>
+        已同步 {result.upserted || 0} 筆樣板 · 刪除 {result.removed || 0} 筆
+      </Typography>
+    );
+  }
+
+  return (
+    <Box sx={{ mt: 1 }}>
+      <Typography variant="caption" color="text.secondary" display="block">
+        同步 {result.synced_count || 0} 筆 · 新增 {result.added_count || 0} 筆 · 刪除 {result.removed_count || 0} 筆
+      </Typography>
+      <TemplateResultList title="新增樣板" templates={result.added_templates} color="success.main" />
+      <TemplateResultList title="刪除樣板" templates={result.removed_templates} color="error.main" />
+    </Box>
+  );
+};
+
 const TaskItemList = ({ title, tasks, color }) => {
   if (!tasks?.length) return null;
 
@@ -249,6 +327,7 @@ export default function NotificationBar({ container }) {
                   const duplicateItems = job.items?.filter((item) => item.reason === "duplicate_active") || [];
                   const failedItems = job.items?.filter((item) => item.status === "failed") || [];
                   const activeItems = job.items?.filter((item) => !["skipped", "failed"].includes(item.status)) || [];
+                  const otherBlockingUsers = (job.blocking_usernames || []).filter((username) => username !== user?.name);
                   return (
                     <Card key={job.job_id} variant="outlined" sx={{ mb: 1.5 }}>
                       <Box p={1.75}>
@@ -269,6 +348,11 @@ export default function NotificationBar({ container }) {
                         {job.blocked_by_display_name && (
                           <Typography variant="caption" color="warning.main" display="block" mt={0.75}>
                             系統正在等待或執行「{job.blocked_by_display_name}」，此任務排隊中
+                          </Typography>
+                        )}
+                        {activeTab === "manual" && otherBlockingUsers.length > 0 && (
+                          <Typography variant="caption" color="warning.main" display="block" mt={0.75}>
+                            帳號「{otherBlockingUsers.join("、")}」正在更新重複任務，請稍後再試
                           </Typography>
                         )}
                         {activeTab === "manual" && job.requested_count > 0 && (
@@ -310,7 +394,13 @@ export default function NotificationBar({ container }) {
                             {job.error}
                           </Typography>
                         )}
-                        {job.type === "更新任務統計" && job.result ? (
+                        {job.job_code === "refresh_today_create_task" && job.result ? (
+                          <TodayTaskResult result={job.result} />
+                        ) : job.job_code === "update_mtmpl" && job.result ? (
+                          <TemplateSyncResult result={job.result} />
+                        ) : job.job_code === "check_sendtasks" && job.result ? (
+                          <SyncTaskResult result={job.result} />
+                        ) : job.type === "更新任務統計" && job.result ? (
                           <>
                             <TaskResultList
                               title="已更新任務"

@@ -76,7 +76,12 @@ class getSe2data:
                 logger.error(f"Unhandled exception: {e}")
             return None
 
-    async def _handle_pagination(self, url: str, payload_template: dict) -> list:
+    async def _handle_pagination(
+        self,
+        url: str,
+        payload_template: dict,
+        require_complete: bool = False,
+    ) -> list:
         '''處理多頁面請求'''
         all_data = []
         page = 1        
@@ -87,7 +92,9 @@ class getSe2data:
             # logger.info(f"Requesting page {page}...")
             # 發送 POST 請求
             data = await self._send_post(url, payload)
-            if data is None:
+            if data is None or data.get("error"):
+                if require_complete:
+                    raise RuntimeError(f"分頁資料取得失敗（第 {page} 頁）")
                 logger.warning("API return None, stopping further requests.")
                 break
             page_data = data.get("data", [])
@@ -280,7 +287,11 @@ class getSe2data:
             "start_time": None,
             "end_time": None,
         }
-        all_data = await self._handle_pagination(url, payload_template)
+        all_data = await self._handle_pagination(
+            url,
+            payload_template,
+            require_complete=True,
+        )
         logger.info(f"Total mail templates fetched: {len(all_data)}")
         return all_data
 
