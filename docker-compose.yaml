@@ -1,54 +1,116 @@
-# version: "3.9"
-
 services:
+  # =========================================
+  # 資料庫服務
+  # =========================================
   postgres-db:
-    image: postgres:16
-    container_name: fake-login-postgres
+    image: postgres:16-bookworm
+    container_name: fake-login-postgres-db
     environment:
       POSTGRES_USER: myuser
       POSTGRES_PASSWORD: mypassword
       POSTGRES_DB: mydatabase
-    ports:
-      - "15432:5432"
+    # 正式環境：不開放 ports，只允許內部 Nginx/App 連線，避免資料庫裸露
     volumes:
       - pgdata:/var/lib/postgresql/data
-    # 監控DB是否建好
-    healthcheck:   
-      test: ["CMD", "pg_isready", "-U", "myuser", "-d", "mydatabase"]
+      - ./pg_backup:/backup # 備份路徑保留
+    healthcheck:
+      test: [ "CMD", "pg_isready", "-U", "myuser", "-d", "mydatabase" ]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  login-app:
+  # =========================================
+  # 觸發系統 (Trigger App)
+  # =========================================
+  trigger-app:
     build:
-      context: ./loginapp
-    container_name: fake-login-login-app
-    ports:
-      - "${LOGIN_PORT}:8080"
-    environment:
-      - LOG_FILE=${LOG_PATH}
-    volumes:
-      - ./data:/data
-    # 監控DB是否建好，建好再連線
+      context: ./triggerapp
+    container_name: fake-login-trigger-app
     depends_on:
       postgres-db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      - LOG_FILE=${LOG_PATH}
+      - TRIGGER_APP_URL=${TRIGGER_APP_URL}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    env_file:
+      - .env
+    volumes:
+      - ./triggerapp/app/templates:/app/app/templates
 
-
+  # =========================================
+  # 管理後台 (Admin App)
+  # =========================================
   admin-app:
     build:
       context: ./adminapp
+      dockerfile: Dockerfile
     container_name: fake-login-admin-app
-    ports:
-      - "${ADMIN_PORT}:8080"
-    environment:
-      - LOG_FILE=${LOG_PATH}
+    # 正式環境：依賴 Dockerfile 內的 COPY 指令
     volumes:
-      - ./data:/data
-    # 監控DB是否建好，建好再連線
+      # 掛載本地 triggerapp templates，讓兩邊共享
+      - ./triggerapp/app/templates:/app/uploads_for_trigger_app_templates
+      # 掛載token跟cert的資料夾
+      - ./adminapp/backend/certs:/app/backend/certs
+      # 保留 AI 生成日誌
+      - ./adminapp/ai_logs:/app/ai_logs
     depends_on:
       postgres-db:
         condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - TRIGGER_APP_URL=${TRIGGER_APP_URL}
+      - GEMINI_APY_KEY=${GEMINI_APY_KEY}
+      - GPT_LITELLM_API_KEY=${GPT_LITELLM_API_KEY}
+      - GPT_LITELLM_SERVER_IP=${GPT_LITELLM_SERVER_IP}
+      - LITELLM_API_KEY=${LITELLM_API_KEY}
+      - LITELLM_SERVER_IP=${LITELLM_SERVER_IP}
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+
+  # =========================================
+  # 快取服務 (Redis)
+  # =========================================
+  redis:
+    image: redis:alpine
+    container_name: fake-login-redis
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # =========================================
+  # Nginx 反向代理
+  # =========================================
+  nginx:
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx
+    container_name: fake-login-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - admin-app
+      - trigger-app
+    # Nginx 需要讀取最新的設定檔
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/proxy_params_common:/etc/nginx/proxy_params_common:ro
+      # 如果你有 SSL 憑證，未來可以在這裡掛載
+      # - ./certs:/etc/nginx/certs
 
 volumes:
-  pgdata:
+  pgdata: # 定義這個共用卷
+  redis_data:
+  templates_data:
