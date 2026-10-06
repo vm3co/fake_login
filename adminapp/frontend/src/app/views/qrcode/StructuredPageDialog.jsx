@@ -84,6 +84,42 @@ const parseSseChunk = (buffer) => {
     return { complete: events.pop(), events };
 };
 
+const draftSnapshot = ({
+    pageLabel,
+    pageValue,
+    allowedDomainId,
+    spec,
+    templateType,
+    backgroundColor,
+    backgroundImage,
+    logoData,
+    sourceHasUploadLogo,
+}) => JSON.stringify({
+    pageLabel: pageLabel.trim(),
+    pageValue: pageValue.trim(),
+    allowedDomainId: allowedDomainId === '' ? '' : String(allowedDomainId),
+    pageTitle: spec.page_title,
+    mainTitle: spec.main_title,
+    description: spec.description,
+    submitText: spec.submit_text,
+    logoMode: spec.logo_mode,
+    logoData: logoData || null,
+    sourceHasUploadLogo: Boolean(sourceHasUploadLogo),
+    templateType,
+    backgroundColor,
+    backgroundImage,
+    fields: spec.fields.map((field) => ({
+        id: field.id,
+        label: field.label,
+        type: field.type,
+        required: field.required,
+        mask_mode: field.mask_mode,
+        keep_chars: field.keep_chars ?? null,
+        custom_rule: field.custom_rule || '',
+        validation_pattern: field.validation_pattern || '',
+    })),
+});
+
 const StructuredPageDialog = ({
     open,
     mode,
@@ -124,6 +160,7 @@ const StructuredPageDialog = ({
     const [pageValueStatus, setPageValueStatus] = useState({ state: 'idle', message: '' });
     const [previewKey, setPreviewKey] = useState(0);
     const [persistedPageValue, setPersistedPageValue] = useState(null);
+    const [persistedDraftSnapshot, setPersistedDraftSnapshot] = useState('');
 
     const effectiveEdit = isEdit || Boolean(persistedPageValue);
     const currentPersistedPageValue = persistedPageValue || initialData?.pageValue || '';
@@ -159,6 +196,18 @@ const StructuredPageDialog = ({
         setPageValueStatus({ state: 'idle', message: '' });
         setPreviewKey(0);
         setPersistedPageValue(isEdit ? (initialData?.pageValue || null) : null);
+        setPersistedDraftSnapshot(initialData?.pageSpec ? draftSnapshot({
+            pageLabel: initialData.pageLabel || '',
+            pageValue: initialData.pageValue || '',
+            allowedDomainId: initialData.allowedDomainId ?? '',
+            spec: initialData.pageSpec,
+            templateType: 'classic',
+            backgroundColor: '#edf2ef',
+            backgroundImage: '',
+            logoData: null,
+            sourceHasUploadLogo: initialData.pageSpec.logo_mode === 'upload'
+                && Boolean(new DOMParser().parseFromString(initialData.html || '', 'text/html').querySelector('#custom-brand-logo img')),
+        }) : '');
     }, [open, initialData, isAi, isEdit]);
 
     useEffect(() => {
@@ -290,8 +339,20 @@ const StructuredPageDialog = ({
             setPreviewKey((current) => current + 1);
             setGenerationId(null);
             setProgress(`生成完成，已自動${isExistingPage ? '更新' : '儲存'}（網址 ID：${result.pageValue}）`);
+            setPersistedDraftSnapshot(draftSnapshot({
+                pageLabel: pageLabel.trim(),
+                pageValue: result.pageValue,
+                allowedDomainId,
+                spec: result.pageSpec || normalizedSpec,
+                templateType,
+                backgroundColor,
+                backgroundImage,
+                logoData,
+                sourceHasUploadLogo: Boolean(logoData) || sourceHasUploadLogo,
+            }));
             enqueueSnackbar(`AI 頁面已自動${isExistingPage ? '更新' : '儲存'}（網址 ID：${result.pageValue}）`, { variant: 'success' });
             onAutoSaved?.();
+            onClose();
             return result;
         } finally {
             setSaving(false);
@@ -480,7 +541,20 @@ const StructuredPageDialog = ({
             return;
         }
         if (!await confirmPageValueAvailable()) return;
-        if ((effectiveEdit || isCopy) && !window.confirm('欄位異動會影響修改前後記錄的欄位判讀。確定儲存嗎？')) return;
+        const currentDraftSnapshot = draftSnapshot({
+            pageLabel,
+            pageValue,
+            allowedDomainId,
+            spec,
+            templateType,
+            backgroundColor,
+            backgroundImage,
+            logoData,
+            sourceHasUploadLogo,
+        });
+        const hasPersistedChanges = Boolean(persistedDraftSnapshot)
+            && persistedDraftSnapshot !== currentDraftSnapshot;
+        if (hasPersistedChanges && !window.confirm('頁面設定已有修改。若包含欄位異動，可能影響修改前後記錄的欄位判讀。確定儲存嗎？')) return;
 
         setSaving(true);
         try {
@@ -552,7 +626,7 @@ const StructuredPageDialog = ({
                     <Grid item xs={12} lg={showPreview ? 7 : 12}>
                         <Stack spacing={2.25}>
                             <Alert severity="info">
-                                密碼只記錄是否填寫；其他欄位依遮罩設定在瀏覽器內轉換後才送出。新版頁面最多 10 個欄位。
+                                各欄位依遮罩設定在瀏覽器內轉換後才送出。預設最多 10 個欄位。
                             </Alert>
                             <Grid container spacing={2}>
                                 <Grid item xs={12} md={6}><TextField required fullWidth disabled={generating} label="名稱" value={pageLabel} onChange={(event) => setPageLabel(event.target.value)} helperText="後台列表顯示名稱" /></Grid>
@@ -675,9 +749,8 @@ const StructuredPageDialog = ({
                                         }} />
                                     </Button>
                                     <Button variant="contained" color="success" startIcon={generating ? <CircularProgress size={18} color="inherit" /> : <AutoAwesomeIcon />} onClick={handleGenerate} disabled={generating || saving}>
-                                        {sourceHtml ? '重新生成頁面' : '開始生成頁面'}
+                                        {generating ? (progress || '正在生成頁面...') : (sourceHtml ? '重新生成頁面' : '開始生成頁面')}
                                     </Button>
-                                    {progress && <Alert severity={sourceHtml ? 'success' : 'info'}>{progress}</Alert>}
                                 </>
                             )}
                         </Stack>
