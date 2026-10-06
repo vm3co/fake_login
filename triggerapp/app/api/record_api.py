@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 import os
 import csv
 import json
+from pathlib import Path
 from app.services.redis_client import RedisClient
 from fastapi import Request, APIRouter, Depends, HTTPException
 from typing import Dict, Any, List
@@ -39,7 +40,9 @@ async def get_request_info(request: Request) -> Dict[str, Any]:
 
 
 async def writer_test(type, new_data):
-    file = 'data/test_visit.csv' if type == 'visit' else 'data/test_input.csv'
+    data_dir = Path("data")
+    data_dir.mkdir(parents=True, exist_ok=True)
+    file = data_dir / ('test_visit.csv' if type == 'visit' else 'test_input.csv')
     with open(file, 'a', newline='', encoding='utf-8') as f:
         writer = csv.writer(f)
         # 使用 writerow 寫入單行
