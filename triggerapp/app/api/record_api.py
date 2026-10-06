@@ -5,10 +5,17 @@ import os
 import csv
 import json
 from app.services.redis_client import RedisClient
-from fastapi import Request, APIRouter, Depends
-from typing import Dict, Any
+from fastapi import Request, APIRouter, Depends, HTTPException
+from typing import Dict, Any, List
 
 from app.services.log_manager import Logger
+from app.services.structured_submission import (
+    StructuredSubmissionError,
+    parse_trigger_url,
+    validate_submission,
+)
+from app.repository.db_controller import db_controller
+from app.repository.models import TriggerPage
 
 
 logger = Logger().get_logger()
@@ -44,48 +51,82 @@ class LoginData(BaseModel):
     input_data: str = None
     url: str
 
+
+class StructuredFieldValue(BaseModel):
+    id: str
+    value: str
+
+
+class StructuredInputData(BaseModel):
+    url: str
+    revision: int
+    fields: List[StructuredFieldValue]
+
+
+def _event_identity(project_id: str) -> tuple[str, str]:
+    if len(project_id) == 64:
+        return project_id[16:48], project_id[48:] + project_id[:16]
+    return None, project_id
+
+
+async def _store_input_event(project_id: str, info_to_record: str, request_info: Dict):
+    now = int(datetime.now().timestamp())
+    sendtask_uuid, person_uuid = _event_identity(project_id)
+    event_data = {
+        "type": "input",
+        "uuid": person_uuid,
+        "sendtask_uuid": sendtask_uuid,
+        "timestamp": now,
+        "ip": request_info["ip"],
+        "user_agent": request_info["user_agent"],
+        "data": info_to_record,
+    }
+
+    if project_id in ("test", "99999_99999"):
+        await writer_test('input', [now, request_info["ip"], request_info["user_agent"], info_to_record])
+        return
+
+    try:
+        client = await redis_client.get_client()
+        await client.rpush("buffer:trigger_events", json.dumps(event_data))
+    except Exception as exc:
+        logger.error(f"Failed to push input event to Redis: {exc}")
+
 @router.post("/input")
 async def log_input(
     data: LoginData, 
     request_info: Dict = Depends(get_request_info)
     ):
     url_id = urlparse(data.url).path.rstrip("/").split("/")[-1][:64]
-    now = int(datetime.now().timestamp())   # 記錄當下時間戳
-
     # Determine what info to record: input_data has priority, fallback to email
     info_to_record = data.input_data if data.input_data else data.email
-    
-    # 建構 Event Data (JSON)
-    # Parse UUIDs according to user logic
-    if len(url_id) == 64:
-        # table_name = url_id[16:48] (sendtask_uuid)
-        # person_uuid = url_id[48:] + url_id[:16] (uuid)
-        sendtask_uuid = url_id[16:48]
-        person_uuid = url_id[48:] + url_id[:16]
-    else:
-        # Fallback
-        sendtask_uuid = None
-        person_uuid = url_id
+    await _store_input_event(url_id, info_to_record, request_info)
+    return {"status": "success"}
 
-    event_data = {
-        "type": "input",
-        "uuid": person_uuid,          # 用於 DB 更新
-        "sendtask_uuid": sendtask_uuid, # 用於 Cache Invalidation
-        "timestamp": now,
-        "ip": request_info["ip"],
-        "user_agent": request_info["user_agent"],
-        "data": info_to_record
-    }
 
-    if url_id in ("test", "99999_99999"):
-        new_data = [now, request_info["ip"], request_info["user_agent"], info_to_record]
-        await writer_test('input', new_data)
-    else:
-        # 改為寫入 Redis Buffer
-        try:
-            client = await redis_client.get_client()
-            await client.rpush("buffer:trigger_events", json.dumps(event_data))
-        except Exception as e:
-            logger.error(f"Failed to push input event to Redis: {e}")
-            
+@router.post("/structured-input")
+async def log_structured_input(
+    data: StructuredInputData,
+    request_info: Dict = Depends(get_request_info),
+):
+    try:
+        page_value, project_id = parse_trigger_url(data.url)
+    except StructuredSubmissionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    page = await db_controller.get_one(TriggerPage, {"page_value": page_value})
+    if not page or page.page_spec is None:
+        raise HTTPException(status_code=404, detail="找不到結構化頁面")
+
+    try:
+        info_to_record = validate_submission(
+            page.page_spec,
+            data.revision,
+            [field.model_dump() for field in data.fields],
+            page.spec_revision,
+        )
+    except StructuredSubmissionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    await _store_input_event(project_id, info_to_record, request_info)
     return {"status": "success"}

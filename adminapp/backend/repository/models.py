@@ -274,6 +274,8 @@ class TriggerPage(Base):
     owner_uuid = Column(String(36), index=True)
     page_type = Column(Text, default='custom')
     allowed_domain_id = Column(Integer, ForeignKey("domains.id"), nullable=True, index=True)
+    page_spec = Column(JSONB, nullable=True)
+    spec_revision = Column(Integer, nullable=False, default=1)
     create_time = Column(TIMESTAMP, server_default=func.now())
 
 class SystemConfig(Base):

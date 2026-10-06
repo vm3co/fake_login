@@ -203,6 +203,11 @@ async def init_db():
             "ADD COLUMN IF NOT EXISTS allowed_domain_id INTEGER REFERENCES domains(id)"
         ))
         await conn.execute(text(
+            "ALTER TABLE trigger_pages "
+            "ADD COLUMN IF NOT EXISTS page_spec JSONB, "
+            "ADD COLUMN IF NOT EXISTS spec_revision INTEGER NOT NULL DEFAULT 1"
+        ))
+        await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_trigger_pages_allowed_domain_id "
             "ON trigger_pages(allowed_domain_id)"
         ))

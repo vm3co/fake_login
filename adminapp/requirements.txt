@@ -18,3 +18,5 @@ redis
 pillow
 sqlalchemy
 playwright
+pytest
+pytest-asyncio

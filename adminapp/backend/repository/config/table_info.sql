@@ -161,7 +161,10 @@ CREATE TABLE IF NOT EXISTS trigger_pages (
     page_value VARCHAR(255) UNIQUE NOT NULL,
     page_label TEXT NOT NULL,
     owner_uuid VARCHAR(36), -- NULL 表示系統預設頁面
-    page_type TEXT DEFAULT 'custom', -- 'system', 'custom', 'ai'
+    page_type TEXT DEFAULT 'custom', -- 'system', 'custom', 'ai', 'structured_*'
+    allowed_domain_id INTEGER REFERENCES domains(id),
+    page_spec JSONB,
+    spec_revision INTEGER NOT NULL DEFAULT 1,
     create_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

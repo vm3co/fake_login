@@ -24,7 +24,6 @@ import {
     CircularProgress,
     Grid,
     Alert,
-    Checkbox,
     Accordion,
     AccordionSummary,
     AccordionDetails,
@@ -46,6 +45,7 @@ import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import DownloadIcon from '@mui/icons-material/Download';
 import FileCopyIcon from '@mui/icons-material/FileCopy';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import StructuredPageDialog from './StructuredPageDialog';
 
 
 const CreateUrl = ({ user, isAdmin }) => {
@@ -71,21 +71,6 @@ const CreateUrl = ({ user, isAdmin }) => {
     const [selectedFile, setSelectedFile] = useState(null);
     const [aiGenerationId, setAiGenerationId] = useState(null);
     const [uploadAllowedDomainId, setUploadAllowedDomainId] = useState('');
-
-    // 自訂頁面彈跳視窗 State
-    const [openCreateDialog, setOpenCreateDialog] = useState(false);
-    const [createPageLabel, setCreatePageLabel] = useState('');
-    const [createPageValue, setCreatePageValue] = useState('');
-    const [createPageTitle, setCreatePageTitle] = useState('');
-    const [createBgColor, setCreateBgColor] = useState('#f2f2f2');
-    const [createBgImage, setCreateBgImage] = useState('');
-    const [createFormTitle, setCreateFormTitle] = useState('登入');
-    const [createInputLabel, setCreateInputLabel] = useState('');
-    const [createIsEmail, setCreateIsEmail] = useState(true);
-    const [createBtnText, setCreateBtnText] = useState('登入');
-    const [createTemplateType, setCreateTemplateType] = useState('test');
-    const [createSvg, setCreateSvg] = useState('');
-    const [createAllowedDomainId, setCreateAllowedDomainId] = useState('');
 
     // AI 生成彈跳視窗 State
     const [openAiDialog, setOpenAiDialog] = useState(false);
@@ -137,6 +122,12 @@ const CreateUrl = ({ user, isAdmin }) => {
     const [openRedirectDialog, setOpenRedirectDialog] = useState(false);
     const [redirectOption, setRedirectOption] = useState('warning'); // 'warning' or 'custom'
     const [customRedirectUrl, setCustomRedirectUrl] = useState('');
+
+    const [structuredDialog, setStructuredDialog] = useState({
+        open: false,
+        mode: 'custom',
+        initialData: null,
+    });
 
     // 圖片壓縮輔助函式
     const compressImageToBase64 = (file, maxWidth = 300, maxHeight = 300) => {
@@ -282,7 +273,7 @@ const CreateUrl = ({ user, isAdmin }) => {
             reader.onerror = (err) => enqueueSnackbar(`讀取檔案失敗: ${err}`, { variant: 'error' });
             reader.readAsText(tweakNewHtmlFile);
         }
-    }, [tweakNewHtmlFile]);
+    }, [tweakNewHtmlFile, enqueueSnackbar]);
 
     // 載入 json & config
     const fetchPageOptions = async () => {
@@ -414,8 +405,66 @@ const CreateUrl = ({ user, isAdmin }) => {
     };
 
     // 彈跳視窗的處理函式
+    const handleOpenStructuredDialog = async (mode, option = null) => {
+        if (!option) {
+            setStructuredDialog({ open: true, mode, initialData: null });
+            return;
+        }
+
+        enqueueSnackbar('正在載入結構化頁面...', { variant: 'info' });
+        try {
+            const accessToken = window.localStorage.getItem('accessToken');
+            const headers = { Authorization: `Bearer ${accessToken}` };
+            const [detailResponse, htmlResponse] = await Promise.all([
+                fetch(`/api/trigger_page/structured/detail?pageValue=${encodeURIComponent(option.value)}&intent=${mode === 'copy' ? 'copy' : 'edit'}`, { headers }),
+                fetch(`/api/trigger_page/download?pageValue=${encodeURIComponent(option.value)}`, { headers }),
+            ]);
+            if (!detailResponse.ok) {
+                const result = await detailResponse.json();
+                throw new Error(result.detail || '無法載入欄位規格');
+            }
+            if (!htmlResponse.ok) {
+                const result = await htmlResponse.json();
+                throw new Error(result.detail || '無法載入頁面原始碼');
+            }
+
+            const detail = await detailResponse.json();
+            const html = await htmlResponse.text();
+            const timestamp = Date.now();
+            setStructuredDialog({
+                open: true,
+                mode,
+                initialData: {
+                    ...detail,
+                    html,
+                    sourcePageValue: detail.pageValue,
+                    pageLabel: mode === 'copy' ? `${detail.pageLabel} (副本)` : detail.pageLabel,
+                    pageValue: mode === 'copy'
+                        ? `${detail.pageValue.replace(/_copy_\d+$/, '')}_copy_${timestamp}`
+                        : detail.pageValue,
+                    specRevision: mode === 'copy' ? 1 : detail.specRevision,
+                },
+            });
+        } catch (error) {
+            enqueueSnackbar(error.message, { variant: 'error' });
+        }
+    };
+
+    const handleCloseStructuredDialog = () => {
+        setStructuredDialog((current) => ({ ...current, open: false }));
+    };
+
+    const handleStructuredSaved = () => {
+        handleCloseStructuredDialog();
+        fetchPageOptions();
+    };
+
     const handleOpenUploadDialog = async (option = null) => {
         if (option) {
+            if (option.structured) {
+                await handleOpenStructuredDialog('edit', option);
+                return;
+            }
             // [修改] 進入編輯模式，改為開啟 Tweak Dialog
             enqueueSnackbar('正在載入頁面原始碼...', { variant: 'info' });
             try {
@@ -478,22 +527,6 @@ const CreateUrl = ({ user, isAdmin }) => {
         }
     };
 
-    const handleOpenCreateDialog = () => {
-        setCreatePageLabel('');
-        setCreatePageValue('');
-        setCreatePageTitle('');
-        setCreateBgColor('#f2f2f2');
-        setCreateBgImage('');
-        setCreateFormTitle('登入');
-        setCreateInputLabel('');
-        setCreateIsEmail(true);
-        setCreateBtnText('登入');
-        setCreateTemplateType('test');
-        setCreateSvg('');
-        setCreateAllowedDomainId('');
-        setOpenCreateDialog(true);
-    }
-
     const handleCloseUploadDialog = () => {
         setOpenUploadDialog(false);
         // 關閉時清空表單
@@ -505,10 +538,6 @@ const CreateUrl = ({ user, isAdmin }) => {
         setAiGenerationId(null);
         setUploadAllowedDomainId('');
     };
-
-    const handleCloseCreateDialog = () => {
-        setOpenCreateDialog(false);
-    }
 
     const handleFileChange = (event) => {
         if (event.target.files && event.target.files.length > 0) {
@@ -573,52 +602,6 @@ const CreateUrl = ({ user, isAdmin }) => {
             enqueueSnackbar(err.message, { variant: 'error' });
         }
     };
-
-    const handleCreatePage = async () => {
-        if (!createPageLabel || !createPageValue || !createPageTitle || !createFormTitle || !createInputLabel || !createBtnText) {
-            enqueueSnackbar('請填寫所有必填欄位', { variant: 'warning' });
-            return;
-        }
-
-        const formData = new FormData();
-        formData.append('pageLabel', createPageLabel);
-        formData.append('pageValue', createPageValue);
-        formData.append('pageTitle', createPageTitle);
-        formData.append('bgColor', createBgColor);
-        formData.append('bgImage', createBgImage);
-        formData.append('formTitle', createFormTitle);
-        formData.append('inputLabel', createInputLabel);
-        formData.append('isEmail', createIsEmail);
-        formData.append('btnText', createBtnText);
-        formData.append('templateType', createTemplateType);
-        formData.append('svgContent', createSvg);
-        formData.append('allowedDomainId', createAllowedDomainId === '' ? '' : String(createAllowedDomainId));
-
-        try {
-            const accessToken = window.localStorage.getItem("accessToken");
-            const response = await fetch('/api/trigger_page/create_page', {
-                method: 'POST',
-                headers: {
-                    'Authorization': `Bearer ${accessToken}`
-                },
-                body: formData,
-            });
-
-            const result = await response.json();
-
-            if (!response.ok) {
-                throw new Error(result.detail || '操作失敗');
-            }
-
-            enqueueSnackbar('自訂頁面建立成功！', { variant: 'success' });
-            handleCloseCreateDialog();
-            fetchPageOptions();
-
-        } catch (err) {
-            console.error("操作失敗:", err);
-            enqueueSnackbar(err.message, { variant: 'error' });
-        }
-    }
 
     const handleOpenAiDialog = () => {
         setAiPrompt('');
@@ -846,6 +829,10 @@ const CreateUrl = ({ user, isAdmin }) => {
 
     // [新增] 複製頁面處理函式
     const handleCopyPage = async (option) => {
+        if (option.structured) {
+            await handleOpenStructuredDialog('copy', option);
+            return;
+        }
         enqueueSnackbar('正在準備複製頁面...', { variant: 'info' });
         try {
             const accessToken = window.localStorage.getItem("accessToken");
@@ -1003,9 +990,17 @@ const CreateUrl = ({ user, isAdmin }) => {
                                             <Button
                                                 variant="contained"
                                                 color="primary" // Different color
-                                                onClick={handleOpenCreateDialog}
+                                                onClick={() => handleOpenStructuredDialog('custom')}
                                             >
                                                 新增自訂頁面
+                                            </Button>
+                                            <Button
+                                                variant="contained"
+                                                color="warning"
+                                                startIcon={<AutoAwesomeIcon />}
+                                                onClick={() => handleOpenStructuredDialog('ai')}
+                                            >
+                                                AI 指定生成需求
                                             </Button>
                                             <Button
                                                 variant="contained"
@@ -1146,6 +1141,13 @@ const CreateUrl = ({ user, isAdmin }) => {
                                                                             <Typography sx={{ flexGrow: 1, ml: 1, fontWeight: 500 }}>
                                                                                 {option.label}
                                                                             </Typography>
+                                                                            <Chip
+                                                                                label={option.structured ? '結構化遮罩' : '舊版'}
+                                                                                size="small"
+                                                                                color={option.structured ? 'success' : 'default'}
+                                                                                variant="outlined"
+                                                                                sx={{ mr: 1 }}
+                                                                            />
                                                                             {option.allowed_domain && (
                                                                                 <Chip
                                                                                     label={option.allowed_domain}
@@ -1451,172 +1453,14 @@ const CreateUrl = ({ user, isAdmin }) => {
                 </DialogActions>
             </Dialog>
 
-            {/* 新增自訂頁面 Dialog */}
-            <Dialog open={openCreateDialog} onClose={handleCloseCreateDialog} fullWidth maxWidth="sm">
-                <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    新增自訂頁面
-                    <IconButton onClick={handleCloseCreateDialog} edge="end">
-                        <CloseIcon />
-                    </IconButton>
-                </DialogTitle>
-                <DialogContent>
-                    <Stack spacing={2} sx={{ pt: 1 }}>
-                        <TextField
-                            required
-                            label="名稱"
-                            value={createPageLabel}
-                            onChange={(e) => setCreatePageLabel(e.target.value)}
-                            helperText="後台列表中顯示的名稱"
-                            fullWidth
-                        />
-                        <TextField
-                            required
-                            label="網址 ID"
-                            value={createPageValue}
-                            onChange={(e) => setCreatePageValue(e.target.value.toLowerCase().trim())}
-                            helperText="網址 ID，只能包含小寫英文、數字、底線"
-                            fullWidth
-                        />
-                        <FormControl fullWidth>
-                            <InputLabel id="create-domain-label">綁定網域 (Domain)</InputLabel>
-                            <Select
-                                labelId="create-domain-label"
-                                label="綁定網域 (Domain)"
-                                value={createAllowedDomainId}
-                                onChange={(e) => setCreateAllowedDomainId(e.target.value)}
-                            >
-                                <MenuItem value="">
-                                    <em>使用預設 (TRIGGER_APP_URL)</em>
-                                </MenuItem>
-                                {domainList.map((d) => (
-                                    <MenuItem key={d.id} value={d.id}>{d.label || d.domain} ({d.domain})</MenuItem>
-                                ))}
-                            </Select>
-                            <Typography variant="caption" color="text.secondary" sx={{ ml: 1.5, mt: 0.5 }}>
-                                綁定後，此頁面只接受該網域的請求；其他網域訪問會 404
-                            </Typography>
-                        </FormControl>
-                        <FormControl component="fieldset">
-                            <Typography variant="body1" gutterBottom>選擇版型：</Typography>
-                            <RadioGroup
-                                row
-                                name="templateType"
-                                value={createTemplateType}
-                                onChange={(e) => setCreateTemplateType(e.target.value)}
-                            >
-                                <FormControlLabel value="test" control={<Radio />} label="Test (預設)" />
-                                <FormControlLabel value="modern" control={<Radio />} label="Modern (新版)" />
-                            </RadioGroup>
-                        </FormControl>
-
-                        {createTemplateType === 'modern' && (
-                            <TextField
-                                label="SVG 圖示 (XML 代碼)"
-                                value={createSvg}
-                                onChange={(e) => setCreateSvg(e.target.value)}
-                                helperText="貼上 SVG 代碼以替換預設圖示 (可選)"
-                                fullWidth
-                                multiline
-                                rows={3}
-                                placeholder={`<svg ...>...</svg>`}
-                            />
-                        )}
-                        <Divider />
-                        <TextField
-                            required
-                            label="網頁標題 (HTML Title)"
-                            value={createPageTitle}
-                            onChange={(e) => setCreatePageTitle(e.target.value)}
-                            helperText="瀏覽器分頁標籤上顯示的文字"
-                            fullWidth
-                        />
-                        <Stack direction="row" spacing={2} alignItems="center">
-                            <TextField
-                                required
-                                label="背景顏色 (Hex/Name)"
-                                value={createBgColor}
-                                onChange={(e) => setCreateBgColor(e.target.value)}
-                                fullWidth
-                            />
-                            <Box
-                                sx={{
-                                    width: 40,
-                                    height: 40,
-                                    backgroundColor: createBgColor,
-                                    border: '1px solid #ccc',
-                                    borderRadius: 1,
-                                    position: 'relative',
-                                    overflow: 'hidden',
-                                    cursor: 'pointer'
-                                }}
-                            >
-                                <input
-                                    type="color"
-                                    value={createBgColor}
-                                    onChange={(e) => setCreateBgColor(e.target.value)}
-                                    style={{
-                                        position: 'absolute',
-                                        top: 0,
-                                        left: 0,
-                                        width: '100%',
-                                        height: '100%',
-                                        opacity: 0,
-                                        cursor: 'pointer',
-                                        padding: 0,
-                                        border: 'none',
-                                    }}
-                                />
-                            </Box>
-                        </Stack>
-
-                        <TextField
-                            label="背景圖片 URL (可選)"
-                            value={createBgImage}
-                            onChange={(e) => setCreateBgImage(e.target.value)}
-                            helperText="如果填入，將覆蓋背景顏色"
-                            fullWidth
-                        />
-                        <TextField
-                            required
-                            label="表單標題"
-                            value={createFormTitle}
-                            onChange={(e) => setCreateFormTitle(e.target.value)}
-                            helperText="登入框上方的大標題"
-                            fullWidth
-                        />
-                        <TextField
-                            required
-                            label="輸入框標籤"
-                            value={createInputLabel}
-                            onChange={(e) => setCreateInputLabel(e.target.value)}
-                            helperText="例如：電子郵件地址, Email, 帳號, 員工編號"
-                            fullWidth
-                        />
-                        <FormControlLabel
-                            label="是否為電子郵件"
-                            control={
-                                <Checkbox
-                                    checked={createIsEmail}
-                                    onChange={(e) => setCreateIsEmail(e.target.checked)}
-                                />
-                            }
-                        />
-                        <TextField
-                            required
-                            label="按鈕文字"
-                            value={createBtnText}
-                            onChange={(e) => setCreateBtnText(e.target.value)}
-                            fullWidth
-                        />
-                    </Stack>
-                </DialogContent>
-                <DialogActions>
-                    <Button onClick={handleCloseCreateDialog}>取消</Button>
-                    <Button onClick={handleCreatePage} variant="contained" color="primary">
-                        建立
-                    </Button>
-                </DialogActions>
-            </Dialog>
+            <StructuredPageDialog
+                open={structuredDialog.open}
+                mode={structuredDialog.mode}
+                initialData={structuredDialog.initialData}
+                domainList={domainList}
+                onClose={handleCloseStructuredDialog}
+                onSaved={handleStructuredSaved}
+            />
 
             {/* 刪除確認視窗 */}
             <Dialog

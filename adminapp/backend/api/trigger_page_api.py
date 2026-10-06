@@ -27,16 +27,30 @@ import google.generativeai as genai
 import base64
 import io
 import httpx
+import fcntl
 from PIL import Image
+from uuid import uuid4
+from contextlib import contextmanager
 
 from backend.services.log_manager import Logger
 from backend.repository.models import Acct, TriggerPage, Domain
 from backend.repository.db_controller import db_controller
 from sqlalchemy import select, update, delete, insert
+from sqlalchemy.exc import IntegrityError
 from backend.services.db_user import DBUser
 from backend.api.user_api import get_current_user
 from backend.services.design_generator import get_design_context
 from backend.services import ai_log_manager as ai_log
+from backend.services.structured_page import (
+    build_structured_ai_instructions,
+    enrich_custom_patterns,
+    render_structured_page,
+    stream_structured_generation_with_retries,
+    StructuredOutputValidationError,
+    validate_custom_field_updates,
+    validate_page_spec,
+    validate_structured_html,
+)
 
 logger = Logger().get_logger()
 
@@ -66,6 +80,37 @@ def validate_page_value(pageValue: str = Form(...)):
     return pageValue
 
 
+def validate_optional_page_value(pageValue: str = Form("")):
+    normalized = (pageValue or "").strip()
+    if normalized and not re.fullmatch(r"[a-z0-9_]+", normalized):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="網址 ID 只能包含小寫字母、數字和底線。"
+        )
+    return normalized or None
+
+
+async def _page_value_exists(page_value: str) -> bool:
+    return bool(
+        await db_controller.get_one(TriggerPage, {"page_value": page_value})
+        or (UPLOAD_DIR / f"{page_value}.html").exists()
+    )
+
+
+async def _resolve_new_page_value(raw_value: str | None, source: str) -> str:
+    if raw_value:
+        if await _page_value_exists(raw_value):
+            raise HTTPException(status_code=409, detail=f"網址 ID '{raw_value}' 已存在")
+        return raw_value
+
+    prefix = {"ai": "ai", "copy": "copy"}.get(source, "page")
+    for _ in range(5):
+        candidate = f"{prefix}_{uuid4().hex[:12]}"
+        if not await _page_value_exists(candidate):
+            return candidate
+    raise HTTPException(status_code=503, detail="暫時無法產生唯一網址 ID，請稍後再試")
+
+
 async def _resolve_allowed_domain_id(raw_value):
     """將前端傳來的 allowedDomainId 轉成有效的 domain id；空字串/None 視為未綁定 (None)。
 
@@ -81,6 +126,81 @@ async def _resolve_allowed_domain_id(raw_value):
     if not exists:
         raise HTTPException(status_code=422, detail=f"找不到 domain id={domain_id}")
     return domain_id
+
+
+def _parse_page_spec(raw_value: str, *, allow_custom: bool = True) -> dict:
+    try:
+        parsed = json.loads(raw_value)
+    except (TypeError, json.JSONDecodeError):
+        raise HTTPException(status_code=422, detail="pageSpec 必須是有效的 JSON")
+    return validate_page_spec(parsed, allow_custom=allow_custom)
+
+
+async def _read_html_upload(file: UploadFile, *, max_bytes: int = 8 * 1024 * 1024) -> str:
+    content = await file.read(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise HTTPException(status_code=413, detail="HTML 檔案不可超過 8 MiB")
+    try:
+        return content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=422, detail="HTML 檔案必須使用 UTF-8 編碼")
+
+
+async def _validate_reference_image(file: UploadFile, *, max_bytes: int = 5 * 1024 * 1024) -> None:
+    if file.content_type not in {"image/png", "image/jpeg", "image/webp"}:
+        raise HTTPException(status_code=422, detail="參考圖片只支援 PNG、JPEG 或 WebP")
+    content = await file.read(max_bytes + 1)
+    if len(content) > max_bytes:
+        raise HTTPException(status_code=413, detail="參考圖片不可超過 5 MiB")
+    try:
+        with Image.open(io.BytesIO(content)) as reference_image:
+            reference_image.verify()
+    except Exception:
+        raise HTTPException(status_code=422, detail="參考圖片內容無效")
+    await file.seek(0)
+
+
+def _can_edit_page(page: TriggerPage, current_user: dict) -> bool:
+    return (
+        current_user.get("user_type") == "admin"
+        or page.owner_uuid == current_user.get("acct_uuid")
+    )
+
+
+def _logo_html_from_data_url(data_url: str) -> str:
+    if not data_url:
+        return ""
+    match = re.fullmatch(
+        r"data:(image/(?:png|jpeg|webp));base64,([A-Za-z0-9+/=]+)",
+        data_url,
+    )
+    if not match:
+        raise HTTPException(status_code=422, detail="Logo 只支援 PNG、JPEG 或 WebP")
+    try:
+        decoded = base64.b64decode(match.group(2), validate=True)
+        if len(decoded) > 5 * 1024 * 1024:
+            raise HTTPException(status_code=413, detail="Logo 不可超過 5 MiB")
+        with Image.open(io.BytesIO(decoded)) as logo_image:
+            logo_image.verify()
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=422, detail="Logo 圖片內容無效")
+    return f'<img src="{data_url}" alt="Brand Logo">'
+
+
+@contextmanager
+def _page_file_lock(page_value: str):
+    lock_path = UPLOAD_DIR / f".{page_value}.lock"
+    with lock_path.open("a+") as lock_file:
+        try:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise HTTPException(status_code=409, detail="頁面正在由其他操作更新，請稍後再試")
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
 
 # --- 3. API 端點 ---
 
@@ -139,6 +259,8 @@ def get_router(db_user: DBUser):
                 "owner_name": owner_name_map.get(row.owner_uuid) if row.owner_uuid else None,
                 "allowed_domain_id": row.allowed_domain_id,
                 "allowed_domain": domain_map.get(row.allowed_domain_id) if row.allowed_domain_id else None,
+                "structured": row.page_spec is not None,
+                "spec_revision": row.spec_revision if row.page_spec is not None else None,
             }
             for row in rows
         ]
@@ -167,6 +289,270 @@ def get_router(db_user: DBUser):
         return {
             "triggerUrl": os.getenv("TRIGGER_APP_URL", ""),
             "ethanHosts": _alias_base_urls(),
+        }
+
+    @router.get(
+        "/structured/detail",
+        summary="取得結構化頁面規格",
+        tags=["trigger page"]
+    )
+    async def get_structured_page_detail(
+        pageValue: str = Query(...),
+        intent: str = Query("edit", pattern="^(edit|copy)$"),
+        current_user: dict = Depends(get_current_user),
+    ):
+        page = await db_controller.get_one(TriggerPage, {"page_value": pageValue})
+        if not page or page.page_spec is None:
+            raise HTTPException(status_code=404, detail="找不到結構化頁面")
+        if intent == "edit" and not _can_edit_page(page, current_user):
+            raise HTTPException(status_code=403, detail="您沒有權限修改此頁面")
+        return {
+            "pageLabel": page.page_label,
+            "pageValue": page.page_value,
+            "allowedDomainId": page.allowed_domain_id,
+            "pageSpec": page.page_spec,
+            "specRevision": page.spec_revision,
+        }
+
+    @router.get(
+        "/structured/page-value-availability",
+        summary="檢查結構化頁面網址 ID 是否可用",
+        tags=["trigger page"]
+    )
+    async def check_structured_page_value(
+        pageValue: str = Query(...),
+        currentPageValue: str = Query(None),
+        current_user: dict = Depends(get_current_user),
+    ):
+        candidate = (pageValue or "").strip()
+        if not re.fullmatch(r"[a-z0-9_]+", candidate):
+            raise HTTPException(status_code=422, detail="網址 ID 只能包含小寫字母、數字和底線。")
+
+        if currentPageValue:
+            current_page = await db_controller.get_one(TriggerPage, {"page_value": currentPageValue})
+            if not current_page or not _can_edit_page(current_page, current_user):
+                raise HTTPException(status_code=403, detail="您沒有權限修改此頁面")
+        if currentPageValue and candidate == currentPageValue:
+            return {"available": True, "pageValue": candidate}
+
+        return {
+            "available": not await _page_value_exists(candidate),
+            "pageValue": candidate,
+        }
+
+    @router.post(
+        "/structured/create",
+        summary="建立結構化頁面",
+        tags=["trigger page"]
+    )
+    async def create_structured_page(
+        pageLabel: str = Form(...),
+        pageValue: str | None = Depends(validate_optional_page_value),
+        pageSpec: str = Form(...),
+        source: str = Form("custom"),
+        templateType: str = Form("classic"),
+        bgColor: str = Form("#f2f2f2"),
+        bgImage: str = Form(""),
+        logoData: str = Form(""),
+        file: UploadFile = File(None),
+        generationId: str = Form(None),
+        sourcePageValue: str = Form(None),
+        allowedDomainId: str = Form(None),
+        current_user: dict = Depends(get_current_user),
+    ):
+        if source not in {"custom", "ai", "copy"}:
+            raise HTTPException(status_code=422, detail="結構化頁面來源不正確")
+        pageValue = await _resolve_new_page_value(pageValue, source)
+        spec = _parse_page_spec(pageSpec, allow_custom=source != "custom")
+        domain_id = await _resolve_allowed_domain_id(allowedDomainId)
+
+        if source == "ai":
+            if not generationId or not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", generationId):
+                raise HTTPException(status_code=422, detail="AI 結構化頁面缺少有效的 generationId")
+            if not ai_log.log_path(generationId).is_file():
+                raise HTTPException(status_code=422, detail="找不到對應的 AI 生成紀錄")
+        elif source == "copy":
+            if not sourcePageValue or not re.fullmatch(r"^[a-z0-9_]+$", sourcePageValue):
+                raise HTTPException(status_code=422, detail="複製頁面缺少有效的來源網址 ID")
+            source_page = await db_controller.get_one(TriggerPage, {"page_value": sourcePageValue})
+            if not source_page or source_page.page_spec is None:
+                raise HTTPException(status_code=404, detail="找不到結構化來源頁面")
+            validate_custom_field_updates(source_page.page_spec, spec)
+
+        if source in {"ai", "copy"}:
+            if file is None:
+                raise HTTPException(status_code=422, detail="結構化頁面缺少 HTML 檔案")
+            try:
+                html_content = await _read_html_upload(file)
+            finally:
+                await file.close()
+            spec = enrich_custom_patterns(html_content, spec)
+            spec = validate_page_spec(spec)
+            validate_structured_html(html_content, spec, expected_revision=1)
+        else:
+            if file is not None:
+                await file.close()
+                raise HTTPException(status_code=422, detail="自訂結構化頁面不可上傳任意 HTML")
+            html_content = render_structured_page(
+                spec,
+                revision=1,
+                template_type=templateType,
+                background_color=bgColor,
+                background_image=bgImage,
+                logo_html=_logo_html_from_data_url(logoData),
+            )
+            validate_structured_html(html_content, spec, expected_revision=1)
+
+        save_path = UPLOAD_DIR / f"{pageValue}.html"
+        temp_path = UPLOAD_DIR / f".{pageValue}.{uuid4().hex}.tmp"
+        if save_path.exists():
+            raise HTTPException(status_code=409, detail=f"檔案 '{save_path.name}' 已存在")
+
+        created_file = False
+        try:
+            temp_path.write_text(html_content, encoding="utf-8")
+            try:
+                os.link(temp_path, save_path)
+            except FileExistsError:
+                raise HTTPException(status_code=409, detail=f"檔案 '{save_path.name}' 已存在")
+            created_file = True
+            await db_controller.create(TriggerPage, {
+                "page_value": pageValue,
+                "page_label": pageLabel,
+                "owner_uuid": current_user.get("acct_uuid"),
+                "page_type": {
+                    "ai": "structured_ai",
+                    "copy": "structured_copy",
+                }.get(source, "structured_custom"),
+                "allowed_domain_id": domain_id,
+                "page_spec": spec,
+                "spec_revision": 1,
+            })
+        except HTTPException:
+            if created_file and save_path.exists():
+                save_path.unlink()
+            raise
+        except IntegrityError:
+            if created_file and save_path.exists():
+                save_path.unlink()
+            raise HTTPException(status_code=409, detail=f"網址 ID '{pageValue}' 已存在")
+        except Exception as exc:
+            if created_file and save_path.exists():
+                save_path.unlink()
+            raise HTTPException(status_code=500, detail=f"建立結構化頁面失敗: {exc}")
+        finally:
+            if temp_path.exists():
+                temp_path.unlink()
+
+        if generationId:
+            ai_log.write_upload_event(generationId, {
+                "user_uuid": current_user.get("acct_uuid"),
+                "page_label": pageLabel,
+                "page_value": pageValue,
+                "saved_file": str(save_path.resolve()),
+            })
+        return {
+            "status": "success",
+            "message": f"頁面 '{pageLabel}' 已成功建立。",
+            "pageValue": pageValue,
+            "pageSpec": spec,
+            "specRevision": 1,
+        }
+
+    @router.post(
+        "/structured/update",
+        summary="更新結構化頁面",
+        tags=["trigger page"]
+    )
+    async def update_structured_page(
+        pageLabel: str = Form(...),
+        pageValue: str | None = Depends(validate_optional_page_value),
+        oldPageValue: str = Form(...),
+        pageSpec: str = Form(...),
+        specRevision: int = Form(...),
+        file: UploadFile = File(...),
+        allowedDomainId: str = Form(None),
+        current_user: dict = Depends(get_current_user),
+    ):
+        try:
+            html_content = await _read_html_upload(file)
+        finally:
+            await file.close()
+
+        with _page_file_lock(oldPageValue):
+            page = await db_controller.get_one(TriggerPage, {"page_value": oldPageValue})
+            if not page or page.page_spec is None:
+                raise HTTPException(status_code=404, detail="找不到結構化頁面")
+            if not _can_edit_page(page, current_user):
+                raise HTTPException(status_code=403, detail="您沒有權限修改此頁面")
+            if page.spec_revision != specRevision:
+                raise HTTPException(status_code=409, detail="頁面已由其他操作更新，請重新載入後再試")
+
+            pageValue = pageValue or oldPageValue
+
+            if pageValue != oldPageValue:
+                conflict = await db_controller.get_one(TriggerPage, {"page_value": pageValue})
+                if conflict:
+                    raise HTTPException(status_code=409, detail=f"網址 ID '{pageValue}' 已被使用")
+
+            spec = _parse_page_spec(pageSpec, allow_custom=True)
+            validate_custom_field_updates(page.page_spec, spec)
+            next_revision = specRevision + 1
+            domain_id = await _resolve_allowed_domain_id(allowedDomainId)
+            validate_structured_html(html_content, spec, expected_revision=next_revision)
+
+            old_path = UPLOAD_DIR / f"{oldPageValue}.html"
+            new_path = UPLOAD_DIR / f"{pageValue}.html"
+            if not old_path.exists():
+                raise HTTPException(status_code=404, detail="找不到結構化頁面 HTML")
+            backup_path = UPLOAD_DIR / f".{oldPageValue}.{uuid4().hex}.bak"
+            temp_path = UPLOAD_DIR / f".{pageValue}.{uuid4().hex}.tmp"
+
+            wrote_new_path = False
+            try:
+                shutil.copy2(old_path, backup_path)
+                temp_path.write_text(html_content, encoding="utf-8")
+                if old_path == new_path:
+                    temp_path.replace(new_path)
+                else:
+                    try:
+                        os.link(temp_path, new_path)
+                    except FileExistsError:
+                        raise HTTPException(status_code=409, detail=f"檔案 '{new_path.name}' 已存在")
+                wrote_new_path = True
+                updated = await db_controller.update(
+                    TriggerPage,
+                    {"id": page.id, "spec_revision": specRevision},
+                    {
+                        "page_label": pageLabel,
+                        "page_value": pageValue,
+                        "allowed_domain_id": domain_id,
+                        "page_spec": spec,
+                        "spec_revision": next_revision,
+                    },
+                )
+                if updated != 1:
+                    raise HTTPException(status_code=409, detail="頁面已由其他操作更新，請重新載入後再試")
+                if old_path != new_path and old_path.exists():
+                    old_path.unlink()
+            except Exception:
+                if wrote_new_path and new_path.exists():
+                    new_path.unlink()
+                if backup_path.exists():
+                    shutil.copy2(backup_path, old_path)
+                raise
+            finally:
+                if backup_path.exists():
+                    backup_path.unlink()
+                if temp_path.exists():
+                    temp_path.unlink()
+
+        return {
+            "status": "success",
+            "message": f"頁面 '{pageLabel}' 已成功更新。",
+            "pageValue": pageValue,
+            "pageSpec": spec,
+            "specRevision": next_revision,
         }
 
     @router.get(
@@ -304,6 +690,9 @@ def get_router(db_user: DBUser):
         
         if not old_page:
             raise HTTPException(status_code=404, detail="找不到欲修改的頁面")
+
+        if old_page.page_spec is not None:
+            raise HTTPException(status_code=409, detail="結構化頁面請使用欄位編輯器修改")
     
         # 權限邏輯
         if old_page.owner_uuid is None:
@@ -974,14 +1363,24 @@ def get_router(db_user: DBUser):
 
     @router.post("/generate_with_ai_stream", summary="使用 AI 生成頁面（SSE 串流進度）", tags=["trigger page"])
     async def generate_page_with_ai_stream(
+        request: Request,
         prompt: str = Form(..., description="使用者的提示詞"),
         refUrl: str = Form(None, description="參考網址 (可選)"),
         image: UploadFile = File(None, description="參考圖片 (可選)"),
         pageType: str = Form("field", description="網頁類型: 'field' 欄位觸發 | 'download' 下載按鍵觸發"),
         aiModel: str = Form("gemini", description="AI 模型選擇"),
         useDesign: bool = Form(False, description="是否啟用 DESIGN.md 分析"),
+        pageSpec: str = Form(None, description="結構化頁面規格 (可選)"),
+        pageValue: str | None = Depends(validate_optional_page_value),
         current_user: dict = Depends(get_current_user)
     ):
+        if image:
+            await _validate_reference_image(image)
+        structured_spec = _parse_page_spec(pageSpec, allow_custom=True) if pageSpec else None
+        if structured_spec and (refUrl or useDesign):
+            raise HTTPException(status_code=422, detail="AI 指定生成不支援參考網址或 DESIGN.md")
+        if structured_spec and pageValue and await _page_value_exists(pageValue):
+            raise HTTPException(status_code=409, detail=f"網址 ID '{pageValue}' 已存在")
         generation_id = ai_log.new_generation_id()
         ai_log.write_header(generation_id, {
             "user_uuid": current_user.get("acct_uuid"),
@@ -991,11 +1390,16 @@ def get_router(db_user: DBUser):
             "ref_url": refUrl or "",
             "has_image": bool(image),
         })
-        base_system_prompt = get_system_prompt(pageType)
+        base_system_prompt = (
+            build_structured_ai_instructions(structured_spec, prompt)
+            if structured_spec
+            else get_system_prompt(pageType)
+        )
         ai_log.write_section(generation_id, "System Prompt", base_system_prompt)
         ai_log.write_section(generation_id, "User Prompt", prompt)
         if refUrl:
             ai_log.write_section(generation_id, "Reference URL", refUrl)
+        llm_caller = getattr(request.app.state, "trigger_page_llm_caller", call_llm)
 
         async def event_generator():
             def sse_event(event_type: str, data: dict) -> str:
@@ -1038,42 +1442,124 @@ def get_router(db_user: DBUser):
                     system_instructions += f"\n\n<design_system>\n{design_context['design_md']}\n</design_system>"
                     system_instructions += "\n\n[嚴格要求] 你必須完全遵守上方 <design_system> 中的設計規範來撰寫HTML/CSS。"
 
-                html_content = ""
-                char_count = 0
-                last_emitted = 0
-                async for kind, payload in call_llm(
-                    model=aiModel,
-                    system_instructions=system_instructions,
-                    user_prompt=prompt,
-                    ref_url=refUrl,
-                    image=image,
-                    screenshot_b64=design_context.get("screenshot_b64") if refUrl else None,
-                    generation_id=generation_id,
-                ):
-                    if kind == "chunk":
-                        char_count += len(payload)
-                        # 每累積 ~200 字元送一次 progress，避免 SSE flood
-                        if char_count - last_emitted >= 200:
+                if structured_spec:
+                    char_count = 0
+                    last_emitted = 0
+
+                    async def stream_factory(attempt):
+                        nonlocal char_count, last_emitted
+                        char_count = 0
+                        last_emitted = 0
+                        if image:
+                            await image.seek(0)
+                        ai_log.write_section(
+                            generation_id,
+                            f"Structured Generation Attempt {attempt}",
+                            f"attempt: {attempt}/3",
+                        )
+                        return llm_caller(
+                            model=aiModel,
+                            system_instructions=system_instructions,
+                            user_prompt="請嚴格依照結構契約完成頁面外觀。",
+                            ref_url=None,
+                            image=image,
+                            screenshot_b64=None,
+                            generation_id=generation_id,
+                        )
+
+                    def validate_generated_html(generated_html):
+                        try:
+                            completed = enrich_custom_patterns(generated_html, structured_spec)
+                            completed = validate_page_spec(completed)
+                            validate_structured_html(generated_html, completed, expected_revision=1)
+                            return completed
+                        except HTTPException as exc:
+                            raise StructuredOutputValidationError(str(exc.detail)) from exc
+
+                    html_content = ""
+                    completed_spec = None
+                    async for retry_kind, retry_payload in stream_structured_generation_with_retries(
+                        stream_factory,
+                        validate_generated_html,
+                        max_attempts=3,
+                    ):
+                        if retry_kind == "attempt":
                             yield sse_event("progress", {
                                 "stage": "generating",
-                                "message": f"已生成 {char_count} 字元..."
+                                "attempt": retry_payload["attempt"],
+                                "max_attempts": retry_payload["max_attempts"],
+                                "message": f"正在進行第 {retry_payload['attempt']} / {retry_payload['max_attempts']} 次生成...",
                             })
-                            last_emitted = char_count
-                    elif kind == "done":
-                        html_content = payload
+                        elif retry_kind == "chunk":
+                            char_count += len(retry_payload)
+                            if char_count - last_emitted >= 200:
+                                yield sse_event("progress", {
+                                    "stage": "generating",
+                                    "message": f"已生成 {char_count} 字元...",
+                                })
+                                last_emitted = char_count
+                        elif retry_kind == "validation_error":
+                            ai_log.write_section(
+                                generation_id,
+                                f"Structured Validation Failed (Attempt {retry_payload['attempt']})",
+                                retry_payload["message"],
+                            )
+                            yield sse_event("progress", {
+                                "stage": "retrying" if retry_payload["will_retry"] else "validating",
+                                **retry_payload,
+                                "message": (
+                                    f"第 {retry_payload['attempt']} 次結果未通過結構驗證，正在自動重試..."
+                                    if retry_payload["will_retry"]
+                                    else "第 3 次結果仍未通過結構驗證"
+                                ),
+                            })
+                        elif retry_kind == "done":
+                            html_content = retry_payload["html"]
+                            completed_spec = retry_payload["page_spec"]
+                else:
+                    html_content = ""
+                    char_count = 0
+                    last_emitted = 0
+                    async for kind, payload in llm_caller(
+                        model=aiModel,
+                        system_instructions=system_instructions,
+                        user_prompt=prompt,
+                        ref_url=refUrl,
+                        image=image,
+                        screenshot_b64=design_context.get("screenshot_b64") if refUrl else None,
+                        generation_id=generation_id,
+                    ):
+                        if kind == "chunk":
+                            char_count += len(payload)
+                            if char_count - last_emitted >= 200:
+                                yield sse_event("progress", {
+                                    "stage": "generating",
+                                    "message": f"已生成 {char_count} 字元...",
+                                })
+                                last_emitted = char_count
+                        elif kind == "done":
+                            html_content = payload
+                    completed_spec = None
 
                 # 階段 3：完成
-                yield sse_event("complete", {
+                complete_data = {
                     "stage": "done",
                     "message": "生成完成！",
                     "html": html_content,
                     "generation_id": generation_id,
-                })
+                }
+                if completed_spec:
+                    complete_data["pageSpec"] = completed_spec
+                    complete_data["specRevision"] = 1
+                yield sse_event("complete", complete_data)
 
             except Exception as e:
                 logger.error(f"生成流程失敗: {e}")
                 ai_log.write_section(generation_id, "Errors", str(e))
                 yield sse_event("error", {"stage": "error", "message": f"處理失敗: {str(e)}"})
+            finally:
+                if image:
+                    await image.close()
 
         return StreamingResponse(
             event_generator(),

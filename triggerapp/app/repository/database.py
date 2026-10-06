@@ -1,4 +1,5 @@
 import os
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from dotenv import load_dotenv
@@ -45,4 +46,9 @@ async def init_db():
     from app.repository import models
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text(
+            "ALTER TABLE trigger_pages "
+            "ADD COLUMN IF NOT EXISTS page_spec JSONB, "
+            "ADD COLUMN IF NOT EXISTS spec_revision INTEGER NOT NULL DEFAULT 1"
+        ))
 
