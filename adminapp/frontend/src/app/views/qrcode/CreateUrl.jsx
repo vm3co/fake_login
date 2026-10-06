@@ -459,6 +459,10 @@ const CreateUrl = ({ user, isAdmin }) => {
         fetchPageOptions();
     };
 
+    const handleStructuredAutoSaved = () => {
+        fetchPageOptions();
+    };
+
     const handleOpenUploadDialog = async (option = null) => {
         if (option) {
             if (option.structured) {
@@ -1460,6 +1464,7 @@ const CreateUrl = ({ user, isAdmin }) => {
                 domainList={domainList}
                 onClose={handleCloseStructuredDialog}
                 onSaved={handleStructuredSaved}
+                onAutoSaved={handleStructuredAutoSaved}
             />
 
             {/* 刪除確認視窗 */}
@@ -1566,7 +1571,14 @@ const CreateUrl = ({ user, isAdmin }) => {
             </Dialog>
 
             {/* AI 生成 Dialog */}
-            <Dialog open={openAiDialog} onClose={handleCloseAiDialog} fullWidth maxWidth="sm">
+            <Dialog
+                open={openAiDialog}
+                onClose={(_event, reason) => {
+                    if (reason !== 'backdropClick') handleCloseAiDialog();
+                }}
+                fullWidth
+                maxWidth="sm"
+            >
                 <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                         <AutoAwesomeIcon color="primary" />
@@ -1759,7 +1771,14 @@ const CreateUrl = ({ user, isAdmin }) => {
             </Dialog>
 
             {/* AI 生成網頁微調與儲存 Dialog */}
-            <Dialog open={openTweakDialog} onClose={handleCloseTweakDialog} fullWidth maxWidth="md">
+            <Dialog
+                open={openTweakDialog}
+                onClose={(_event, reason) => {
+                    if (reason !== 'backdropClick') handleCloseTweakDialog();
+                }}
+                fullWidth
+                maxWidth="md"
+            >
                 <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     AI 生成頁面微調與儲存
                     <IconButton onClick={handleCloseTweakDialog} edge="end">

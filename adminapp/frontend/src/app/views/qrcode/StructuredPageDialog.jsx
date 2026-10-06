@@ -91,6 +91,7 @@ const StructuredPageDialog = ({
     domainList,
     onClose,
     onSaved,
+    onAutoSaved,
 }) => {
     const { enqueueSnackbar } = useSnackbar();
     const isAi = mode === 'ai';
@@ -122,6 +123,10 @@ const StructuredPageDialog = ({
     const [progress, setProgress] = useState('');
     const [pageValueStatus, setPageValueStatus] = useState({ state: 'idle', message: '' });
     const [previewKey, setPreviewKey] = useState(0);
+    const [persistedPageValue, setPersistedPageValue] = useState(null);
+
+    const effectiveEdit = isEdit || Boolean(persistedPageValue);
+    const currentPersistedPageValue = persistedPageValue || initialData?.pageValue || '';
 
     useEffect(() => {
         if (!open) return;
@@ -153,7 +158,8 @@ const StructuredPageDialog = ({
         setProgress('');
         setPageValueStatus({ state: 'idle', message: '' });
         setPreviewKey(0);
-    }, [open, initialData, isAi]);
+        setPersistedPageValue(isEdit ? (initialData?.pageValue || null) : null);
+    }, [open, initialData, isAi, isEdit]);
 
     useEffect(() => {
         if (!open) return undefined;
@@ -161,7 +167,7 @@ const StructuredPageDialog = ({
         if (!candidate) {
             setPageValueStatus({
                 state: 'idle',
-                message: isEdit ? '留空會保留目前網址 ID' : '留空會在儲存時自動產生',
+                message: effectiveEdit ? '留空會保留目前網址 ID' : '留空會在儲存時自動產生',
             });
             return undefined;
         }
@@ -176,7 +182,7 @@ const StructuredPageDialog = ({
             setPageValueStatus({ state: 'checking', message: '正在檢查網址 ID...' });
             try {
                 const params = new URLSearchParams({ pageValue: candidate });
-                if (isEdit && initialData?.pageValue) params.set('currentPageValue', initialData.pageValue);
+                if (effectiveEdit && currentPersistedPageValue) params.set('currentPageValue', currentPersistedPageValue);
                 const response = await fetch(`/api/trigger_page/structured/page-value-availability?${params}`, {
                     headers: { Authorization: `Bearer ${window.localStorage.getItem('accessToken')}` },
                     signal: controller.signal,
@@ -198,7 +204,7 @@ const StructuredPageDialog = ({
             window.clearTimeout(timer);
             controller.abort();
         };
-    }, [open, pageValue, isEdit, initialData?.pageValue]);
+    }, [open, pageValue, effectiveEdit, currentPersistedPageValue]);
 
     const confirmPageValueAvailable = async () => {
         const candidate = pageValue.trim();
@@ -208,7 +214,7 @@ const StructuredPageDialog = ({
             return false;
         }
         const params = new URLSearchParams({ pageValue: candidate });
-        if (isEdit && initialData?.pageValue) params.set('currentPageValue', initialData.pageValue);
+        if (effectiveEdit && currentPersistedPageValue) params.set('currentPageValue', currentPersistedPageValue);
         try {
             const response = await fetch(`/api/trigger_page/structured/page-value-availability?${params}`, {
                 headers: { Authorization: `Bearer ${window.localStorage.getItem('accessToken')}` },
@@ -233,7 +239,7 @@ const StructuredPageDialog = ({
         if (!open) return;
         try {
             if (sourceHtml) {
-                const nextRevision = isEdit ? revision + 1 : 1;
+                const nextRevision = effectiveEdit ? revision + 1 : 1;
                 setPreviewHtml(updateStructuredHtml(sourceHtml, spec, nextRevision, logoData));
             } else {
                 setPreviewHtml(buildStructuredPreview(spec, logoData));
@@ -241,7 +247,56 @@ const StructuredPageDialog = ({
         } catch (error) {
             setProgress(error.message);
         }
-    }, [open, sourceHtml, spec, revision, isEdit, logoData]);
+    }, [open, sourceHtml, spec, revision, effectiveEdit, logoData]);
+
+    const autoSaveGeneratedPage = async (html, normalizedSpec, generatedId) => {
+        setSaving(true);
+        try {
+            const body = new FormData();
+            const isExistingPage = Boolean(persistedPageValue);
+            const nextRevision = isExistingPage ? revision + 1 : 1;
+            const finalHtml = updateStructuredHtml(html, normalizedSpec, nextRevision, logoData);
+            body.append('pageLabel', pageLabel.trim());
+            body.append('pageValue', pageValue.trim());
+            body.append('allowedDomainId', allowedDomainId === '' ? '' : String(allowedDomainId));
+            body.append('pageSpec', JSON.stringify(normalizedSpec));
+            body.append('file', new File([finalHtml], `${pageValue.trim() || persistedPageValue || 'structured-page'}.html`, { type: 'text/html;charset=utf-8' }));
+
+            if (isExistingPage) {
+                body.append('oldPageValue', persistedPageValue);
+                body.append('specRevision', String(revision));
+            } else {
+                body.append('source', 'ai');
+                body.append('generationId', generatedId);
+            }
+
+            const response = await fetch(
+                isExistingPage ? '/api/trigger_page/structured/update' : '/api/trigger_page/structured/create',
+                {
+                method: 'POST',
+                headers: { Authorization: `Bearer ${window.localStorage.getItem('accessToken')}` },
+                body,
+                },
+            );
+            const result = await response.json();
+            if (!response.ok) throw new Error(result.detail || '自動儲存失敗');
+
+            setPageValue(result.pageValue);
+            setPersistedPageValue(result.pageValue);
+            setRevision(result.specRevision || 1);
+            setSpec(result.pageSpec || normalizedSpec);
+            setSourceHtml(finalHtml);
+            setPreviewHtml(finalHtml);
+            setPreviewKey((current) => current + 1);
+            setGenerationId(null);
+            setProgress(`生成完成，已自動${isExistingPage ? '更新' : '儲存'}（網址 ID：${result.pageValue}）`);
+            enqueueSnackbar(`AI 頁面已自動${isExistingPage ? '更新' : '儲存'}（網址 ID：${result.pageValue}）`, { variant: 'success' });
+            onAutoSaved?.();
+            return result;
+        } finally {
+            setSaving(false);
+        }
+    };
 
     useEffect(() => () => abortControllerRef.current?.abort(), []);
 
@@ -380,12 +435,20 @@ const StructuredPageDialog = ({
                     if (payload.type === 'complete') {
                         const normalizedSpec = payload.data.pageSpec || spec;
                         const html = updateStructuredHtml(payload.data.html, normalizedSpec, 1, logoData);
+                        const generatedId = payload.data.generation_id || null;
                         setSpec(normalizedSpec);
                         setSourceHtml(html);
                         setPreviewHtml(html);
                         setPreviewKey((current) => current + 1);
-                        setGenerationId(payload.data.generation_id || null);
-                        setProgress('生成完成，可確認預覽後儲存');
+                        setGenerationId(generatedId);
+                        setProgress('生成完成，正在自動儲存...');
+                        if (!generatedId) throw new Error('生成完成但缺少 generation ID，無法自動儲存');
+                        try {
+                            await autoSaveGeneratedPage(html, normalizedSpec, generatedId);
+                        } catch (saveError) {
+                            setProgress(`生成完成，但自動儲存失敗：${saveError.message}。請使用右下角按鈕重試儲存。`);
+                            enqueueSnackbar(`生成完成，但自動儲存失敗：${saveError.message}`, { variant: 'error' });
+                        }
                         completed = true;
                     }
                 }
@@ -417,7 +480,7 @@ const StructuredPageDialog = ({
             return;
         }
         if (!await confirmPageValueAvailable()) return;
-        if ((isEdit || isCopy) && !window.confirm('欄位異動會影響修改前後記錄的欄位判讀。確定儲存嗎？')) return;
+        if ((effectiveEdit || isCopy) && !window.confirm('欄位異動會影響修改前後記錄的欄位判讀。確定儲存嗎？')) return;
 
         setSaving(true);
         try {
@@ -428,12 +491,12 @@ const StructuredPageDialog = ({
             body.append('pageSpec', JSON.stringify(spec));
 
             let endpoint = '/api/trigger_page/structured/create';
-            if (isEdit) {
+            if (effectiveEdit) {
                 endpoint = '/api/trigger_page/structured/update';
                 const finalHtml = updateStructuredHtml(sourceHtml, spec, revision + 1, logoData);
-                body.append('oldPageValue', initialData.pageValue);
+                body.append('oldPageValue', currentPersistedPageValue);
                 body.append('specRevision', String(revision));
-                body.append('file', new File([finalHtml], `${pageValue.trim() || initialData.pageValue}.html`, { type: 'text/html;charset=utf-8' }));
+                body.append('file', new File([finalHtml], `${pageValue.trim() || currentPersistedPageValue}.html`, { type: 'text/html;charset=utf-8' }));
             } else if (isAi || isCopy) {
                 const finalHtml = updateStructuredHtml(sourceHtml, spec, 1, logoData);
                 body.append('source', isCopy ? 'copy' : 'ai');
@@ -455,7 +518,7 @@ const StructuredPageDialog = ({
             });
             const result = await response.json();
             if (!response.ok) throw new Error(result.detail || '儲存失敗');
-            enqueueSnackbar(`${isEdit ? '結構化頁面更新成功' : '結構化頁面建立成功'}（網址 ID：${result.pageValue}）`, { variant: 'success' });
+            enqueueSnackbar(`${effectiveEdit ? '結構化頁面更新成功' : '結構化頁面建立成功'}（網址 ID：${result.pageValue}）`, { variant: 'success' });
             onSaved();
         } catch (error) {
             enqueueSnackbar(error.message, { variant: 'error' });
@@ -469,7 +532,14 @@ const StructuredPageDialog = ({
     const showPreview = !isAi || Boolean(sourceHtml && previewHtml);
 
     return (
-        <Dialog open={open} onClose={generating ? undefined : onClose} fullWidth maxWidth="xl">
+        <Dialog
+            open={open}
+            onClose={(_event, reason) => {
+                if (reason !== 'backdropClick' && !generating && !saving) onClose();
+            }}
+            fullWidth
+            maxWidth="xl"
+        >
             <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                     {isAi && <AutoAwesomeIcon color="success" />}

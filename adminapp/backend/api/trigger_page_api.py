@@ -1488,7 +1488,7 @@ def get_router(db_user: DBUser):
                                 "stage": "generating",
                                 "attempt": retry_payload["attempt"],
                                 "max_attempts": retry_payload["max_attempts"],
-                                "message": f"正在進行第 {retry_payload['attempt']} / {retry_payload['max_attempts']} 次生成...",
+                                "message": f"正在進行生成...(第{retry_payload['attempt']}次嘗試)",
                             })
                         elif retry_kind == "chunk":
                             char_count += len(retry_payload)
@@ -1510,7 +1510,7 @@ def get_router(db_user: DBUser):
                                 "message": (
                                     f"第 {retry_payload['attempt']} 次結果未通過結構驗證，正在自動重試..."
                                     if retry_payload["will_retry"]
-                                    else "第 3 次結果仍未通過結構驗證"
+                                    else f"第 {retry_payload['max_attempts']} 次結果仍未通過結構驗證"
                                 ),
                             })
                         elif retry_kind == "done":
