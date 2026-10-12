@@ -47,6 +47,29 @@ import FileCopyIcon from '@mui/icons-material/FileCopy';
 import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
 import StructuredPageDialog from './StructuredPageDialog';
 
+const copyTextToClipboard = async (text) => {
+    if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+    }
+
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+
+    try {
+        if (!document.execCommand('copy')) {
+            throw new Error('瀏覽器不支援自動複製');
+        }
+    } finally {
+        document.body.removeChild(textarea);
+    }
+};
+
 
 const CreateUrl = ({ user, isAdmin }) => {
     const [selectedOption, setSelectedOption] = useState('');
@@ -384,7 +407,7 @@ const CreateUrl = ({ user, isAdmin }) => {
             return;
         }
         try {
-            await navigator.clipboard.writeText(outputTextUrl);
+            await copyTextToClipboard(outputTextUrl);
             enqueueSnackbar('複製成功！', { variant: 'success' });
         } catch (err) {
             enqueueSnackbar(`複製失敗：${err.message}`, { variant: 'error' });
@@ -397,7 +420,7 @@ const CreateUrl = ({ user, isAdmin }) => {
             return;
         }
         try {
-            await navigator.clipboard.writeText(outputTextQrcode);
+            await copyTextToClipboard(outputTextQrcode);
             enqueueSnackbar('複製成功！', { variant: 'success' });
         } catch (err) {
             enqueueSnackbar(`複製失敗：${err.message}`, { variant: 'error' });
