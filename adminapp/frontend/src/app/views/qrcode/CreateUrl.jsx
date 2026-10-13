@@ -329,23 +329,19 @@ const CreateUrl = ({ user, isAdmin }) => {
 
             if (configRes.ok) {
                 const configData = await configRes.json();
-                // 如果後端有回傳 triggerUrl 就用，否則 fallback 到預設 (window.location.origin + '/trigger')
-                if (configData.triggerUrl) {
-                    setTriggerBaseUrl(configData.triggerUrl);
-                } else {
-                    setTriggerBaseUrl(`${window.location.origin}/trigger`);
-                }
+                // TRIGGER_APP_URL 暫停選用，但保留供畫面標示與日後恢復。
+                setTriggerBaseUrl(configData.triggerUrl || '');
                 setEthanHosts(configData.ethanHosts || []);
             } else {
-                // Config API 失敗時的 fallback
-                setTriggerBaseUrl(`${window.location.origin}/trigger`);
+                setTriggerBaseUrl('');
+                setEthanHosts([]);
             }
 
         } catch (err) {
             console.error(err);
             setLoadError(err.message);
-            // 確保出錯時也有預設值
-            setTriggerBaseUrl(`${window.location.origin}/trigger`);
+            setTriggerBaseUrl('');
+            setEthanHosts([]);
         } finally {
             setLoadingOptions(false);
         }
@@ -357,7 +353,7 @@ const CreateUrl = ({ user, isAdmin }) => {
             const proto = window.location.protocol || 'https:';
             return `${proto}//${option.allowed_domain}`;
         }
-        return triggerBaseUrl || `${window.location.origin}/trigger`;
+        return selectedLinkBase || ethanHosts[0] || `${window.location.origin}/trigger`;
     };
 
     useEffect(() => {
@@ -372,7 +368,7 @@ const CreateUrl = ({ user, isAdmin }) => {
         // 根據選到的 page 找出對應 domain
         const selectedPage = pageOptions.find(o => o.value === selectedOption);
         const isBound = !!(selectedPage && selectedPage.allowed_domain);
-        const defaultBase = triggerBaseUrl || `${window.location.origin}/trigger`;
+        const defaultBase = ethanHosts[0] || `${window.location.origin}/trigger`;
         // 綁定頁面：base 用綁定 domain；未綁定頁面：base 用操作者選的鏡像網域
         // QR 圖網址一律跟 base 一致，讓「連結、QR 圖來源、QR 掃描後目標」三者同一個網域
         const baseUrl = isBound ? resolveBaseUrlForOption(selectedPage) : (selectedLinkBase || defaultBase);
@@ -997,7 +993,8 @@ const CreateUrl = ({ user, isAdmin }) => {
         setOpenRedirectDialog(false);
     };
 
-    const baseUrl = triggerBaseUrl || `${window.location.origin}/trigger`;
+    const baseUrl = selectedLinkBase || ethanHosts[0] || `${window.location.origin}/trigger`;
+    const selectableEthanHosts = ethanHosts.slice(1).filter((host) => host !== triggerBaseUrl);
 
     return (
         <>
@@ -1270,7 +1267,7 @@ const CreateUrl = ({ user, isAdmin }) => {
                                         )}
                                     </Typography>
                                 </Box>
-                                {ethanHosts.length > 0 && (
+                                {(ethanHosts.length > 0 || triggerBaseUrl) && (
                                     <FormControl size="small"
                                         disabled={!!(pageOptions.find(o => o.value === selectedOption)?.allowed_domain)}
                                         sx={{ minWidth: 280 }}
@@ -1282,10 +1279,15 @@ const CreateUrl = ({ user, isAdmin }) => {
                                             value={selectedLinkBase}
                                             onChange={(e) => setSelectedLinkBase(e.target.value)}
                                         >
-                                            <MenuItem value=""><em>預設 ({triggerBaseUrl})</em></MenuItem>
-                                            {ethanHosts.map((h) => (
+                                            <MenuItem value=""><em>預設 ({ethanHosts[0] || `${window.location.origin}/trigger`})</em></MenuItem>
+                                            {selectableEthanHosts.map((h) => (
                                                 <MenuItem key={h} value={h}>{h}</MenuItem>
                                             ))}
+                                            {triggerBaseUrl && (
+                                                <MenuItem value={triggerBaseUrl} disabled>
+                                                    {triggerBaseUrl}（停用中）
+                                                </MenuItem>
+                                            )}
                                         </Select>
                                         <Typography variant="caption" color="text.secondary" sx={{ ml: 1.5, mt: 0.5 }}>
                                             已綁定網域的頁面不受此設定影響
