@@ -18,6 +18,12 @@ const ContentBox = styled("div")(({ theme }) => ({
 export default function Analytics() {
   const [showTodayOnly, setShowTodayOnly] = useState(true);
   const [taskState, setTaskState] = useState("all");
+  const [showSelectedOnly, setShowSelectedOnly] = useState(false);
+
+  const handleTaskListChange = (showToday) => {
+    setShowSelectedOnly(false);
+    setShowTodayOnly(showToday);
+  };
 
   return (
     <Fragment>
@@ -28,6 +34,7 @@ export default function Analytics() {
               setShowTodayOnly={setShowTodayOnly}
               taskState={taskState}
               setTaskState={setTaskState}
+              filtersDisabled={showSelectedOnly}
             />
           </Grid>
           <Grid size={{ md: 12, xs: 12 }}>
@@ -35,7 +42,7 @@ export default function Analytics() {
               <Button
                 variant={showTodayOnly ? "outlined" : "contained"}
                 color="primary"
-                onClick={() => setShowTodayOnly(false)}
+                onClick={() => handleTaskListChange(false)}
                 sx={{ mx: 1 }}
               >
                 全部任務
@@ -43,7 +50,7 @@ export default function Analytics() {
               <Button
                 variant={showTodayOnly ? "contained" : "outlined"}
                 color="primary"
-                onClick={() => setShowTodayOnly(true)}
+                onClick={() => handleTaskListChange(true)}
                 sx={{ mx: 1 }}
               >
                 今日任務
@@ -53,9 +60,14 @@ export default function Analytics() {
               <ShowTodayTasks
                 taskState={taskState}
                 setTaskState={setTaskState}
+                showSelectedOnly={showSelectedOnly}
+                setShowSelectedOnly={setShowSelectedOnly}
               />
             ) : (
-              <ShowAllTasks />
+              <ShowAllTasks
+                showSelectedOnly={showSelectedOnly}
+                setShowSelectedOnly={setShowSelectedOnly}
+              />
             )}
           </Grid>
         </Grid>

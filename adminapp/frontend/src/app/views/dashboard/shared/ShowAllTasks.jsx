@@ -1,4 +1,4 @@
-import { useEffect, useState, useContext } from "react";
+import { useEffect, useState, useContext, useRef } from "react";
 import { useSnackbar } from 'notistack';
 import {
   Box,
@@ -19,6 +19,7 @@ import {
   TextField,
   Checkbox,
   FormControlLabel,
+  Switch,
   LinearProgress,
   IconButton,
   Tooltip,
@@ -114,24 +115,28 @@ function getTodayTimestamps() {
 };
 
 
-export default function ShowAllTasks() {
+export default function ShowAllTasks({ showSelectedOnly, setShowSelectedOnly }) {
   const { enqueueSnackbar } = useSnackbar();
 
   const [page, setPage] = useState(0);
   const [rowsPerPage, setRowsPerPage] = useState(10);
   const [sortBy, setSortBy] = useState("test_start_ut");  // 預設排序為任務開始日期
   const [sortOrder, setSortOrder] = useState("asc"); // 排序方向：asc 或 desc
+  const [selectedPage, setSelectedPage] = useState(0);
+  const [selectedRowsPerPage, setSelectedRowsPerPage] = useState(10);
+  const [selectedSortBy, setSelectedSortBy] = useState("test_start_ut");
+  const [selectedSortOrder, setSelectedSortOrder] = useState("asc");
+  const hasOpenedSelectedView = useRef(false);
   const {
     loading,
     statsData,
     tasksData,
     refresh,
     isCheckingSends,
-    setIsCheckingSends,
     exportCsv,
   } = useContext(SendtaskListContext);
   const [loadingDots, setLoadingDots] = useState(0);
-  const [updatedTodayUuids, setUpdatedTodayUuids] = useState([]);
+  const [updatedTodayUuids] = useState([]);
   // const { fetchCheckSends } = useCheckSends({ refresh, setIsCheckingSends, setUpdatedTodayUuids });
   const { startJob } = useJob();
   const [searchText, setSearchText] = useState("");  // 搜尋任務名稱
@@ -151,27 +156,39 @@ export default function ShowAllTasks() {
   const [showFailedOnly, setShowFailedOnly] = useState(false);
   const [todayStartTs, todayEndTs] = getTodayTimestamps();
 
+  const taskUuids = new Set((tasksData || []).map(task => task.sendtask_uuid));
+  const validSelectedUuids = selectedUuids.filter(uuid => taskUuids.has(uuid));
+  const activePage = showSelectedOnly ? selectedPage : page;
+  const activeRowsPerPage = showSelectedOnly ? selectedRowsPerPage : rowsPerPage;
+  const activeSortBy = showSelectedOnly ? selectedSortBy : sortBy;
+  const activeSortOrder = showSelectedOnly ? selectedSortOrder : sortOrder;
+
   // 排序邏輯
-  const sortedTasks = [...(tasksData || [])].sort((a, b) => {
-    if (!sortBy) return 0; // 如果未指定排序欄位，保持原順序
+  const sourceTasks = showSelectedOnly
+    ? (tasksData || []).filter(task => validSelectedUuids.includes(task.sendtask_uuid))
+    : (tasksData || []);
+  const sortedTasks = [...sourceTasks].sort((a, b) => {
+    if (!activeSortBy) return 0; // 如果未指定排序欄位，保持原順序
     let valueA, valueB;
-    if (["test_start_ut", "person_count", "is_pause"].includes(sortBy)) {
-      valueA = a[sortBy];
-      valueB = b[sortBy];
-    } else if (sortBy === "sendtask_id") {
-      valueA = a[sortBy]?.toLowerCase();
-      valueB = b[sortBy]?.toLowerCase();
+    if (["test_start_ut", "person_count", "is_pause"].includes(activeSortBy)) {
+      valueA = a[activeSortBy];
+      valueB = b[activeSortBy];
+    } else if (activeSortBy === "sendtask_id") {
+      valueA = a[activeSortBy]?.toLowerCase();
+      valueB = b[activeSortBy]?.toLowerCase();
     } else {
-      valueA = statsData[a.sendtask_uuid]?.[sortBy];
-      valueB = statsData[b.sendtask_uuid]?.[sortBy];
+      valueA = statsData[a.sendtask_uuid]?.[activeSortBy];
+      valueB = statsData[b.sendtask_uuid]?.[activeSortBy];
     }
-    if (valueA < valueB) return sortOrder === "asc" ? -1 : 1;
-    if (valueA > valueB) return sortOrder === "asc" ? 1 : -1;
+    if (valueA < valueB) return activeSortOrder === "asc" ? -1 : 1;
+    if (valueA > valueB) return activeSortOrder === "asc" ? 1 : -1;
     return 0;
   });
 
   // 任務顯示模式
   const filteredTasks = sortedTasks.filter(row => {
+    if (showSelectedOnly) return true;
+
     // 搜尋任務名稱或 UUID
     if (searchText) {
       const searchLower = searchText.toLowerCase();
@@ -210,12 +227,29 @@ export default function ShowAllTasks() {
     return show;
   }) || [];
 
+  const maxPage = Math.max(0, Math.ceil(filteredTasks.length / activeRowsPerPage) - 1);
+  const visiblePage = Math.min(activePage, maxPage);
   const pagedTasks = Array.isArray(filteredTasks)
-    ? filteredTasks.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage)
+    ? filteredTasks.slice(visiblePage * activeRowsPerPage, visiblePage * activeRowsPerPage + activeRowsPerPage)
     : [];
 
+  useEffect(() => {
+    if (!loading) {
+      const availableUuids = new Set((tasksData || []).map(task => task.sendtask_uuid));
+      setSelectedUuids(current => current.filter(uuid => availableUuids.has(uuid)));
+    }
+  }, [loading, tasksData]);
+
+  useEffect(() => {
+    if (showSelectedOnly) {
+      setSelectedPage(current => Math.min(current, maxPage));
+    } else {
+      setPage(current => Math.min(current, maxPage));
+    }
+  }, [showSelectedOnly, maxPage]);
+
   const handleExportSelected = async () => {
-    if (selectedUuids.length === 0) {
+    if (validSelectedUuids.length === 0) {
       enqueueSnackbar("請先勾選要匯出的任務", { variant: 'warning' });
       return;
     }
@@ -225,7 +259,7 @@ export default function ShowAllTasks() {
 
     try {
       const sendtasks = {};
-      selectedUuids.forEach((uuid) => {
+      validSelectedUuids.forEach((uuid) => {
         const task = tasksData.find((t) => t.sendtask_uuid === uuid);
         if (task) sendtasks[task.sendtask_id] = [uuid, task.pre_test_enable];
       });
@@ -247,7 +281,7 @@ export default function ShowAllTasks() {
   };
 
   const handleExportJessSelected = async () => {
-    if (selectedUuids.length === 0) {
+    if (validSelectedUuids.length === 0) {
       enqueueSnackbar("請先勾選要匯出的任務", { variant: 'warning' });
       return;
     }
@@ -260,12 +294,12 @@ export default function ShowAllTasks() {
     setProgress(0);
 
     try {
-      for (let i = 0; i < selectedUuids.length; i++) {
-        const uuid = selectedUuids[i];
+      for (let i = 0; i < validSelectedUuids.length; i++) {
+        const uuid = validSelectedUuids[i];
         const task = tasksData?.find((t) => t.sendtask_uuid === uuid);
         const name = task ? task.sendtask_id : "export";
 
-        setProgress(Math.round((i / selectedUuids.length) * 100));
+        setProgress(Math.round((i / validSelectedUuids.length) * 100));
 
         const response = await axios.post(
           "/api/download_sendlog_jess",
@@ -301,8 +335,15 @@ export default function ShowAllTasks() {
   });
 
   const handleSort = (column) => {
-    if (sortBy === column) {
-      setSortOrder(sortOrder === "asc" ? "desc" : "asc"); // 切換排序方向
+    if (showSelectedOnly) {
+      if (selectedSortBy === column) {
+        setSelectedSortOrder(order => order === "asc" ? "desc" : "asc");
+      } else {
+        setSelectedSortBy(column);
+        setSelectedSortOrder("asc");
+      }
+    } else if (sortBy === column) {
+      setSortOrder(order => order === "asc" ? "desc" : "asc"); // 切換排序方向
     } else {
       setSortBy(column);
       setSortOrder("asc"); // 默認升序
@@ -310,12 +351,31 @@ export default function ShowAllTasks() {
   };
 
   const handleChangePage = (_, newPage) => {
-    setPage(newPage);
+    if (showSelectedOnly) setSelectedPage(newPage);
+    else setPage(newPage);
   };
 
   const handleChangeRowsPerPage = (event) => {
-    setRowsPerPage(+event.target.value);
-    setPage(0);
+    const nextRowsPerPage = +event.target.value;
+    if (showSelectedOnly) {
+      setSelectedRowsPerPage(nextRowsPerPage);
+      setSelectedPage(0);
+    } else {
+      setRowsPerPage(nextRowsPerPage);
+      setPage(0);
+    }
+  };
+
+  const handleSelectedViewChange = (event) => {
+    const enabled = event.target.checked;
+    if (enabled && !hasOpenedSelectedView.current) {
+      setSelectedRowsPerPage(rowsPerPage);
+      setSelectedSortBy(sortBy);
+      setSelectedSortOrder(sortOrder);
+      hasOpenedSelectedView.current = true;
+    }
+    if (enabled) setSelectedPage(0);
+    setShowSelectedOnly(enabled);
   };
 
   const handleTaskClick = (taskRow, taskStats) => {
@@ -345,6 +405,7 @@ export default function ShowAllTasks() {
       try {
         const response = await axios.post("/api/delete_sendtask", { uuid });
         if (response.data.status === "success") {
+          setSelectedUuids(current => current.filter(selectedUuid => selectedUuid !== uuid));
           enqueueSnackbar("任務已刪除", { variant: "success" });
           refresh(); // 重新載入任務列表
         }
@@ -371,34 +432,34 @@ export default function ShowAllTasks() {
             variant="contained"
             color="warning"
             startIcon={<DownloadIcon />}
-            disabled={selectedUuids.length === 0 || isCheckingSends || isExporting}
+            disabled={validSelectedUuids.length === 0 || isCheckingSends || isExporting}
             onClick={handleExportSelected}
             size="small"
           >
-            {isExporting ? "資料匯出中" : "匯出勾選任務(來源為Se2)"}
+            {isExporting ? "資料匯出中" : `匯出勾選任務（${validSelectedUuids.length}，來源為Se2）`}
           </Button>
           <Button
             variant="contained"
             color="success"
             startIcon={<DownloadIcon />}
-            disabled={selectedUuids.length === 0 || isCheckingSends || isExporting}
+            disabled={validSelectedUuids.length === 0 || isCheckingSends || isExporting}
             onClick={handleExportJessSelected}
             size="small"
           >
-            {isExporting ? "資料匯出中" : "匯出勾選任務(來源為dashboard)"}
+            {isExporting ? "資料匯出中" : `匯出勾選任務（${validSelectedUuids.length}，來源為dashboard）`}
           </Button>
           <Button
             variant="contained"
             color="primary"
-            disabled={selectedUuids.length === 0 || isCheckingSends}
+            disabled={validSelectedUuids.length === 0 || isCheckingSends}
             onClick={() => {
               if (window.confirm("確定要執行寄送狀態更新嗎？")) {
-                startJob("refresh_sendlog_stats", { uuids: selectedUuids, ignore_archived: true });
+                startJob("refresh_sendlog_stats", { uuids: validSelectedUuids, ignore_archived: true });
               }
             }}
             size="small"
           >
-            更新勾選任務
+            更新勾選任務（{validSelectedUuids.length}）
           </Button>
           {isCheckingSends && (
             <Typography color="primary" sx={{ ml: 2, fontSize: '0.875rem' }}>
@@ -439,6 +500,7 @@ export default function ShowAllTasks() {
             size="small"
             label="搜尋任務名稱或UUID"
             value={searchText}
+            disabled={showSelectedOnly}
             onChange={e => {
               setSearchText(e.target.value);
               setPage(0);
@@ -455,6 +517,7 @@ export default function ShowAllTasks() {
               control={
                 <Checkbox
                   checked={showRunningOnly}
+                  disabled={showSelectedOnly}
                   onChange={e => {
                     setShowRunningOnly(e.target.checked);
                     setShowNotStartedOnly(false);
@@ -471,6 +534,7 @@ export default function ShowAllTasks() {
               control={
                 <Checkbox
                   checked={showNotStartedOnly}
+                  disabled={showSelectedOnly}
                   onChange={e => {
                     setShowNotStartedOnly(e.target.checked);
                     setShowRunningOnly(false);
@@ -487,6 +551,7 @@ export default function ShowAllTasks() {
               control={
                 <Checkbox
                   checked={showExpiredOnly}
+                  disabled={showSelectedOnly}
                   onChange={e => {
                     setShowExpiredOnly(e.target.checked);
                     setShowRunningOnly(false);
@@ -503,6 +568,7 @@ export default function ShowAllTasks() {
               control={
                 <Checkbox
                   checked={showFailedOnly}
+                  disabled={showSelectedOnly}
                   onChange={e => {
                     setShowFailedOnly(e.target.checked);
                     setPage(0);
@@ -514,18 +580,36 @@ export default function ShowAllTasks() {
               sx={{ margin: 0, color: "red" }}
             />
           </Box>
-          {selectedUuids.length > 0 &&
+          <FormControlLabel
+            control={
+              <Switch
+                checked={showSelectedOnly}
+                onChange={handleSelectedViewChange}
+                inputProps={{ "aria-label": `只看已選任務，共 ${validSelectedUuids.length} 筆` }}
+              />
+            }
+            label={`只看已選（${validSelectedUuids.length}）`}
+            sx={{
+              margin: 0,
+              px: 1,
+              py: 0.25,
+              border: 1,
+              borderColor: showSelectedOnly ? 'primary.main' : 'divider',
+              borderRadius: 1,
+              backgroundColor: showSelectedOnly ? 'action.selected' : 'background.paper'
+            }}
+          />
+          {validSelectedUuids.length > 0 &&
             <Button
               onClick={() => {
                 setSelectedUuids([]);
               }}
-              variant="text"
+              variant="outlined"
+              color="error"
               size="small"
               sx={{
                 textTransform: 'none',
-                minWidth: 'unset',
-                padding: '0 4px',
-                verticalAlign: 'baseline'
+                whiteSpace: 'nowrap'
               }}
             >
               清除所有選取任務
@@ -557,49 +641,51 @@ export default function ShowAllTasks() {
             <TableHead>
               <TableRow>
                 <TableCell align="center">
-                  <Checkbox
-                    checked={pagedTasks.length > 0 && pagedTasks.every(row => selectedUuids.includes(row.sendtask_uuid))}
-                    indeterminate={pagedTasks.some(row => selectedUuids.includes(row.sendtask_uuid)) && !pagedTasks.every(row => selectedUuids.includes(row.sendtask_uuid))}
-                    onChange={e => {
-                      if (e.target.checked) {
-                        setSelectedUuids([
-                          ...new Set([...selectedUuids, ...pagedTasks.map(row => row.sendtask_uuid)])
-                        ]);
-                      } else {
-                        setSelectedUuids(selectedUuids.filter(uuid => !pagedTasks.map(row => row.sendtask_uuid).includes(uuid)));
-                      }
-                    }}
-                  />
+                  <Tooltip title="選取／取消選取本頁任務">
+                    <Checkbox
+                      checked={pagedTasks.length > 0 && pagedTasks.every(row => selectedUuids.includes(row.sendtask_uuid))}
+                      indeterminate={pagedTasks.some(row => selectedUuids.includes(row.sendtask_uuid)) && !pagedTasks.every(row => selectedUuids.includes(row.sendtask_uuid))}
+                      inputProps={{ "aria-label": "選取或取消選取本頁任務" }}
+                      onChange={e => {
+                        const pageUuids = pagedTasks.map(row => row.sendtask_uuid);
+                        if (e.target.checked) {
+                          setSelectedUuids(current => [...new Set([...current, ...pageUuids])]);
+                        } else {
+                          setSelectedUuids(current => current.filter(uuid => !pageUuids.includes(uuid)));
+                        }
+                      }}
+                    />
+                  </Tooltip>
                 </TableCell>
                 <TableCell align="center" onClick={() => handleSort("sendtask_id")}>
-                  任務名稱 {sortBy === "sendtask_id" && (sortOrder === "asc" ? "▲" : "▼")}
+                  任務名稱 {activeSortBy === "sendtask_id" && (activeSortOrder === "asc" ? "▲" : "▼")}
                 </TableCell>
                 <TableCell align="center" onClick={() => handleSort("test_start_ut")}>
-                  任務期間 {sortBy === "test_start_ut" && (sortOrder === "asc" ? "▲" : "▼")}
+                  任務期間 {activeSortBy === "test_start_ut" && (activeSortOrder === "asc" ? "▲" : "▼")}
                 </TableCell>
                 <TableCell align="center" onClick={() => handleSort("totalsend")}>
-                  信件<br />總數量 {sortBy === "totalsend" && (sortOrder === "asc" ? "▲" : "▼")}
+                  信件<br />總數量 {activeSortBy === "totalsend" && (activeSortOrder === "asc" ? "▲" : "▼")}
                 </TableCell>
                 <TableCell align="center" onClick={() => handleSort("person_count")}>
-                  總人數 {sortBy === "person_count" && (sortOrder === "asc" ? "▲" : "▼")}
+                  總人數 {activeSortBy === "person_count" && (activeSortOrder === "asc" ? "▲" : "▼")}
                 </TableCell>
                 <TableCell align="center" onClick={() => handleSort("totalsuccess")}>
-                  成功<br />總數量 {sortBy === "totalsuccess" && (sortOrder === "asc" ? "▲" : "▼")}
+                  成功<br />總數量 {activeSortBy === "totalsuccess" && (activeSortOrder === "asc" ? "▲" : "▼")}
                 </TableCell>
                 <TableCell align="center" onClick={() => handleSort("totalfailed")}>
-                  失敗<br />總數量 {sortBy === "totalfailed" && (sortOrder === "asc" ? "▲" : "▼")}
+                  失敗<br />總數量 {activeSortBy === "totalfailed" && (activeSortOrder === "asc" ? "▲" : "▼")}
                 </TableCell>
                 <TableCell align="center" onClick={() => handleSort("all_earliest_plan_time")}>
-                  第一封寄出<br />預計日期 {sortBy === "all_earliest_plan_time" && (sortOrder === "asc" ? "▲" : "▼")}
+                  第一封寄出<br />預計日期 {activeSortBy === "all_earliest_plan_time" && (activeSortOrder === "asc" ? "▲" : "▼")}
                 </TableCell>
                 <TableCell align="center" onClick={() => handleSort("all_latest_plan_time")}>
-                  最後一封寄出<br />預計日期 {sortBy === "all_latest_plan_time" && (sortOrder === "asc" ? "▲" : "▼")}
+                  最後一封寄出<br />預計日期 {activeSortBy === "all_latest_plan_time" && (activeSortOrder === "asc" ? "▲" : "▼")}
                 </TableCell>
                 <TableCell align="center" onClick={() => handleSort("next_plan_time")}>
-                  下一封寄出<br />預計日期 {sortBy === "next_plan_time" && (sortOrder === "asc" ? "▲" : "▼")}
+                  下一封寄出<br />預計日期 {activeSortBy === "next_plan_time" && (activeSortOrder === "asc" ? "▲" : "▼")}
                 </TableCell>
                 <TableCell align="center" onClick={() => handleSort("is_pause")}>
-                  是否暫停 {sortBy === "is_pause" && (sortOrder === "asc" ? "▲" : "▼")}
+                  是否暫停 {activeSortBy === "is_pause" && (activeSortOrder === "asc" ? "▲" : "▼")}
                 </TableCell>
                 <TableCell>
                   更新/刪除
@@ -609,7 +695,7 @@ export default function ShowAllTasks() {
             <TableBody>
               {pagedTasks.map((row, index) => {
                 const stats = statsData[row.sendtask_uuid] || { planned: "-", send: "-", success: "-" };
-                const rowNumber = page * rowsPerPage + index + 1; // 全域編號
+                const rowNumber = visiblePage * activeRowsPerPage + index + 1; // 全域編號
                 const start = (row.pre_test_enable)
                   ? formatDate(row.pre_test_start_ut, "date")
                   : formatDate(row.test_start_ut, "date");
@@ -620,7 +706,7 @@ export default function ShowAllTasks() {
                     : formatDate(row.test_end_ut, "date");
                 return (
                   <TableRow
-                    key={index}
+                    key={row.sendtask_uuid}
                     sx={{
                       backgroundColor: updatedTodayUuids.includes(row.sendtask_uuid)
                         ? "rgba(170, 210, 25, 0.18)" // 更新後的高亮色
@@ -639,9 +725,9 @@ export default function ShowAllTasks() {
                         checked={selectedUuids.includes(row.sendtask_uuid)}
                         onChange={e => {
                           if (e.target.checked) {
-                            setSelectedUuids([...selectedUuids, row.sendtask_uuid]);
+                            setSelectedUuids(current => [...new Set([...current, row.sendtask_uuid])]);
                           } else {
-                            setSelectedUuids(selectedUuids.filter(uuid => uuid !== row.sendtask_uuid));
+                            setSelectedUuids(current => current.filter(uuid => uuid !== row.sendtask_uuid));
                           }
                         }}
                       /><strong>{rowNumber}</strong>
@@ -720,6 +806,13 @@ export default function ShowAllTasks() {
                   </TableRow>
                 );
               })}
+              {pagedTasks.length === 0 && (
+                <TableRow>
+                  <TableCell colSpan={12} align="center" sx={{ py: 6 }}>
+                    {showSelectedOnly ? "尚未選取任務" : "沒有符合條件的任務"}
+                  </TableCell>
+                </TableRow>
+              )}
             </TableBody>
           </StyledTable>
         </TableContainer>
@@ -727,9 +820,9 @@ export default function ShowAllTasks() {
 
       <TablePagination
         sx={{ px: 2 }}
-        page={page}
+        page={visiblePage}
         component="div"
-        rowsPerPage={rowsPerPage}
+        rowsPerPage={activeRowsPerPage}
         count={filteredTasks.length}
         onPageChange={handleChangePage}
         rowsPerPageOptions={[5, 10, 25, 50, 100]}

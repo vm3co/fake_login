@@ -14,20 +14,27 @@ import { SendtaskListContext } from "app/contexts/SendtaskListContext";
 import { getTodayTaskState, isTodayTaskWarning } from "../utils/todayTaskStatus";
 
 // STYLED COMPONENTS
-const StyledCard = styled(Card)(({ theme, selected }) => ({
+const StyledCard = styled(Card, {
+  shouldForwardProp: (prop) => prop !== "selected" && prop !== "interactionDisabled"
+})(({ theme, selected, interactionDisabled }) => ({
   display: "flex",
   flexWrap: "wrap",
   alignItems: "center",
   justifyContent: "space-between",
   padding: "24px !important",
-  background: selected ? theme.palette.primary.light : theme.palette.background.paper,
-  cursor: "pointer",
+  background: selected && !interactionDisabled ? theme.palette.primary.light : theme.palette.background.paper,
+  cursor: interactionDisabled ? "default" : "pointer",
   transition: "all 0.3s ease",
-  border: selected ? `2px solid ${theme.palette.primary.main}` : "1px solid transparent",
+  border: selected && !interactionDisabled ? `2px solid ${theme.palette.primary.main}` : "1px solid transparent",
+  opacity: interactionDisabled ? 0.65 : 1,
   "&:hover": {
-    background: selected ? theme.palette.primary.light : theme.palette.grey[100],
-    transform: "translateY(-2px)",
-    boxShadow: theme.shadows[8]
+    background: interactionDisabled
+      ? theme.palette.background.paper
+      : selected
+        ? theme.palette.primary.light
+        : theme.palette.grey[100],
+    transform: interactionDisabled ? "none" : "translateY(-2px)",
+    boxShadow: interactionDisabled ? theme.shadows[6] : theme.shadows[8]
   },
   [theme.breakpoints.down("sm")]: { padding: "16px !important" }
 }));
@@ -48,7 +55,7 @@ const Heading = styled("h6")(({ theme }) => ({
   color: theme.palette.primary.main
 }));
 
-export default function StatCards({ setShowTodayOnly, taskState, setTaskState }) {
+export default function StatCards({ setShowTodayOnly, taskState, setTaskState, filtersDisabled = false }) {
   const { todayTasks, statsData } = useContext(SendtaskListContext);
 
   const stateCounts = todayTasks.reduce((counts, row) => {
@@ -67,6 +74,8 @@ export default function StatCards({ setShowTodayOnly, taskState, setTaskState })
   ];
 
   const handleCardClick = (value) => {
+    if (filtersDisabled) return;
+
     setShowTodayOnly(true); // 假設這個變數在其他地方定義，表示是否只顯示今天的任務
     // 如果點擊的是已選中的卡片，則切換回"全部"
     if (taskState === value) {
@@ -85,6 +94,8 @@ export default function StatCards({ setShowTodayOnly, taskState, setTaskState })
             elevation={6}
             value={id}
             selected={taskState === id}
+            interactionDisabled={filtersDisabled}
+            aria-disabled={filtersDisabled}
             onClick={() => handleCardClick(id)}
           >
             <ContentBox>
