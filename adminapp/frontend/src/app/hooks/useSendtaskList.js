@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from "react";
 import { useSnackbar } from 'notistack';
 import useAbortOnUnmount from "app/hooks/useAbortOnUnmount";
 import useAuth from "app/hooks/useAuth";
+import { getTaipeiDayBounds, isTodayTask } from "app/utils/todayTaskFilter";
 import axios from "axios";
 
 export default function useSendtaskList() {
@@ -22,6 +23,40 @@ export default function useSendtaskList() {
     const pendingRefreshUuidsRef = useRef(new Set());
     const refreshTimerRef = useRef(null);
     const refreshTasksByUuidsRef = useRef(null);
+    const refreshRef = useRef(null);
+    const [todayBounds, setTodayBounds] = useState(() => getTaipeiDayBounds());
+
+    useEffect(() => {
+        if (!isAuthenticated || isCustomer) return undefined;
+
+        let currentDay = getTaipeiDayBounds();
+        let midnightTimer;
+        setTodayBounds(currentDay);
+
+        const checkDay = () => {
+            const now = Date.now();
+            const nextDay = getTaipeiDayBounds(now);
+            if (nextDay.start !== currentDay.start) {
+                currentDay = nextDay;
+                setTodayBounds(nextDay);
+                refreshRef.current?.();
+            }
+            window.clearTimeout(midnightTimer);
+            midnightTimer = window.setTimeout(checkDay, nextDay.end - now);
+        };
+        const handleVisibility = () => {
+            if (!document.hidden) checkDay();
+        };
+
+        checkDay();
+        window.addEventListener("focus", checkDay);
+        document.addEventListener("visibilitychange", handleVisibility);
+        return () => {
+            window.clearTimeout(midnightTimer);
+            window.removeEventListener("focus", checkDay);
+            document.removeEventListener("visibilitychange", handleVisibility);
+        };
+    }, [isAuthenticated, isCustomer]);
 
     useEffect(() => {
         if (isAuthenticated && !isCustomer) {
@@ -152,6 +187,7 @@ export default function useSendtaskList() {
         const controller = createController();
         fetchData(controller);
     }
+    refreshRef.current = refresh;
 
     // 註冊請求控制器
     const registerRequest = (controller) => {
@@ -247,11 +283,9 @@ export default function useSendtaskList() {
         };
     }, [isAuthenticated, isCustomer]);
 
-    const todayTasks = tasksData.filter(row => {
-        const stats = statsData[row.sendtask_uuid];
-        const hasStats = stats && stats.today_earliest_plan_time > 0;
-        return hasStats;
-    });
+    const todayTasks = tasksData.filter(row =>
+        isTodayTask(row, statsData[row.sendtask_uuid], todayBounds)
+    );
 
     return {
         loading,
