@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useState } from "react";
 // import { Link } from "react-router-dom";
 import Box from "@mui/material/Box";
 import Card from "@mui/material/Card";
@@ -11,9 +11,12 @@ import ThemeProvider from "@mui/material/styles/ThemeProvider";
 import Notifications from "@mui/icons-material/Notifications";
 import Refresh from "@mui/icons-material/Refresh";
 import Error from "@mui/icons-material/Error";
+import ExpandMore from "@mui/icons-material/ExpandMore";
 import {
+  ButtonBase,
   Chip,
   CircularProgress,
+  Collapse,
   Tab,
   Tabs,
   Typography
@@ -67,20 +70,53 @@ const formatTaipeiTime = (value) => value
   ? new Date(value).toLocaleString("zh-TW", { timeZone: "Asia/Taipei" })
   : "--";
 
+const CollapsibleResultList = ({ title, count, color, children }) => {
+  const [expanded, setExpanded] = useState(false);
+  const contentId = useId();
+  const collapsible = count > 5;
+
+  if (!count) return null;
+
+  return (
+    <Box sx={{ mt: 1, minWidth: 0, overflowWrap: "anywhere" }}>
+      {collapsible ? (
+        <ButtonBase
+          aria-expanded={expanded}
+          aria-controls={contentId}
+          onClick={() => setExpanded((previous) => !previous)}
+          sx={{
+            width: "100%", justifyContent: "space-between", gap: 1,
+            textAlign: "left", py: 0.5, borderRadius: 0.5,
+            "&.Mui-focusVisible": { outline: "2px solid", outlineColor: "primary.main" }
+          }}>
+          <Typography variant="caption" color={color}>
+            {title}（{count} 筆）
+          </Typography>
+          <ExpandMore fontSize="small" sx={{ flexShrink: 0, transform: expanded ? "rotate(180deg)" : "none" }} />
+        </ButtonBase>
+      ) : (
+        <Typography variant="caption" color={color} display="block">
+          {title}
+        </Typography>
+      )}
+      <Collapse id={contentId} in={!collapsible || expanded} timeout="auto" unmountOnExit>
+        {children}
+      </Collapse>
+    </Box>
+  );
+};
+
 const TaskResultList = ({ title, tasks, color }) => {
   if (!tasks?.length) return null;
 
   return (
-    <Box sx={{ mt: 1 }}>
-      <Typography variant="caption" color={color} display="block">
-        {title}
-      </Typography>
+    <CollapsibleResultList title={title} count={tasks.length} color={color}>
       {tasks.map((task) => (
         <Typography key={task.sendtask_uuid} variant="caption" display="block" sx={{ pl: 1 }}>
           {task.sendtask_id}{task.reason ? ` (${task.reason})` : ""}
         </Typography>
       ))}
-    </Box>
+    </CollapsibleResultList>
   );
 };
 
@@ -128,16 +164,13 @@ const TodayTaskResult = ({ result }) => {
 const TemplateResultList = ({ title, templates, color }) => {
   if (!templates?.length) return null;
   return (
-    <Box sx={{ mt: 1 }}>
-      <Typography variant="caption" color={color} display="block">
-        {title}
-      </Typography>
+    <CollapsibleResultList title={title} count={templates.length} color={color}>
       {templates.map((template) => (
         <Typography key={template.mtmpl_uuid} variant="caption" display="block" sx={{ pl: 1 }}>
           {template.title}
         </Typography>
       ))}
-    </Box>
+    </CollapsibleResultList>
   );
 };
 
@@ -166,10 +199,7 @@ const TaskItemList = ({ title, tasks, color }) => {
   if (!tasks?.length) return null;
 
   return (
-    <Box sx={{ mt: 1.25 }}>
-      <Typography variant="caption" color={color} fontWeight={600} display="block" mb={0.5}>
-        {title}
-      </Typography>
+    <CollapsibleResultList title={title} count={tasks.length} color={color}>
       {tasks.map((task) => {
         const itemStatus = ITEM_STATUS_META[task.status] || { label: task.status, color: "default" };
         return (
@@ -177,11 +207,11 @@ const TaskItemList = ({ title, tasks, color }) => {
             <Typography variant="caption" sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
               {task.sendtask_id}
             </Typography>
-            <Chip size="small" variant="outlined" label={itemStatus.label} color={itemStatus.color} />
+            <Chip size="small" variant="outlined" label={itemStatus.label} color={itemStatus.color} sx={{ flexShrink: 0 }} />
           </Box>
         );
       })}
-    </Box>
+    </CollapsibleResultList>
   );
 };
 
