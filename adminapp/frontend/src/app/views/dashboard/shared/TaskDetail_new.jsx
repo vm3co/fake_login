@@ -237,6 +237,7 @@ export default function TaskDetail({ task, open, onClose }) {
   const [nowRowsPerPage, setNowRowsPerPage] = useState(20);
   const [isAsc, setIsAsc] = useState(false); // false for 'desc', true for 'asc'
   const [downloading, setDownloading] = useState(false);
+  const [downloadingLinks, setDownloadingLinks] = useState(false);
   const [selectAllAcrossPages, setSelectAllAcrossPages] = useState(false); // 是否選取所有頁面所有資料
   const [acctControl, setAcctControl] = useState([false, false, false, false, false]);
 
@@ -375,14 +376,15 @@ export default function TaskDetail({ task, open, onClose }) {
     }
   }, [open]);
 
-  const handleDownloadXlsx = async () => {
+  const handleDownloadXlsx = async (includeEventUrls = false) => {
     if (!task?.sendtask_uuid) {
       console.error("沒有 task uuid，無法下載");
       alert("沒有任務 UUID，無法下載");
       return;
     }
 
-    setDownloading(true);
+    const setDownloadState = includeEventUrls ? setDownloadingLinks : setDownloading;
+    setDownloadState(true);
     try {
       const body = {
         sendtask_uuid: task.sendtask_uuid,
@@ -390,7 +392,7 @@ export default function TaskDetail({ task, open, onClose }) {
       };
 
       const response = await axios.post(
-        "/api/download_sendlog_xlsx",
+        includeEventUrls ? "/api/download_sendlog_links_xlsx" : "/api/download_sendlog_xlsx",
         body,
         {
           responseType: 'blob', // 告訴 axios 預期接收的是二進位檔案資料
@@ -406,7 +408,7 @@ export default function TaskDetail({ task, open, onClose }) {
       const a = document.createElement("a");
       a.style.display = "none";
       a.href = url;
-      a.download = `${task.name}.xlsx`;
+      a.download = `${task.name}${includeEventUrls ? '_含觸發網址' : ''}.xlsx`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -414,14 +416,23 @@ export default function TaskDetail({ task, open, onClose }) {
 
     } catch (err) {
       console.error("下載 XLSX 失敗:", err);
-      if (err.response && err.response.data && err.response.data.type === 'text/plain') {
-        const errorText = await err.response.data.text();
-        alert(`下載失敗: ${errorText}`);
-      } else {
-        alert(`下載失敗: ${err.message || "發生未知錯誤"}`);
+      let errorMessage = err.message || "發生未知錯誤";
+      if (err.response?.data instanceof Blob) {
+        try {
+          const errorText = await err.response.data.text();
+          if (err.response.data.type.includes('application/json')) {
+            const errorData = JSON.parse(errorText);
+            errorMessage = typeof errorData.detail === 'string' ? errorData.detail : errorText;
+          } else if (errorText) {
+            errorMessage = errorText;
+          }
+        } catch {
+          errorMessage = err.message || "無法讀取下載錯誤";
+        }
       }
+      alert(`下載失敗: ${errorMessage}`);
     } finally {
-      setDownloading(false);
+      setDownloadState(false);
     }
   };
 
@@ -534,17 +545,26 @@ export default function TaskDetail({ task, open, onClose }) {
                       />
                     </Box>
                   </Box>
-                  <Box sx={{ display: 'flex', gap: 1 }}>
+                  <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                     <Button
                       variant="contained"
                       size="small"
                       startIcon={downloading ? <CircularProgress size={20} color="inherit" /> : <Download />}
-                      onClick={handleDownloadXlsx}
+                      onClick={() => handleDownloadXlsx()}
                       disabled={downloading}
                     >
                       {downloading ? '下載中...' :
                         (selectedUuids.length > 0 || selectAllAcrossPages) ? '下載選取資料' : '下載全部資料'
                       }
+                    </Button>
+                    <Button
+                      variant="outlined"
+                      size="small"
+                      startIcon={downloadingLinks ? <CircularProgress size={20} color="inherit" /> : <Download />}
+                      onClick={() => handleDownloadXlsx(true)}
+                      disabled={downloadingLinks}
+                    >
+                      {downloadingLinks ? '下載中...' : '下載全部資料(含觸發網址)'}
                     </Button>
                   </Box>
                 </HeaderContent>

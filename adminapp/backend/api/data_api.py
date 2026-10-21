@@ -33,6 +33,22 @@ from backend.core.security import hash_password
 from backend.api.user_api import get_current_user, ADMIN_EMAIL
 
 
+def build_sendlog_event_urls(row: dict) -> dict[str, str]:
+    task_uuid = row.get("sendtask_uuid")
+    recipient_uuid = row.get("uuid")
+    if any(
+        not isinstance(value, str) or re.fullmatch(r"[0-9a-fA-F]{32}", value) is None
+        for value in (task_uuid, recipient_uuid)
+    ):
+        raise ValueError("sendtask_uuid 與 uuid 必須為 32 碼十六進位字串")
+    token = recipient_uuid[16:] + task_uuid + recipient_uuid[:16]
+    return {
+        "開啟郵件網址": f"https://link.acsicook.info/a/a/{token}",
+        "點擊連結網址": f"https://link.acsicook.info/a/l/{token}",
+        "點擊附件網址": f"https://link.acsicook.info/a/f/{token}",
+    }
+
+
 def has_common_orgs(a: list, b: list) -> bool:
     return any(item in a for item in b)
 
@@ -769,7 +785,13 @@ def get_router(db_user):
 
     @router.post("/download_sendlog_xlsx")
     async def api_download_sendlog_xlsx(request: DownloadRequest, current_user: dict = Depends(get_current_user)):
-        
+        return await download_sendlog_xlsx(request, current_user)
+
+    @router.post("/download_sendlog_links_xlsx")
+    async def api_download_sendlog_links_xlsx(request: DownloadRequest, current_user: dict = Depends(get_current_user)):
+        return await download_sendlog_xlsx(request, current_user, include_event_urls=True)
+
+    async def download_sendlog_xlsx(request: DownloadRequest, current_user: dict, include_event_urls: bool = False):
         try:
             await require_sendtask_access(request.sendtask_uuid, current_user)
             # --- A. 獲取資料 (簡化邏輯) ---
@@ -785,6 +807,13 @@ def get_router(db_user):
 
             # --- B. 處理資料 (使用我們提煉的函式) ---
             # 次數要在原始資料 (陣列型態) 上先算好，之後陣列會被合併成字串
+            event_urls = []
+            if include_event_urls:
+                for row_number, row in enumerate(data, start=1):
+                    try:
+                        event_urls.append(build_sendlog_event_urls(row))
+                    except ValueError as exc:
+                        raise HTTPException(status_code=422, detail=f"第 {row_number} 筆紀錄無法產生網址：{exc}") from exc
             trigger_counts = [count_trigger_times(row) for row in data]
             processed_data = process_data_for_excel(data)
 
@@ -854,6 +883,10 @@ def get_router(db_user):
                 'file_count': '附件下載次數'
             }, inplace=True)
 
+            if include_event_urls:
+                for column_name in event_urls[0]:
+                    df[column_name] = [urls[column_name] for urls in event_urls]
+
             # 建立一個在記憶體中的 Excel 檔案
             output_buffer = io.BytesIO()
             df.to_excel(output_buffer, index=False)
@@ -861,7 +894,8 @@ def get_router(db_user):
 
             # --- D. 回傳檔案串流 ---
 
-            filename = urllib.parse.quote(f"{request.name}.xlsx")
+            suffix = "_含觸發網址" if include_event_urls else ""
+            filename = urllib.parse.quote(f"{request.name}{suffix}.xlsx")
             headers = {
                 'Content-Disposition': f'attachment; filename="{request.sendtask_uuid}.xlsx"; filename*=UTF-8\'\'{filename}'
             }
