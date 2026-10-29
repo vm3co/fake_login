@@ -1,14 +1,17 @@
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import { BrowserRouter } from 'react-router-dom';  // 匯入 Router
-// import './index.css'
-import 'bootstrap/dist/css/bootstrap.min.css'
-import App from './App.jsx'
+import { StrictMode } from "react";
+import { createRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
+// ROOT APP COMPONENT
+import App from "./app/App";
+// THIRD PARTY CSS
+import "perfect-scrollbar/css/perfect-scrollbar.css";
 
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <BrowserRouter basename="/">
+const root = createRoot(document.getElementById("root"));
+
+root.render(
+  <StrictMode>
+    <BrowserRouter>
       <App />
     </BrowserRouter>
-  </React.StrictMode>
+  </StrictMode>
 );
