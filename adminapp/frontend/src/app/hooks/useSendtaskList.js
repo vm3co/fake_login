@@ -292,6 +292,7 @@ export default function useSendtaskList() {
         statsData,
         tasksData,
         todayTasks,
+        todayBounds,
         refresh,
         refreshTasksByUuids,
         isCheckingSends,

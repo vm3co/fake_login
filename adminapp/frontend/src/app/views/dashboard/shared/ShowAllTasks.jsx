@@ -30,6 +30,7 @@ import SimpleCard from "app/components/SimpleCard";
 
 import { SendtaskListContext } from "app/contexts/SendtaskListContext";
 import formatDate from "app/utils/formatDate";
+import { getTaskPeriod, matchesTaskFilters } from "app/utils/todayTaskFilter";
 // import { useCheckSends } from "app/hooks/useCheckSends";
 import { useJob } from "app/contexts/JobContext";
 import TaskDetail from './TaskDetail_new';
@@ -91,30 +92,6 @@ const StyledTable = styled(Table)(() => ({
   }
 }));
 
-function getTodayTimestamps() {
-  const timeZone = "Asia/Taipei";
-
-  const now = new Date();
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    timeZone: timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  });
-
-  const parts = formatter.formatToParts(now);
-  const year = parts.find(p => p.type === 'year').value;
-  const month = parts.find(p => p.type === 'month').value;
-  const day = parts.find(p => p.type === 'day').value;
-
-  const startDate = new Date(`${year}-${month}-${day}T00:00:00`);
-  const todayStartTs = Math.floor(startDate.getTime() / 1000);
-  const todayEndTs = todayStartTs + 24 * 60 * 60 * 1000;
-
-  return [todayStartTs, todayEndTs];
-};
-
-
 export default function ShowAllTasks({ showSelectedOnly, setShowSelectedOnly }) {
   const { enqueueSnackbar } = useSnackbar();
 
@@ -131,6 +108,7 @@ export default function ShowAllTasks({ showSelectedOnly, setShowSelectedOnly }) 
     loading,
     statsData,
     tasksData,
+    todayBounds,
     refresh,
     isCheckingSends,
     exportCsv,
@@ -154,7 +132,6 @@ export default function ShowAllTasks({ showSelectedOnly, setShowSelectedOnly }) 
   const [showNotStartedOnly, setShowNotStartedOnly] = useState(false);  // 是否只顯示已過期的任務
   const [showRunningOnly, setShowRunningOnly] = useState(false);  // 是否只顯示已過期的任務
   const [showFailedOnly, setShowFailedOnly] = useState(false);
-  const [todayStartTs, todayEndTs] = getTodayTimestamps();
 
   const taskUuids = new Set((tasksData || []).map(task => task.sendtask_uuid));
   const validSelectedUuids = selectedUuids.filter(uuid => taskUuids.has(uuid));
@@ -200,31 +177,12 @@ export default function ShowAllTasks({ showSelectedOnly, setShowSelectedOnly }) 
       }
     }
 
-    // 過濾
-    const start = (row.pre_test_enable)
-      ? row.pre_test_start_ut
-      : row.test_start_ut;
-    const end = (row.stop_time_new && row.stop_time_new !== -1)
-      ? row.stop_time_new
-      : (row.pre_test_enable)
-        ? row.pre_test_end_ut
-        : row.test_end_ut;
-    const stats = statsData[row.sendtask_uuid] || {};
-    const sendFailed = stats.totalsend - stats.totalsuccess;
-    let show = true;
-    if (showExpiredOnly) {
-      if (!end || end > todayStartTs) show = false;
-    }
-    if (showNotStartedOnly) {
-      if (!start || start < todayEndTs) show = false;
-    }
-    if (showRunningOnly) {
-      if (end < todayStartTs || start > todayEndTs) show = false;
-    }
-    if (showFailedOnly) {
-      if (sendFailed === 0) show = false;
-    }
-    return show;
+    return matchesTaskFilters(row, statsData[row.sendtask_uuid], {
+      showExpiredOnly,
+      showNotStartedOnly,
+      showRunningOnly,
+      showFailedOnly,
+    }, todayBounds);
   }) || [];
 
   const maxPage = Math.max(0, Math.ceil(filteredTasks.length / activeRowsPerPage) - 1);
@@ -663,8 +621,8 @@ export default function ShowAllTasks({ showSelectedOnly, setShowSelectedOnly }) 
                 <TableCell align="center" onClick={() => handleSort("test_start_ut")}>
                   任務期間 {activeSortBy === "test_start_ut" && (activeSortOrder === "asc" ? "▲" : "▼")}
                 </TableCell>
-                <TableCell align="center" onClick={() => handleSort("totalsend")}>
-                  信件<br />總數量 {activeSortBy === "totalsend" && (activeSortOrder === "asc" ? "▲" : "▼")}
+                <TableCell align="center" onClick={() => handleSort("totalplanned")}>
+                  信件<br />總數量 {activeSortBy === "totalplanned" && (activeSortOrder === "asc" ? "▲" : "▼")}
                 </TableCell>
                 <TableCell align="center" onClick={() => handleSort("person_count")}>
                   總人數 {activeSortBy === "person_count" && (activeSortOrder === "asc" ? "▲" : "▼")}
@@ -696,14 +654,9 @@ export default function ShowAllTasks({ showSelectedOnly, setShowSelectedOnly }) 
               {pagedTasks.map((row, index) => {
                 const stats = statsData[row.sendtask_uuid] || { planned: "-", send: "-", success: "-" };
                 const rowNumber = visiblePage * activeRowsPerPage + index + 1; // 全域編號
-                const start = (row.pre_test_enable)
-                  ? formatDate(row.pre_test_start_ut, "date")
-                  : formatDate(row.test_start_ut, "date");
-                const end = (row.stop_time_new && row.stop_time_new !== -1)
-                  ? formatDate(row.stop_time_new, "date")
-                  : (row.pre_test_enable)
-                    ? formatDate(row.pre_test_end_ut, "date")
-                    : formatDate(row.test_end_ut, "date");
+                const taskPeriod = getTaskPeriod(row);
+                const start = formatDate(taskPeriod.start, "date");
+                const end = formatDate(taskPeriod.end, "date");
                 return (
                   <TableRow
                     key={row.sendtask_uuid}

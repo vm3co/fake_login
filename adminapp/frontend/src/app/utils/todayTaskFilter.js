@@ -15,6 +15,32 @@ export function getTaipeiDayBounds(now = Date.now()) {
     return { start, end: start + 24 * 60 * 60 * 1000 };
 }
 
+function positiveNumber(value) {
+    if (typeof value !== "number" && typeof value !== "string") return null;
+    const number = Number(value);
+    return Number.isFinite(number) && number > 0 ? number : null;
+}
+
+export function getTaskPeriod(task) {
+    return {
+        start: positiveNumber(task.pre_test_enable ? task.pre_test_start_ut : task.test_start_ut),
+        end: positiveNumber(task.stop_time_new)
+            ?? positiveNumber(task.pre_test_enable ? task.pre_test_end_ut : task.test_end_ut),
+    };
+}
+
+export function matchesTaskFilters(task, stats, filters, dayBounds = getTaipeiDayBounds()) {
+    const { start, end } = getTaskPeriod(task);
+    const dayStart = dayBounds.start / 1000;
+    const dayEnd = dayBounds.end / 1000;
+    if (filters.showExpiredOnly && !(end !== null && end <= dayStart)) return false;
+    if (filters.showNotStartedOnly && !(start !== null && start >= dayEnd)) return false;
+    if (filters.showRunningOnly && !(start !== null && end !== null
+        && end > start && start < dayEnd && end > dayStart)) return false;
+    if (filters.showFailedOnly && positiveNumber(stats?.totalfailed) === null) return false;
+    return true;
+}
+
 export function isTodayTask(task, stats, dayBounds = getTaipeiDayBounds()) {
     if (task.is_archived === true) return false;
     const rawTimestamp = stats?.today_earliest_plan_time;
