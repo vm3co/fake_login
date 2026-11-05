@@ -17,6 +17,7 @@ from rsa import verify
 
 from backend.services.log_manager import Logger
 from backend.services.get_token import get_token
+from backend.services.se2_task_reader import SE2TaskReader
 
 
 logger = Logger().get_logger()
@@ -54,6 +55,9 @@ class getSe2data:
         headers = self.headers.copy()
         headers["cookie"] = get_token.get()
         return headers
+
+    def get_task_reader(self) -> SE2TaskReader:
+        return SE2TaskReader(self.url, self._get_headers, self.verify)
 
     async def _send_post(self, url: str, payload_template: dict, isTokenRefreshed=False) -> dict | None:
         '''發送 POST 請求'''
