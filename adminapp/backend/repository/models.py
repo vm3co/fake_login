@@ -1,6 +1,6 @@
 from sqlalchemy import (
     Column, Integer, String, Boolean, BigInteger, Text,
-    TIMESTAMP, ForeignKey, JSON, ARRAY, Float, Index, text
+    TIMESTAMP, ForeignKey, JSON, ARRAY, Float, Index, text, UniqueConstraint, CheckConstraint
 )
 from sqlalchemy.sql import func
 from sqlalchemy.dialects.postgresql import JSONB, ARRAY as PG_ARRAY
@@ -11,6 +11,8 @@ class SendTask(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     sendtask_uuid = Column(String(36), unique=True, nullable=False, index=True)
+    local_generation_id = Column(String(36), nullable=False, server_default=text("gen_random_uuid()::text"))
+    sync_revision = Column(BigInteger, nullable=False, server_default=text("0"))
     sendtask_id = Column(Text, nullable=False)
     sendtask_owner_gid = Column(PG_ARRAY(Text), nullable=False)
     person_count = Column(Integer)
@@ -51,13 +53,7 @@ class SendTask(Base):
     adv_mail_delivery = Column(Boolean, nullable=True)
     adv_mail_delivery_val = Column(JSONB, nullable=True)
 
-class SendLogDetail(Base):
-    __tablename__ = "send_log_details"
-
-    id = Column(BigInteger, primary_key=True, index=True)
-    uuid = Column(Text, unique=True, nullable=False, index=True)
-    sendtask_uuid = Column(String(36), ForeignKey("sendtasks.sendtask_uuid", ondelete="CASCADE"), nullable=False, index=True)
-    
+class SendLogFields:
     target_email = Column(Text)
     person_info = Column(Text)
     template_uuid = Column(Text)
@@ -89,6 +85,54 @@ class SendLogDetail(Base):
     template_order     = Column(Integer, nullable=True)
     template_selection = Column(Integer, nullable=True)
     trigger_man        = Column(Integer, nullable=True)
+
+class SendLogDetail(SendLogFields, Base):
+    __tablename__ = "send_log_details"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    uuid = Column(Text, unique=True, nullable=False, index=True)
+    sendtask_uuid = Column(String(36), ForeignKey("sendtasks.sendtask_uuid", ondelete="CASCADE"), nullable=False, index=True)
+
+class TaskBackup(Base):
+    __tablename__ = "task_backups"
+
+    backup_id = Column(String(36), primary_key=True, server_default=text("gen_random_uuid()::text"))
+    source_task_uuid = Column(String(36), nullable=False, index=True)
+    source_create_ut = Column(BigInteger, nullable=True)
+    source_local_generation_id = Column(String(36), nullable=False)
+    sendtask_id = Column(Text, nullable=False)
+    owner_gids = Column(PG_ARRAY(Text), nullable=False)
+    backed_up_at = Column(TIMESTAMP(timezone=True), nullable=False, server_default=func.now(), index=True)
+    reason = Column(String(32), nullable=False)
+    snapshot_schema_version = Column(Integer, nullable=False, server_default=text("1"))
+    task_snapshot = Column(JSONB, nullable=False)
+    stats_snapshot = Column(JSONB, nullable=True)
+    stats_snapshot_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    mail_template_snapshot = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    latest_remote_status = Column(String(16), nullable=False, server_default=text("'unchecked'"))
+    last_remote_checked_at = Column(TIMESTAMP(timezone=True), nullable=True)
+    last_remote_create_ut = Column(BigInteger, nullable=True)
+    recreated_detected_at = Column(TIMESTAMP(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("source_task_uuid", "source_local_generation_id", name="uq_task_backups_source_generation"),
+        CheckConstraint("reason IN ('remote_missing', 'remote_recreated', 'manual_reload')", name="ck_task_backups_reason"),
+        CheckConstraint("latest_remote_status IN ('unchecked', 'present', 'missing', 'error')", name="ck_task_backups_remote_status"),
+        CheckConstraint("snapshot_schema_version > 0", name="ck_task_backups_schema_version"),
+        Index("ix_task_backups_owner_gids", "owner_gids", postgresql_using="gin"),
+    )
+
+class TaskBackupDetail(SendLogFields, Base):
+    __tablename__ = "task_backup_details"
+
+    id = Column(BigInteger, primary_key=True, index=True)
+    backup_id = Column(String(36), ForeignKey("task_backups.backup_id", ondelete="CASCADE"), nullable=False, index=True)
+    uuid = Column(Text, nullable=False)
+    sendtask_uuid = Column(String(36), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("backup_id", "uuid", name="uq_task_backup_details_backup_uuid"),
+    )
 
 class SendLogStats(Base):
     __tablename__ = "sendlog_stats"
