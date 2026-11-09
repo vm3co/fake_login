@@ -130,12 +130,13 @@ TESTCASE_DETAIL_COLUMNS = [
 
 
 class DBUser:
-    def __init__(self):
+    def __init__(self, *, task_list_sync=None):
         """ 
         初始化 DBUser 類別
         """
         self.day = 7  # 預設查詢天數為 7 天
         self.accts_columns = ACCTS_COLUMNS
+        self.task_list_sync = task_list_sync
         
     async def table_initialize(self):
         """
@@ -372,6 +373,9 @@ class DBUser:
         5. removed → 逐一確認 404/archive
         回傳: {"added": [...], "changed": [...], "archived": N, "deleted": N}
         """
+        if self.task_list_sync is not None:
+            return await self.task_list_sync.sync(orgs=orgs)
+
         from backend.api.data_api import has_common_orgs
 
         remote_tasks = await self.get_se2_sendtasks(SENDTASKS_COLUMNS)

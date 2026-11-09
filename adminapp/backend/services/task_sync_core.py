@@ -12,6 +12,7 @@ from backend.services.task_sync import (
     ExpectedTaskVersion, TaskSyncConflict, task_lock_key, task_sync_transaction,
     transfer_task_to_backup,
 )
+from backend.services.task_archive_policy import should_archive_task
 
 
 class TaskSyncAccessDenied(PermissionError):
@@ -23,6 +24,7 @@ class PreparedTaskSync:
     expected: ExpectedTaskVersion
     orgs: tuple[str, ...] | None
     snapshot: TaskSnapshot | None
+    archive_at: int | None = None
 
 
 @dataclass(frozen=True)
@@ -35,6 +37,7 @@ class TaskSyncResult:
     committed: bool
     changed_uuids: tuple[str, ...]
     backups_changed: bool
+    archive_transition: str | None = None
 
 
 def _require_scope(owner_gids, orgs):
@@ -125,7 +128,7 @@ class TaskSyncService:
         self.reader = reader
         self.stats_calculator = stats_calculator
 
-    async def prepare(self, task_uuid: str, *, orgs, sendlog_type=None) -> PreparedTaskSync:
+    async def prepare(self, task_uuid: str, *, orgs, sendlog_type=None, archive_at=None) -> PreparedTaskSync:
         task_lock_key(task_uuid)
         if sendlog_type is not None and sendlog_type not in {"test", "pretest"}:
             raise TaskReadError("invalid_sendlog_type")
@@ -155,10 +158,15 @@ class TaskSyncService:
             _require_scope(snapshot.task.get("sendtask_owner_gid"), scope)
             if row is not None:
                 normalize_timestamp(row.sendtask_create_ut)
-        return PreparedTaskSync(expected, scope, snapshot)
+            if archive_at is not None:
+                task_values, _, _ = _snapshot_records(snapshot, task_uuid)
+                should_archive_task(task_values, now=archive_at)
+        return PreparedTaskSync(expected, scope, snapshot, archive_at)
 
-    async def sync(self, task_uuid: str, *, orgs, sendlog_type=None) -> TaskSyncResult:
-        return await self.apply(await self.prepare(task_uuid, orgs=orgs, sendlog_type=sendlog_type))
+    async def sync(self, task_uuid: str, *, orgs, sendlog_type=None, archive_at=None) -> TaskSyncResult:
+        return await self.apply(await self.prepare(
+            task_uuid, orgs=orgs, sendlog_type=sendlog_type, archive_at=archive_at,
+        ))
 
     async def apply(self, prepared: PreparedTaskSync) -> TaskSyncResult:
         expected = prepared.expected
@@ -166,6 +174,7 @@ class TaskSyncService:
         mapped = None if snapshot is None else _snapshot_records(snapshot, expected.task_uuid)
         backup_id = None
         backups_changed = False
+        archive_transition = None
         async with task_sync_transaction(self.session_factory, expected) as locked:
             task = locked.task
             if task is not None:
@@ -173,7 +182,12 @@ class TaskSyncService:
             if snapshot is None:
                 if task is None:
                     if prepared.orgs is not None:
-                        raise TaskSyncAccessDenied("Missing task has no authorized local ownership")
+                        backup = await locked.session.scalar(select(TaskBackup.backup_id).where(
+                            TaskBackup.source_task_uuid == expected.task_uuid,
+                            TaskBackup.owner_gids.overlap(list(prepared.orgs)),
+                        ).limit(1))
+                        if backup is None:
+                            raise TaskSyncAccessDenied("Missing task has no authorized local ownership")
                     status, generation, revision = "unchanged", None, None
                 else:
                     transfer = await transfer_task_to_backup(locked, reason="remote_missing")
@@ -184,6 +198,7 @@ class TaskSyncService:
                 _require_scope(snapshot.task.get("sendtask_owner_gid"), prepared.orgs)
                 task_values, testcase_values, logs = mapped
                 created = task is None
+                was_archived = task is not None and task.is_archived is True
                 recreated = task is not None and normalize_timestamp(task.sendtask_create_ut) != task_values["sendtask_create_ut"]
                 if recreated:
                     transfer = await transfer_task_to_backup(locked, reason="remote_recreated")
@@ -201,6 +216,11 @@ class TaskSyncService:
                     generation, revision = task.local_generation_id, task.sync_revision + 1
                     for key, value in {**task_values, **testcase_values}.items():
                         setattr(task, key, value)
+                if prepared.archive_at is not None:
+                    archived = should_archive_task(task, now=prepared.archive_at)
+                    task.is_archived = archived
+                    if archived != was_archived:
+                        archive_transition = "archived" if archived else "unarchived"
                 await locked.session.flush()
                 for values in logs:
                     statement = insert(SendLogDetail).values(**values)
@@ -225,7 +245,10 @@ class TaskSyncService:
                 )
                 status = "recreated" if recreated else "added" if created else "updated"
         changed = () if status == "unchanged" else (expected.task_uuid,)
-        return TaskSyncResult(status, expected.task_uuid, generation, revision, backup_id, True, changed, backups_changed)
+        return TaskSyncResult(
+            status, expected.task_uuid, generation, revision, backup_id, True,
+            changed, backups_changed, archive_transition,
+        )
 
     @staticmethod
     async def _observe_backups(session, task_uuid, create_ut, orgs):

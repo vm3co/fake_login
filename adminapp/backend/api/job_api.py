@@ -253,7 +253,7 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
 
                 # 只對新增的 uuid 刷 sendlog_stats（原本邏輯）；跳過重複的 SendTask sync
                 added_uuids = [t["sendtask_uuid"] for t in result["added"]]
-                if added_uuids:
+                if added_uuids and not result.get("versioned"):
                     await db_user.refresh_sendlog_stats(
                         added_uuids,
                         ignore_archived=True,
@@ -266,7 +266,7 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                         "sendtask_id": task.get("sendtask_id", "Unknown"),
                     }
 
-                return {
+                summary = {
                     "added_count": len(result["added"]),
                     "added_tasks": [task_summary(task) for task in result["added"]],
                     "updated_count": len(result["changed"]),
@@ -276,6 +276,21 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                     "archived_count": result["archived"],
                     "archived_tasks": result.get("archived_tasks", []),
                 }
+                if result.get("versioned"):
+                    summary.update({
+                        "status": result["status"],
+                        "recreated_count": len(result["recreated"]),
+                        "recreated_tasks": result["recreated"],
+                        "backed_up_count": len(result["backed_up"]),
+                        "backed_up_tasks": result["backed_up"],
+                        "unarchived_count": len(result["unarchived_tasks"]),
+                        "unarchived_tasks": result["unarchived_tasks"],
+                        "failed_count": len(result["failed_tasks"]),
+                        "failed_tasks": result["failed_tasks"],
+                        "changed_uuids": result["changed_uuids"],
+                        "backups_changed": result["backups_changed"],
+                    })
+                return summary
 
             admission = await job_manager.start_job(username, "更新任務列表", task_func, job_code=job_type)
 

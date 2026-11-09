@@ -5,6 +5,8 @@ from backend.services.log_manager import Logger
 from backend.services.redis_client import RedisClient
 from backend.repository.db_controller import db_controller
 from backend.repository.models import SendTask
+from backend.services.task_archive_policy import should_archive_task
+from backend.services.se2_task_reader import TaskReadError
 from sqlalchemy import select, update
 
 logger = Logger().get_logger()
@@ -36,7 +38,6 @@ class ArchivingWorker:
         - 如果三個欄位都是無效值，則不封存（無法判斷是否結束）
         """
         now = int(time.time())
-        threshold_time = now - (14 * 86400)  # 14天 = 14 * 24 * 60 * 60
 
         # 撈出所有尚未封存的任務（含時間欄位，在 Python 端判斷）
         stmt = select(
@@ -52,21 +53,11 @@ class ArchivingWorker:
 
         candidates = []
         for row in all_active:
-            # 將三個時間欄位的值蒐集起來，過濾掉 None、0、-1 等無效值
-            time_fields = {
-                "test_end_ut":     row.test_end_ut,
-                "pre_test_end_ut": row.pre_test_end_ut,
-                "stop_time_new":   row.stop_time_new,
-            }
-            valid_times = [v for v in time_fields.values() if v and v > 0]
-
-            # 如果沒有任何有效時間欄位，無法判斷，跳過
-            if not valid_times:
-                continue
-
-            # 所有有效欄位都必須超過 14 天
-            if all(t < threshold_time for t in valid_times):
-                candidates.append(row.sendtask_uuid)
+            try:
+                if should_archive_task(row, now=now):
+                    candidates.append(row.sendtask_uuid)
+            except TaskReadError:
+                logger.warning(f"Invalid task end time for {row.sendtask_uuid}, skipping archive.")
         
         if not candidates:
             logger.info("No tasks to archive.")
