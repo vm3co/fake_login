@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException, Body
 from pydantic import BaseModel
 from datetime import datetime, timezone
@@ -11,6 +13,9 @@ from sqlalchemy import and_, or_, select
 from backend.api.data_api import filter_tasks_by_scope, get_sendtask_scope
 from backend.services.log_manager import Logger
 from backend.services.job_queue import job_queue
+from backend.services.task_sync_entrypoints import TaskSyncStatuses, TaskSyncCancelled, summarize_task_sync
+from backend.services.task_sync_core import TaskSyncAccessDenied
+from backend.services.se2_task_reader import TaskNotFound
 
 logger = Logger().get_logger()
 router = APIRouter(
@@ -25,6 +30,44 @@ db_user = DBUser()
 class JobRequest(BaseModel):
     job_type: str
     params: Dict[str, Any] = {}
+
+
+async def sync_job_items(accepted_items, job_id, *, orgs):
+    statuses = TaskSyncStatuses()
+    try:
+        for item in accepted_items:
+            task_uuid = item["sendtask_uuid"]
+            try:
+                await job_manager.mark_item(job_id, task_uuid, "running")
+            except Exception as exc:
+                statuses.notification_errors[task_uuid] = str(exc)
+            try:
+                result = await db_user.refresh_sendlog_stats([task_uuid], orgs=orgs)
+            except Exception as exc:
+                statuses[task_uuid] = "error"
+                statuses.errors[task_uuid] = str(exc)
+                try:
+                    await job_manager.mark_item(job_id, task_uuid, "failed", str(exc))
+                except Exception as reporting_error:
+                    statuses.notification_errors[task_uuid] = str(reporting_error)
+                continue
+            statuses.update(result)
+            statuses.results.update(getattr(result, "results", {}))
+            statuses.errors.update(getattr(result, "errors", {}))
+            statuses.notification_errors.update(getattr(result, "notification_errors", {}))
+            status = result.get(task_uuid, "error")
+            try:
+                await job_manager.mark_item(job_id, task_uuid, "failed" if status == "error" else "completed", status)
+            except Exception as exc:
+                statuses.notification_errors[task_uuid] = str(exc)
+    except TaskSyncCancelled as exc:
+        statuses.update(exc.results)
+        statuses.results.update(exc.results.results)
+        statuses.errors.update(exc.results.errors)
+        raise TaskSyncCancelled(statuses) from None
+    except asyncio.CancelledError:
+        raise TaskSyncCancelled(statuses) from None
+    return summarize_task_sync(statuses, accepted_items)
 
 def serialize_datetime(value: Optional[datetime]) -> Optional[str]:
     if value is None:
@@ -173,60 +216,7 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
             orgs = get_sendtask_scope(current_user)
             # Logic from refresh_today_create_task
             async def task_func():
-                today_create_task_list = await db_user.refresh_today_create_task()
-                today_create_task_list = filter_tasks_by_scope(today_create_task_list, orgs)
-                
-                if not today_create_task_list:
-                    return {
-                        "today_count": 0,
-                        "added_count": 0,
-                        "added_tasks": [],
-                        "updated_count": 0,
-                        "updated_tasks": [],
-                        "message": "無今日建立任務",
-                    }
-
-                refresh_list = [task["sendtask_uuid"] for task in today_create_task_list]
-                local_rows = await db_controller.get(
-                    SendTask,
-                    filters={"sendtask_uuid": refresh_list},
-                )
-                existing_uuids = {row.sendtask_uuid for row in local_rows}
-
-                def task_summary(task):
-                    return {
-                        "sendtask_uuid": task.get("sendtask_uuid"),
-                        "sendtask_id": task.get("sendtask_id", "Unknown"),
-                    }
-
-                added_tasks = [
-                    task_summary(task)
-                    for task in today_create_task_list
-                    if task["sendtask_uuid"] not in existing_uuids
-                ]
-                updated_tasks = [
-                    task_summary(task)
-                    for task in today_create_task_list
-                    if task["sendtask_uuid"] in existing_uuids
-                ]
-                
-                # Batch upsert sendtasks
-                await db_controller.upsert(
-                    model=SendTask,
-                    data_list=today_create_task_list,
-                    index_elements=['sendtask_uuid']
-                )
-
-                # Also refresh stats
-                await db_user.refresh_sendlog_stats(refresh_list)
-                
-                return {
-                    "today_count": len(today_create_task_list),
-                    "added_count": len(added_tasks),
-                    "added_tasks": added_tasks,
-                    "updated_count": len(updated_tasks),
-                    "updated_tasks": updated_tasks,
-                }
+                return await db_user.sync_today_created_tasks(orgs=orgs)
 
             admission = await job_manager.start_job(username, "檢查今日建立任務", task_func, job_code=job_type)
 
@@ -251,15 +241,6 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
             async def task_func():
                 result = await db_user.sync_sendtasks(orgs=orgs)
 
-                # 只對新增的 uuid 刷 sendlog_stats（原本邏輯）；跳過重複的 SendTask sync
-                added_uuids = [t["sendtask_uuid"] for t in result["added"]]
-                if added_uuids and not result.get("versioned"):
-                    await db_user.refresh_sendlog_stats(
-                        added_uuids,
-                        ignore_archived=True,
-                        skip_sendtask_sync=True,
-                    )
-
                 def task_summary(task):
                     return {
                         "sendtask_uuid": task.get("sendtask_uuid"),
@@ -278,6 +259,7 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                 }
                 if result.get("versioned"):
                     summary.update({
+                        "job_status": "partial" if result["failed_tasks"] and result.get("changed_uuids") else "failed" if result["failed_tasks"] else "completed",
                         "status": result["status"],
                         "recreated_count": len(result["recreated"]),
                         "recreated_tasks": result["recreated"],
@@ -311,60 +293,7 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                 raise HTTPException(status_code=403, detail="無權存取指定任務")
 
             async def task_func(*, accepted_items, job_id):
-                uuids = [item["sendtask_uuid"] for item in accepted_items]
-                ignore_archived = params.get("ignore_archived", False)
-                task_names = {item["sendtask_uuid"]: item["sendtask_id"] for item in accepted_items}
-                statuses = {}
-                for item in accepted_items:
-                    task_uuid = item["sendtask_uuid"]
-                    await job_manager.mark_item(job_id, task_uuid, "running")
-                    try:
-                        result = await db_user.refresh_sendlog_stats([task_uuid], ignore_archived=ignore_archived)
-                        status = result.get(task_uuid, "error")
-                    except Exception as error:
-                        logger.error(f"Failed to refresh task {task_uuid}: {error}")
-                        status = "error"
-                    statuses[task_uuid] = status
-                    if status in {"updated", "unchanged"}:
-                        await job_manager.mark_item(job_id, task_uuid, "completed")
-                    elif status in {"deleted", "archived"}:
-                        await job_manager.mark_item(job_id, task_uuid, "skipped", status)
-                    else:
-                        await job_manager.mark_item(job_id, task_uuid, "failed", status or "not_found")
-                successful_tasks = []
-                skipped_tasks = []
-                failed_tasks = []
-
-                for task_uuid in uuids:
-                    task = {
-                        "sendtask_uuid": task_uuid,
-                        "sendtask_id": task_names.get(task_uuid, "Unknown"),
-                    }
-                    status = statuses.get(task_uuid)
-                    if status in {"updated", "unchanged"}:
-                        successful_tasks.append(task)
-                    elif status in {"deleted", "archived"}:
-                        skipped_tasks.append({**task, "reason": status})
-                    else:
-                        failed_tasks.append({**task, "reason": status or "not_found"})
-
-                result = {
-                    "updated_count": len(successful_tasks),
-                    "successful_tasks": successful_tasks,
-                    "skipped_count": len(skipped_tasks),
-                    "skipped_tasks": skipped_tasks,
-                    "failed_count": len(failed_tasks),
-                    "failed_tasks": failed_tasks,
-                }
-                if failed_tasks and successful_tasks:
-                    result["job_status"] = "partial"
-                elif failed_tasks:
-                    result["job_status"] = "failed"
-                    result["error_summary"] = "更新失敗：" + "、".join(
-                        task["sendtask_id"] for task in failed_tasks
-                    )
-
-                return result
+                return await sync_job_items(accepted_items, job_id, orgs=orgs)
 
             admission = await job_manager.start_job(
                 username,
@@ -383,10 +312,9 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
             orgs = get_sendtask_scope(current_user)
             items = []
             for task_uuid in dict.fromkeys(requested_uuids):
-                record = await db_user._build_sendtask_record_from_detail(task_uuid)
-                if not record:
-                    continue
-                if orgs is not None and not filter_tasks_by_scope([record], orgs):
+                try:
+                    record = await db_user.authorize_sync_candidate(task_uuid, orgs=orgs)
+                except (TaskSyncAccessDenied, TaskNotFound):
                     continue
                 items.append({
                     "sendtask_uuid": task_uuid,
@@ -396,47 +324,7 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                 raise HTTPException(status_code=403, detail="無權存取指定任務或任務已不存在")
 
             async def task_func(*, accepted_items, job_id):
-                successful_tasks = []
-                failed_tasks = []
-                for item in accepted_items:
-                    task_uuid = item["sendtask_uuid"]
-                    await job_manager.mark_item(job_id, task_uuid, "running")
-                    try:
-                        result = await db_user.upsert_sendtasks_by_uuids([task_uuid])
-                        if not result["upserted"]:
-                            raise RuntimeError("任務不存在或無法取得最新資料")
-                        stats = await db_user.refresh_sendlog_stats(
-                            [task_uuid],
-                            ignore_archived=True,
-                        )
-                        status = stats.get(task_uuid, "error")
-                        if status in {"updated", "unchanged"}:
-                            successful_tasks.append(item)
-                            await job_manager.mark_item(job_id, task_uuid, "completed")
-                        else:
-                            failed_tasks.append({**item, "reason": status})
-                            await job_manager.mark_item(job_id, task_uuid, "failed", status)
-                    except Exception as error:
-                        logger.error(f"Failed to update selected task {task_uuid}: {error}")
-                        failed_tasks.append({**item, "reason": str(error)})
-                        await job_manager.mark_item(job_id, task_uuid, "failed", str(error))
-
-                result = {
-                    "updated_count": len(successful_tasks),
-                    "successful_tasks": successful_tasks,
-                    "skipped_count": 0,
-                    "skipped_tasks": [],
-                    "failed_count": len(failed_tasks),
-                    "failed_tasks": failed_tasks,
-                }
-                if successful_tasks and failed_tasks:
-                    result["job_status"] = "partial"
-                elif failed_tasks:
-                    result["job_status"] = "failed"
-                    result["error_summary"] = "更新失敗：" + "、".join(
-                        task["sendtask_id"] for task in failed_tasks
-                    )
-                return result
+                return await sync_job_items(accepted_items, job_id, orgs=orgs)
 
             admission = await job_manager.start_job(
                 username,

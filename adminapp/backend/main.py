@@ -15,6 +15,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from backend.repository.db_controller import db_controller
 from backend.repository.models import SendTask, SendLogStats, JobRun, SystemConfig
+from backend.services.task_sync_entrypoints import TaskSyncStatuses, summarize_task_sync
 from sqlalchemy import select, update, delete, or_
 from sqlalchemy.sql import func
 
@@ -57,7 +58,8 @@ async def refresh_token_job():
 async def refresh_sendlog_stats_job():
     logger.info("refresh_sendlog_stats_job 執行")
     # 刷新所有 sendlog_stats 資料
-    await db_user.refresh_sendlog_stats()
+    statuses = await db_user.refresh_sendlog_stats(orgs=None)
+    return summarize_task_sync(statuses, [])
 
 async def refresh_today_create_task_job():
     """
@@ -65,19 +67,7 @@ async def refresh_today_create_task_job():
     """
     logger.info("refresh_today_create_task_job 執行")
     try:
-        today_create_tasks_list = await db_user.refresh_today_create_task()
-        if today_create_tasks_list:
-            refresh_list = []
-            # Use DBController.upsert
-            refresh_list = [task["sendtask_uuid"] for task in today_create_tasks_list]
-            await db_controller.upsert(
-                SendTask, 
-                today_create_tasks_list, 
-                index_elements=['sendtask_uuid']
-            )
-            
-            await db_user.refresh_sendlog_stats(refresh_list)
-            logger.info(f"refresh_today_create_task_job 完成 - 新增或更新了 {len(refresh_list)} 個今日任務")
+        return await db_user.sync_today_created_tasks(orgs=None)
     except Exception as e:
         logger.error(f"refresh_today_create_task_job 執行失敗: {str(e)}")
         raise
@@ -107,8 +97,8 @@ async def refresh_notyet_today_tasks_job():
                 uuids_to_refresh.append(task.sendtask_uuid)
 
         if uuids_to_refresh:
-            await db_user.refresh_sendlog_stats(uuids_to_refresh)
-            logger.info(f"refresh_notyet_today_tasks_job 完成 - 已刷新 {len(uuids_to_refresh)} 個未完成或有失敗的今日任務。")
+            statuses = await db_user.refresh_sendlog_stats(uuids_to_refresh, orgs=None)
+            return summarize_task_sync(statuses, [])
 
     except Exception as e:
         logger.error(f"refresh_notyet_today_tasks_job 執行失敗: {str(e)}")
@@ -120,8 +110,14 @@ async def check_sendtasks_job():
     """
     logger.info("check_sendtasks_job 執行")
     try:
-        result = await db_user.sync_sendtasks()
+        result = await db_user.sync_sendtasks(orgs=None)
         logger.info(f"check_sendtasks_job 完成 - 新增: {len(result['added'])}, 變更: {len(result['changed'])}, 刪除: {result['deleted']}, 封存: {result['archived']}")
+        summary = {key: value for key, value in result.items() if key != "results"}
+        summary["job_status"] = (
+            "partial" if result["status"] == "partial" and result.get("changed_uuids")
+            else "failed" if result["status"] == "partial" else "completed"
+        )
+        return summary
     except Exception as e:
         logger.error(f"check_sendtasks_job 執行失敗: {str(e)}")
         raise
@@ -130,12 +126,16 @@ async def nightly_sync_job():
     """每日凌晨統一執行：先同步任務清單，再刷新統計"""
     logger.info("nightly_sync_job 開始")
     try:
-        await check_sendtasks_job()      # 步驟1：同步任務清單
-        await refresh_sendlog_stats_job() # 步驟2：刷新統計資料
-        logger.info("nightly_sync_job 完成")
+        return await check_sendtasks_job()
     except Exception as e:
         logger.error(f"nightly_sync_job 失敗: {e}")
         raise
+
+async def run_cache_warming():
+    tasks = await db_controller.get(SendTask, {"is_archived": False})
+    statuses = await db_user.refresh_sendlog_stats([task.sendtask_uuid for task in tasks], orgs=None)
+    return summarize_task_sync(statuses, [])
+
 
 async def enqueue_scheduler_job(job_code, job_type, execution_class, job_func):
     scheduled_for = datetime.now(tz=ZoneInfo("Asia/Taipei")).replace(second=0, microsecond=0)
@@ -179,21 +179,25 @@ def tracked_scheduler_job(job_type, job_func):
         try:
             result = await job_func()
             await db_controller.update(JobRun, {"job_id": job_id}, {
-                "status": "completed",
+                "status": result.get("job_status", "completed") if isinstance(result, dict) else "completed",
                 "result": result,
                 "finished_at": func.now(),
             })
             return result
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as error:
+            committed = getattr(error, "results", None)
             await db_controller.update(JobRun, {"job_id": job_id}, {
                 "status": "cancelled",
+                "result": summarize_task_sync(committed, []) if isinstance(committed, TaskSyncStatuses) else None,
                 "finished_at": func.now(),
             })
             raise
         except Exception as error:
+            committed = getattr(error, "results", None)
             await db_controller.update(JobRun, {"job_id": job_id}, {
                 "status": "failed",
                 "error": str(error),
+                "result": summarize_task_sync(committed, []) if isinstance(committed, TaskSyncStatuses) else None,
                 "finished_at": func.now(),
             })
             raise
@@ -316,24 +320,6 @@ async def lifespan(app: FastAPI):
     job_queue.register("nightly_sync", lambda _job_id: nightly_sync_job())
     job_queue.register("archiving_job", lambda _job_id: archiving_worker.start())
     await job_queue.start()
-
-    # Cache Warming logic 移到背景執行，避免阻塞啟動
-    async def run_cache_warming():
-        try:
-            logger.info("Starting Cache Warming in background...")
-            # Fetch active tasks (is_archived is False or NULL)
-            active_uuids = []
-            tasks = await db_controller.get(SendTask, {"is_archived": False})
-            active_uuids = [task.sendtask_uuid for task in tasks]
-
-            if active_uuids:
-                 await db_user.refresh_sendlog_stats(active_uuids)
-                 logger.info(f"Cache Warming completed for {len(active_uuids)} active tasks.")
-            else:
-                 logger.info("No active tasks found for Cache Warming.")
-        except Exception as e:
-            logger.error(f"Cache Warming failed: {str(e)}")
-            raise
 
     scheduler = start_scheduler(runtime_config, schedule_config)
     runtime_tasks = {"cache_warming": None}

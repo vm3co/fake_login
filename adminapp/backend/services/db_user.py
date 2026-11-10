@@ -130,13 +130,75 @@ TESTCASE_DETAIL_COLUMNS = [
 
 
 class DBUser:
-    def __init__(self, *, task_list_sync=None):
+    def __init__(self, *, task_list_sync=None, task_sync=None):
         """ 
         初始化 DBUser 類別
         """
         self.day = 7  # 預設查詢天數為 7 天
         self.accts_columns = ACCTS_COLUMNS
         self.task_list_sync = task_list_sync
+        self.task_sync = task_sync
+
+    def get_task_sync(self):
+        if self.task_sync is None:
+            from backend.repository.database import async_session
+            from backend.services.task_sync_core import TaskSyncService
+
+            self.task_sync = TaskSyncService(async_session, get_se2_data.get_task_reader())
+        return self.task_sync
+
+    async def sync_tasks(self, uuids, *, orgs, on_result=None):
+        from backend.services.task_sync_entrypoints import sync_task_batch
+        from backend.services.task_sync_core import TaskSyncAccessDenied
+
+        if orgs is not None and (
+            not isinstance(orgs, (list, tuple)) or not orgs
+            or any(not isinstance(group, str) or not group for group in orgs)
+        ):
+            raise TaskSyncAccessDenied("A trusted organization scope is required")
+
+        core = self.get_task_sync()
+        session_factory = getattr(core, "session_factory", None)
+        previous = {}
+        if session_factory is not None:
+            async with session_factory() as session:
+                previous = dict((await session.execute(select(
+                    SendLogStats.sendtask_uuid, SendLogStats.todaysend,
+                ).where(SendLogStats.sendtask_uuid.in_(uuids)))).all())
+
+        async def after_commit(result):
+            if on_result is not None:
+                await on_result(result)
+            if session_factory is not None:
+                await self._notify_sync_commit(core, result, previous.get(result.task_uuid, 0))
+
+        return await sync_task_batch(core, uuids, orgs=orgs, on_result=after_commit)
+
+    async def _notify_sync_commit(self, core, result, old_todaysend):
+        if result.status not in {"added", "updated", "recreated"}:
+            return
+        async with core.session_factory() as session:
+            row = (await session.execute(select(SendTask.sendtask_id, SendLogStats.todaysend).join(
+                SendLogStats, SendLogStats.sendtask_uuid == SendTask.sendtask_uuid,
+            ).where(
+                SendTask.sendtask_uuid == result.task_uuid,
+                SendTask.local_generation_id == result.generation,
+                SendTask.sync_revision == result.revision,
+            ))).one_or_none()
+        if row is not None and (result.status in {"added", "recreated"} or (old_todaysend or 0) == 0) and (row.todaysend or 0) > 0:
+            await send_telegram_notification(f"任務開始執行：{escape_markdown_v2(row.sendtask_id)}")
+
+    async def authorize_sync_candidate(self, task_uuid, *, orgs):
+        from backend.services.task_sync_core import _require_scope
+
+        local = await db_controller.get_one(SendTask, {"sendtask_uuid": task_uuid})
+        if local is not None:
+            _require_scope(local.sendtask_owner_gid, orgs)
+            return {"sendtask_uuid": task_uuid, "sendtask_id": local.sendtask_id}
+        response = await self.get_task_sync().reader.read_sendtask(task_uuid)
+        task = response["data"]
+        _require_scope(task.get("sendtask_owner_gid"), orgs)
+        return task
         
     async def table_initialize(self):
         """
@@ -146,7 +208,7 @@ class DBUser:
         """
         table_mappings = {
             "accts": {"model": Acct, "fetch_method": self.get_se2_accts, "fetch_args": [ACCTS_COLUMNS]},
-            "sendtasks": {"model": SendTask, "fetch_method": self.get_se2_sendtasks, "fetch_args": [SENDTASKS_COLUMNS, self.day]},
+            "sendtasks": {"model": SendTask},
             "mtmpl": {"model": Mtmpl, "special_logic": True},
             "sendlog_stats": {"model": SendLogStats, "special_logic": True},
             "send_log_details": {"model": SendLogDetail, "special_logic": True}
@@ -162,6 +224,13 @@ class DBUser:
             
             if count == 0:
                 logger.info(f"{table_name} is empty. Initializing with data from SE2...")
+                if model is SendTask:
+                    result = await self.sync_sendtasks(orgs=None)
+                    if result["status"] == "partial":
+                        from backend.services.task_sync_entrypoints import TaskSyncIncomplete
+
+                        raise TaskSyncIncomplete(result)
+                    continue
                 
                 if config.get("special_logic"):
                     if table_name == "mtmpl":
@@ -204,7 +273,11 @@ class DBUser:
              
              if sendtask_uuids:
                  # refresh_sendlog_stats manages its own session
-                 sendlog_stats_status = await self.refresh_sendlog_stats(sendtask_uuids)
+                 sendlog_stats_status = await self.refresh_sendlog_stats(sendtask_uuids, orgs=None)
+                 if "error" in sendlog_stats_status.values():
+                     from backend.services.task_sync_entrypoints import TaskSyncIncomplete
+
+                     raise TaskSyncIncomplete(sendlog_stats_status)
                  logger.info(f"Updated sendlog_stats with status: {sendlog_stats_status}")
 
     async def get_se2_accts(self, acct_columns=None) -> list[dict]:
@@ -320,16 +393,8 @@ class DBUser:
         return {col: data.get(col) for col in TESTCASE_DETAIL_COLUMNS}
 
     async def _sync_sendtask_from_se2(self, uuid: str) -> bool:
-        """
-        從 SE2 取單筆，更新 SendTask 全欄位。
-        回傳 True 成功 / False 表示 404 或 API 失敗。
-        不會覆寫 is_archived（不在 SENDTASKS_COLUMNS 中）。
-        """
-        record = await self._build_sendtask_record_from_detail(uuid)
-        if record is None:
-            return False
-        await db_controller.update(SendTask, {"sendtask_uuid": uuid}, record)
-        return True
+        statuses = await self.sync_tasks([uuid], orgs=None)
+        return statuses.get(uuid) in {"added", "updated", "recreated"}
 
     async def get_se2_sendtasks(self, column_names=None, days=7) -> list[dict]:
         """
@@ -361,111 +426,23 @@ class DBUser:
         return []
 
     async def sync_sendtasks(self, orgs: list[str] | None = None) -> dict:
-        """
-        檢查 7 天內 SendTask 清單，只對「內容有變動」的 row upsert。
-        1. 從 SE2 list API 拿 7 天內任務（_fetch_and_apply_metadata 補 metadata 3 欄）
-        2. 依 orgs 過濾
-        3. 與本地 SendTask 做 dict-level diff：
-           - added：SE2 有但本地沒有的 uuid（全新任務）
-           - changed：SE2 與本地同 uuid 但欄位值不同
-           - removed：本地有但 SE2 7 天窗口內沒有的 uuid
-        4. (added + changed) → upsert SendTask
-        5. removed → 逐一確認 404/archive
-        回傳: {"added": [...], "changed": [...], "archived": N, "deleted": N}
-        """
-        if self.task_list_sync is not None:
-            return await self.task_list_sync.sync(orgs=orgs)
+        if self.task_list_sync is None:
+            from backend.services.task_list_sync import TaskListSyncService
 
-        from backend.api.data_api import has_common_orgs
+            self.task_list_sync = TaskListSyncService(self.get_task_sync())
+        from backend.services.task_sync_entrypoints import TaskSyncStatuses, TaskSyncCancelled
+        import asyncio
 
-        remote_tasks = await self.get_se2_sendtasks(SENDTASKS_COLUMNS)
-        if orgs is not None:
-            remote_tasks = [t for t in remote_tasks
-                            if has_common_orgs(t.get("sendtask_owner_gid", []), orgs)]
+        committed = TaskSyncStatuses()
 
-        # 本地 SendTask（只取 SENDTASKS_COLUMNS 的欄位做比對，並加入 is_archived 給封存邏輯用）
-        local_rows = await db_controller.get(SendTask)
-        local_map = {}
-        for row in local_rows:
-            local_map[row.sendtask_uuid] = {
-                c: getattr(row, c, None) for c in SENDTASKS_COLUMNS
-            }
-            local_map[row.sendtask_uuid]["is_archived"] = getattr(row, "is_archived", False)
+        async def record(result):
+            committed[result.task_uuid] = result.status
+            committed.results[result.task_uuid] = result
 
-        remote_map = {t["sendtask_uuid"]: t for t in remote_tasks}
-
-        # 判斷有變動的 row（含全新 + 欄位值改變）
-        def normalize(v):
-            if isinstance(v, list):
-                return tuple(v)
-            try:
-                if pd.isna(v):  # 處理 NaN 等同 None
-                    return None
-            except (ValueError, TypeError):
-                pass
-            return v
-
-        def row_changed(remote: dict, local: dict | None) -> bool:
-            if local is None:
-                return True  # 新任務
-            for col in SENDTASKS_COLUMNS:
-                if normalize(remote.get(col)) != normalize(local.get(col)):
-                    return True
-            return False
-
-        added_list = []
-        changed_list = []
-        for uuid, remote in remote_map.items():
-            local = local_map.get(uuid)
-            if local is None:
-                added_list.append(remote)
-            elif row_changed(remote, local):
-                changed_list.append(remote)
-
-        upsert_list = added_list + changed_list
-        if upsert_list:
-            update_cols = [c for c in SENDTASKS_COLUMNS if c != "sendtask_uuid"]
-            await db_controller.upsert(
-                SendTask,
-                upsert_list,
-                index_elements=["sendtask_uuid"],
-                update_columns=update_cols,
-            )
-
-        # removed：本地有但遠端 7 天窗口內沒有
-        missing_uuids = set(local_map.keys()) - set(remote_map.keys())
-        deleted_tasks = []
-        archived_tasks = []
-        for uuid in missing_uuids:
-            data = await get_se2_data.get_sendtask(uuid)
-            if data and data.get("error", {}).get("code") == 404:
-                deleted_tasks.append({
-                    "sendtask_uuid": uuid,
-                    "sendtask_id": local_map[uuid].get("sendtask_id", "Unknown"),
-                })
-                await db_controller.delete(SendTask, {"sendtask_uuid": uuid})
-                await db_controller.delete(SendLogStats, {"sendtask_uuid": uuid})
-                await db_controller.delete(SendLogDetail, {"sendtask_uuid": uuid})
-            elif data is None:
-                logger.warning(f"SE2 returned None for {uuid}, skipping.")
-            else:
-                # 只 archive 還沒被 archive 的
-                local = local_map.get(uuid)
-                if not local.get("is_archived"):
-                    await db_controller.update(SendTask, {"sendtask_uuid": uuid}, {"is_archived": True})
-                    archived_tasks.append({
-                        "sendtask_uuid": uuid,
-                        "sendtask_id": local.get("sendtask_id", "Unknown"),
-                    })
-
-        return {
-            "added": added_list,
-            "changed": changed_list,
-            "archived": len(archived_tasks),
-            "archived_tasks": archived_tasks,
-            "deleted": len(deleted_tasks),
-            "deleted_tasks": deleted_tasks,
-        }
+        try:
+            return await self.task_list_sync.sync(orgs=orgs, on_result=record)
+        except asyncio.CancelledError:
+            raise TaskSyncCancelled(committed) from None
     
     # Mtmpl model 允許的欄位名稱（來自 SE2 同步）
     _MTMPL_FIELDS = {
@@ -571,237 +548,42 @@ class DBUser:
 
 ## sendtask 相關操作
     async def refresh_today_create_task(self):
-        """從 SE2 獲取當天建立的 sendtasks"""
         start_ts, end_ts = timestamp()
-        logger.info(f"Refreshing tasks created between {start_ts} and {end_ts}")
+        return await self.get_task_sync().reader.read_sendtasks(start_time=start_ts, end_time=end_ts)
 
-        today_create_tasks_df = await get_se2_data.get_sendtasks(end_time=end_ts, start_time=start_ts)
-        if today_create_tasks_df is None or today_create_tasks_df.empty:
-            logger.info("No new tasks created today found on SE2.")
-            return []
+    async def sync_today_created_tasks(self, *, orgs):
+        from backend.services.task_sync_entrypoints import summarize_task_sync
 
-        today_create_tasks_df = await self._fetch_and_apply_metadata(today_create_tasks_df)
-        today_create_tasks_list = today_create_tasks_df[SENDTASKS_COLUMNS].to_dict(orient="records")
-        return today_create_tasks_list
+        tasks = await self.refresh_today_create_task()
+        if orgs is not None:
+            tasks = [task for task in tasks if set(task.get("sendtask_owner_gid") or []).intersection(orgs)]
+        statuses = await self.sync_tasks([task["sendtask_uuid"] for task in tasks], orgs=orgs)
+        return {"today_count": len(tasks), **summarize_task_sync(statuses, tasks)}
 
     async def search_sendtasks_by_keyword(self, keyword: str) -> list[dict]:
-        """依關鍵字向 SE2 查詢任務（不限定日期），用於快速確認任務是否已建立"""
-        tasks_df = await get_se2_data.get_sendtasks(keyword=keyword)
-        if tasks_df is None or tasks_df.empty:
-            return []
-        tasks_df = await self._fetch_and_apply_metadata(tasks_df)
-        return tasks_df[SENDTASKS_COLUMNS].to_dict(orient="records")
+        return await self.get_task_sync().reader.read_sendtasks(keyword=keyword)
 
-    async def upsert_sendtasks_by_uuids(self, uuids: list[str]) -> dict:
-        """依 uuid 清單，逐一向 SE2 取得最新單筆資料後 upsert 進本地 sendtasks 表"""
-        records = []
-        not_found = []
-        for u in uuids:
-            record = await self._build_sendtask_record_from_detail(u)
-            if record is None:
-                not_found.append(u)
-            else:
-                records.append(record)
-        if records:
-            await db_controller.upsert(SendTask, records, index_elements=["sendtask_uuid"])
-        return {"upserted": [r["sendtask_uuid"] for r in records], "not_found": not_found}
+    async def upsert_sendtasks_by_uuids(self, uuids: list[str], *, orgs=None) -> dict:
+        statuses = await self.sync_tasks(uuids, orgs=orgs)
+        return {
+            "upserted": [task_uuid for task_uuid, status in statuses.items() if status in {"added", "updated", "recreated"}],
+            "not_found": [task_uuid for task_uuid, status in statuses.items() if status in {"backed_up", "unchanged"}],
+            "statuses": statuses,
+        }
 
 ## sendlog and sendlog_stats相關操作
-    async def check_sendlog(self, uuids_and_create_time: dict, ignore_archived: bool = False):
-        """
-        檢查 sendlog table 是否存在於資料庫中
-        :param uuids_and_create_time: sendtask 的 UUID，對應建立時間的字典
-        """
-        logger.info("Checking sendlog tables...")
-        
-        statuses = {}
-        # 0. 先過濾掉已封存的任務 (Safety Check)
-        target_uuids = list(uuids_and_create_time.keys())
-        if not target_uuids:
-             return {}
-        
-        if not ignore_archived:
-            # 查詢所有傳入的 UUID 中，有哪些已經是 is_archived = TRUE
-            # Use DBController get with in_ filter (assumes DBController supports list for IN)
-            archived_tasks = await db_controller.get(SendTask, {"sendtask_uuid": target_uuids, "is_archived": True})
-            archived_uuids = set(t.sendtask_uuid for t in archived_tasks)
-            for uuid in archived_uuids:
-                statuses[uuid] = "archived"
-            
-            # 只保留未封存的任務
-            active_uuids_and_time = {
-                u: t for u, t in uuids_and_create_time.items() 
-                if u not in archived_uuids
-            }
-                
-            if len(active_uuids_and_time) < len(uuids_and_create_time):
-                logger.info(f"Skipped {len(uuids_and_create_time) - len(active_uuids_and_time)} archived tasks in check_sendlog.")
-        else:
-            logger.info("ignore_archived is True. Not filtering archived tasks.")
-            active_uuids_and_time = uuids_and_create_time
+    async def check_sendlog(self, uuids_and_create_time: dict, ignore_archived: bool = False, *, orgs=None):
+        return await self.sync_tasks(list(uuids_and_create_time), orgs=orgs)
 
-        # 批次檢查所有資料表是否存在
-        for uuid, create_ut in active_uuids_and_time.items():
-            data = await get_se2_data.get_sendtask(uuid)
-            if data and data.get("error", {}).get("code") == 404:
-                logger.warning(f"Task {uuid} not found on SE2 (404). Deleting local data.")
-                # 該任務在主系統已不存在，刪除本地所有相關資料
-                
-                # Delete from sendtasks
-                await db_controller.delete(SendTask, {"sendtask_uuid": uuid})
-                # Delete from sendlog_stats
-                await db_controller.delete(SendLogStats, {"sendtask_uuid": uuid})
-                # Delete from send_log_details
-                await db_controller.delete(SendLogDetail, {"sendtask_uuid": uuid})
+    async def sendlog_write(self, sendtask_uuid: list, *, orgs=None) -> dict:
+        return await self.sync_tasks(sendtask_uuid, orgs=orgs)
 
-                statuses[uuid] = "deleted"
-                continue # 繼續處理下一個 uuid
-            
-            if data is None:
-                logger.error(f"Failed to get task info for {uuid} from SE2, likely a token or connection issue. Skipping.")
-                statuses[uuid] = "error"
-                continue
-
-            remote_create_ut = data.get("data", {}).get("sendtask_create_ut")
-            if create_ut != remote_create_ut:
-                log_message = f"Task {uuid} has a new create time. Local: {create_ut}, Remote: {remote_create_ut}. Re-syncing task."
-                logger.warning(log_message)
-                
-                telegram_message = f"🔄 *任務已重同步*\n任務 `{escape_markdown_v2(uuid)}` 的建立時間不符，已觸發資料重同步。"
-                await send_telegram_notification(telegram_message)
-                
-                # 獲取新任務資料並更新 sendtasks 表
-                task_data_df = pd.DataFrame([data.get("data", {})])
-                updated_task_df = await self._fetch_and_apply_metadata(task_data_df)
-                if not updated_task_df.empty:
-                    task_to_update = updated_task_df[SENDTASKS_COLUMNS].to_dict(orient="records")[0]
-                    # Use ORM update
-                    await db_controller.update(SendTask, {"sendtask_uuid": uuid}, task_to_update)
-                    logger.info(f"Updated sendtasks table for {uuid}.")
-            
-        # sendlog_write now handles its own session, but we call it here.
-        # To avoid nested sessions issues if not handled (db.get_session creates new one),
-        # we can pass session or just let it create new one. sendlog_write creates its own.
-        logger.info("Upserting sendlog tables...")
-        # 只處理未被刪除或未出錯的任務
-        sendtask_uuids_to_write = [uuid for uuid in active_uuids_and_time.keys() if statuses.get(uuid) not in ["deleted", "error"]]
-    
-        # Call sendlog_write (it manages its own transaction)
-        write_statuses = await self.sendlog_write(sendtask_uuids_to_write)
-        statuses.update(write_statuses)
-        logger.info(f"Sendlog tables upserted with statuses: {statuses}")
-        return statuses  # 返回狀態
-
-    async def sendlog_write(self, sendtask_uuid: list) -> dict:
-        """
-        更新 sendlog 資料到資料庫
-        :param sendtask_uuid: 任務清單的uuid列表
-         """
-        sendlog_status = {}
-        sendlog_status = {}
-        # sendlog_write now uses db_controller
-        
-        for uuid in sendtask_uuid:
-            # 獲取 sendlog 資料 (From SE2 API)
-            sendlog = await self.get_se2_sendlog(uuid, sendlog_columns=SENDLOG_COLUMNS)
-            
-            if sendlog:
-                sendlog_status[uuid] = "unchanged"
-                
-                sendlog_data_list = []
-                for log in sendlog:
-                    # 準備寫入資料
-                    log_data = log.copy()
-                    log_data["sendtask_uuid"] = uuid
-                    sendlog_data_list.append(log_data)
-                
-                # 使用 db_controller.upsert
-                if sendlog_data_list:
-                     await db_controller.upsert(
-                        SendLogDetail,
-                        sendlog_data_list,
-                        index_elements=['uuid'],
-                        update_columns=[c for c in sendlog_data_list[0].keys() if c != 'uuid']
-                    )
-
-            else:
-                logger.warning(f"No valid columns found in sendlog for task {uuid}")
-
-        return sendlog_status
-
-    async def refresh_sendlog_stats(self, uuids: list[str] = None, ignore_archived: bool = False, skip_sendtask_sync: bool = False) -> dict:
-        """
-        刷新 sendlog_stats 資料
-        :param uuid: 如果提供，則僅刷新指定的 sendtask_uuid；如果為 None，則刷新所有 sendtask 的統計資料
-        :return: sendlog_stats 的更新狀態
-        """
-        if uuids is not None and len(uuids) == 0:
-            logger.info("Empty UUIDs list provided to refresh_sendlog_stats. Skipping.")
-            return {}
-
+    async def refresh_sendlog_stats(self, uuids: list[str] = None, ignore_archived: bool = False, skip_sendtask_sync: bool = False, *, orgs=None, on_result=None) -> dict:
+        """Compatibility flags never bypass generation checks; all writes use the core."""
         if uuids is None:
-            logger.info("Fetching all sendtask uuids for refresh...")
-            sendtask_data = await db_controller.get(SendTask)
-        else:
-            logger.info(f"Refreshing sendlog_stats for specified uuids: {uuids}")
-            sendtask_data = await db_controller.get(SendTask, {"sendtask_uuid": uuids})
-
-        # Convert to dict for easier access locally
-        uuids_and_create_time = {task.sendtask_uuid: task.sendtask_create_ut for task in sendtask_data}
-        # 取得任務名稱，用於通知
-        task_names = {task.sendtask_uuid: task.sendtask_id for task in sendtask_data}
-
-        # 確保 sendlog 資料表存在，同時更新資料表 (check_sendlog handles its own session)
-        check_statuses = await self.check_sendlog(uuids_and_create_time, ignore_archived=ignore_archived)
-
-
-        # 開始刷新 sendlog_stats
-        for uuid in uuids_and_create_time.keys():
-            if check_statuses.get(uuid) in ["deleted", "error", "archived"]:
-                continue
-
-            try:
-            # logger.info(f"Refreshing sendlog_stats for {uuid}")
-
-            # 同步 SE2 metadata（全欄位更新）
-                if not skip_sendtask_sync:
-                    await self._sync_sendtask_from_se2(uuid)
-
-            # 1. 獲取舊的統計數據
-                old_stats = await db_controller.get_one(SendLogStats, {"sendtask_uuid": uuid})
-                old_todaysend = old_stats.todaysend if old_stats else 0
-
-            # 2. 計算新的統計數據
-            # get_sendlog implementation is below, it uses session internally or creates one
-                data = await self.get_sendlog(sendtask_uuid=uuid, need_id=False, use_cache=False)
-                new_stats = calc_stats(data)
-
-            # 3. 比較並觸發通知
-                new_todaysend = new_stats.get("todaysend", 0)
-                if old_todaysend == 0 and new_todaysend > 0:
-                    task_name = task_names.get(uuid, uuid)
-                    message = f"🚀 *任務開始執行*\n任務 `{escape_markdown_v2(task_name)}` 今天已開始寄送第一封郵件。"
-                    await send_telegram_notification(message)
-
-            # 4. 更新資料庫
-                stats_data = {
-                    "sendtask_uuid": uuid,
-                    **new_stats
-                }
-            # Upsert SendLogStats
-                await db_controller.upsert(
-                    SendLogStats,
-                    [stats_data],
-                    index_elements=['sendtask_uuid']
-                )
-                check_statuses[uuid] = "updated"
-            except Exception as error:
-                logger.error(f"Failed to refresh sendlog_stats for {uuid}: {error}")
-                check_statuses[uuid] = "error"
-            
-        logger.info(f"Finished refreshing sendlog_stats.")
-
-        return check_statuses
+            tasks = await db_controller.get(SendTask)
+            uuids = [task.sendtask_uuid for task in tasks if orgs is None or set(task.sendtask_owner_gid or []).intersection(orgs)]
+        return await self.sync_tasks(uuids, orgs=orgs, on_result=on_result)
 
     async def get_sendlog(self, sendtask_uuid: str, need_id=True, use_cache=True):
         

@@ -253,49 +253,34 @@ async def create_sendtask(request: SendtaskUuidRequest):
                 if not real_sendtask_uuid:
                     real_sendtask_uuid = se2_response.get("sendtask_uuid")
             logger.info(f"SE2 回傳的 sendtask_uuid: {real_sendtask_uuid}")
-
-            # 用真正的 sendtask_uuid 更新 DB（如果有取得到的話）
-            update_data = {"status": "active"}
-            if real_sendtask_uuid and real_sendtask_uuid != testcase_uuid:
-                update_data["sendtask_uuid"] = real_sendtask_uuid
-
-            await db_controller.update(
-                CustomerTask,
-                {"sendtask_uuid": testcase_uuid},
-                update_data
-            )
-
-            # 使用真正的 sendtask_uuid 加入客戶可見清單
             final_uuid = real_sendtask_uuid or testcase_uuid
-            task_record = await db_controller.get_one(CustomerTask, {"sendtask_uuid": final_uuid})
-            if task_record:
-                await _add_sendtask_to_customer(task_record.customer_uuid, final_uuid)
-
-            # 從 SE2 同步任務資料到本地 SendTask 表
+            local_errors = {}
             try:
-                _db_user = DBUser()
-                record = await _db_user._build_sendtask_record_from_detail(final_uuid)
-                if record:
-                    detail_fields = await _db_user._build_testcase_detail_fields(final_uuid)
-                    if detail_fields:
-                        record.update(detail_fields)
-                    await db_controller.upsert(
-                        SendTask,
-                        [record],
-                        index_elements=['sendtask_uuid']
-                    )
-                    # 同步 sendlog_stats
-                    await _db_user.refresh_sendlog_stats([final_uuid], skip_sendtask_sync=True)
-                    logger.info(f"已從 SE2 同步任務 {final_uuid} 的資料到本地 DB")
-                else:
-                    logger.warning(f"無法從 SE2 取得任務 {final_uuid} 的詳細資料")
+                update_data = {"status": "active"}
+                if final_uuid != testcase_uuid:
+                    update_data["sendtask_uuid"] = final_uuid
+                await db_controller.update(CustomerTask, {"sendtask_uuid": testcase_uuid}, update_data)
+                task_record = await db_controller.get_one(CustomerTask, {"sendtask_uuid": final_uuid})
+                if task_record:
+                    await _add_sendtask_to_customer(task_record.customer_uuid, final_uuid)
+            except Exception as tracking_err:
+                local_errors["customer_tracking"] = str(tracking_err)
+                logger.warning(f"Task started but customer tracking failed: {tracking_err}")
+            try:
+                statuses = await DBUser().sync_tasks([final_uuid], orgs=None)
+                sync_status = statuses.get(final_uuid, "error")
+                local_errors.update(statuses.errors)
             except Exception as sync_err:
+                sync_status = "error"
+                local_errors["sync"] = str(sync_err)
                 logger.warning(f"同步任務資料到本地 DB 時發生非致命錯誤: {sync_err}")
 
             return {
                 "status": "success",
                 "message": "任務啟動成功",
-                "sendtask_uuid": final_uuid
+                "sendtask_uuid": final_uuid,
+                "sync_status": sync_status,
+                "local_errors": local_errors,
             }
         else:
             raise HTTPException(status_code=500, detail="程式端啟動任務失敗，詳情請查看伺服器日誌。")

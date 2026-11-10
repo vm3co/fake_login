@@ -1,6 +1,6 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, patch
 
 import pytest
 from sqlalchemy import insert, select, update
@@ -264,7 +264,7 @@ async def test_db_user_delegates_only_when_explicitly_injected():
     service.sync.return_value = {"versioned": True}
     assert DBUser().task_list_sync is None
     assert await DBUser(task_list_sync=service).sync_sendtasks(orgs=["org-1"]) == {"versioned": True}
-    service.sync.assert_awaited_once_with(orgs=["org-1"])
+    service.sync.assert_awaited_once_with(orgs=["org-1"], on_result=ANY)
 
 
 @pytest.mark.asyncio
@@ -317,7 +317,7 @@ async def test_list_job_preserves_versioned_outcomes_without_legacy_refresh(asyn
     assert response.status_code == 200
     assert captured["status"] == "partial"
     assert captured["recreated_count"] == captured["backed_up_count"] == captured["unarchived_count"] == captured["failed_count"] == 1
-    service.sync.assert_awaited_once_with(orgs=["org-1"])
+    service.sync.assert_awaited_once_with(orgs=["org-1"], on_result=ANY)
     refresh.assert_not_awaited()
 
 
