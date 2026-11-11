@@ -7,6 +7,58 @@ from backend.services.time_utils import format_datetime
 from backend.repository.db_controller import db_controller
 
 
+def backup_workbook(backup, details):
+    from datetime import date, datetime
+    from io import BytesIO
+    import json
+    import re
+    from openpyxl import Workbook
+
+    workbook = Workbook()
+    workbook.remove(workbook.active)
+    overflow = []
+    illegal = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+    def value_text(value):
+        if isinstance(value, (dict, list)):
+            value = json.dumps(value, ensure_ascii=False, allow_nan=False)
+        elif isinstance(value, (date, datetime)):
+            value = value.isoformat()
+        if isinstance(value, str):
+            value = illegal.sub(lambda match: f"\\u{ord(match.group()):04x}", value)
+        return value
+
+    def sheet(name, columns, records):
+        page = workbook.create_sheet(name)
+        page.append(columns)
+        for row_index, record in enumerate(records, start=2):
+            for column_index, column in enumerate(columns, start=1):
+                value = value_text(record.get(column))
+                if isinstance(value, str) and len(value) > 30000:
+                    for part, offset in enumerate(range(0, len(value), 30000), start=1):
+                        overflow.append({"sheet": name, "row": row_index, "column": column, "part": part, "value": value[offset:offset + 30000]})
+                    value = "See overflow sheet"
+                cell = page.cell(row_index, column_index, value)
+                if isinstance(value, str):
+                    cell.data_type = "s"
+        page.freeze_panes = "A2"
+        page.auto_filter.ref = page.dimensions
+
+    sheet("info", ["field", "value"], [{"field": key, "value": value} for key, value in backup.items()
+                                        if key not in {"task_snapshot", "stats_snapshot", "mail_template_snapshot"}])
+    sheet("task", ["field", "value"], [{"field": key, "value": value} for key, value in backup["task_snapshot"].items()])
+    sheet("stats", ["field", "value"], [{"field": key, "value": value} for key, value in (backup["stats_snapshot"] or {}).items()])
+    sheet("templates", ["template_uuid", "snapshot"], [{"template_uuid": key, "snapshot": value}
+                                                      for key, value in backup["mail_template_snapshot"].items()])
+    from backend.repository.models import TaskBackupDetail
+
+    sheet("details", [column.name for column in TaskBackupDetail.__table__.columns], details)
+    sheet("overflow", ["sheet", "row", "column", "part", "value"], list(overflow))
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
 async def export_table_to_excel(table_name: str, output_filename: str):
     """
     從資料庫撈取整張資料表，並匯出成 Excel (.xlsx) 檔案。

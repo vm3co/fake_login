@@ -29,7 +29,7 @@ from backend.services.job_queue import job_queue
 from backend.api.data_api import get_router as log_router
 from backend.api.user_api import get_router as user_router
 from backend.api.trigger_page_api import get_router as page_router
-from backend.api import notification_api, job_api, create_task_api, domain_api
+from backend.api import notification_api, job_api, create_task_api, domain_api, task_backup_api
 
 from backend.workers.archiving_worker import ArchivingWorker
 from backend.repository.database import init_db
@@ -451,6 +451,7 @@ app.include_router(user_router(db_user), prefix="/api")
 app.include_router(page_router(db_user), prefix="/api/trigger_page")
 app.include_router(notification_api.router, prefix="/api")
 app.include_router(job_api.router, prefix="/api")
+app.include_router(task_backup_api.router, prefix="/api")
 app.include_router(create_task_api.router, prefix="/api")
 app.include_router(domain_api.router, prefix="/api/domain")
 
