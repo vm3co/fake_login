@@ -55,7 +55,7 @@ async def sync_task_batch(core, uuids, *, orgs, on_result=None):
 
 def summarize_task_sync(statuses, tasks):
     names = {task["sendtask_uuid"]: task.get("sendtask_id", "Unknown") for task in tasks}
-    groups = {key: [] for key in ("added", "updated", "recreated", "backed_up", "successful", "failed")}
+    groups = {key: [] for key in ("added", "updated", "recreated", "reloaded", "backed_up", "successful", "failed")}
     for task_uuid, status in statuses.items():
         task = {"sendtask_uuid": task_uuid, "sendtask_id": names.get(task_uuid, task_uuid)}
         if status == "error":

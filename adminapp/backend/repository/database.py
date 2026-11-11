@@ -49,6 +49,7 @@ async def init_db():
     # 延遲 import 避免循環 (models.py 需要本檔的 Base)
     from backend.repository import models  # noqa: F401
     from backend.repository.task_backup_schema import migrate_task_backup_schema
+    from backend.repository.task_reload_schema import migrate_task_reload_schema
     async with engine.begin() as conn:
         # await conn.run_sync(Base.metadata.drop_all) # Uncomment to reset DB
         await conn.run_sync(Base.metadata.create_all)
@@ -59,6 +60,7 @@ async def init_db():
             ")"
         ))
         await migrate_task_backup_schema(conn)
+        await migrate_task_reload_schema(conn)
         migration_version = "20260827_timestamptz_notifications_job_runs"
         applied = await conn.execute(text(
             "SELECT 1 FROM schema_migrations WHERE version = :version"

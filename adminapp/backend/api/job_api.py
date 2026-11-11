@@ -3,6 +3,8 @@ import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Body
 from pydantic import BaseModel
 from datetime import datetime, timezone
+from dataclasses import asdict
+import time
 from typing import Optional, List, Dict, Any
 from backend.services.job_manager import JobManager
 from backend.api.user_api import get_current_user
@@ -14,7 +16,7 @@ from backend.api.data_api import filter_tasks_by_scope, get_sendtask_scope
 from backend.services.log_manager import Logger
 from backend.services.job_queue import job_queue
 from backend.services.task_sync_entrypoints import TaskSyncStatuses, TaskSyncCancelled, summarize_task_sync
-from backend.services.task_sync_core import TaskSyncAccessDenied
+from backend.services.task_sync_core import TaskSyncAccessDenied, TaskReloadIntent
 from backend.services.se2_task_reader import TaskNotFound
 
 logger = Logger().get_logger()
@@ -68,6 +70,44 @@ async def sync_job_items(accepted_items, job_id, *, orgs):
     except asyncio.CancelledError:
         raise TaskSyncCancelled(statuses) from None
     return summarize_task_sync(statuses, accepted_items)
+
+
+async def reload_job_items(accepted_items, job_id, *, orgs, actor, generations):
+    statuses = TaskSyncStatuses()
+    audit = []
+    archive_at = int(time.time())
+    try:
+        for item in accepted_items:
+            task_uuid = item["sendtask_uuid"]
+            try:
+                await job_manager.mark_item(job_id, task_uuid, "running")
+            except Exception as exc:
+                statuses.notification_errors[task_uuid] = str(exc)
+            try:
+                result = await db_user.get_task_sync().sync(
+                    task_uuid, orgs=orgs, archive_at=archive_at,
+                    reload_intent=TaskReloadIntent(job_id, actor, generations[task_uuid]),
+                )
+            except Exception as exc:
+                statuses[task_uuid] = "error"
+                statuses.errors[task_uuid] = str(exc)
+                try:
+                    await job_manager.mark_item(job_id, task_uuid, "failed", str(exc))
+                except Exception as reporting_error:
+                    statuses.notification_errors[task_uuid] = str(reporting_error)
+                continue
+            statuses[task_uuid] = result.status
+            statuses.results[task_uuid] = result
+            audit.append(asdict(result))
+            try:
+                await job_manager.mark_item(job_id, task_uuid, "completed", result.status)
+            except Exception as exc:
+                statuses.notification_errors[task_uuid] = str(exc)
+    except asyncio.CancelledError:
+        raise TaskSyncCancelled(statuses) from None
+    summary = summarize_task_sync(statuses, accepted_items)
+    summary["reload_results"] = audit
+    return summary
 
 def serialize_datetime(value: Optional[datetime]) -> Optional[str]:
     if value is None:
@@ -302,6 +342,36 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                 job_code=job_type,
                 items=items,
                 request_params={"ignore_archived": params.get("ignore_archived", False)},
+            )
+
+        elif job_type == "force_reload_sendtask":
+            if current_user.get("user_type") == "customer":
+                raise HTTPException(status_code=403, detail="客戶不可操作備援重匯")
+            orgs = get_sendtask_scope(current_user)
+            if orgs is not None and not orgs:
+                raise HTTPException(status_code=403, detail="無可操作的組織範圍")
+            if params.get("confirm_reload") is not True:
+                raise HTTPException(status_code=400, detail="必須明確確認先備援再重新匯入")
+            requested = params.get("uuids")
+            if (
+                not isinstance(requested, list) or not requested
+                or any(not isinstance(value, str) or not value.strip() or len(value) > 36 for value in requested)
+                or "backup_id" in params or "backup_ids" in params
+            ):
+                raise HTTPException(status_code=400, detail="必須指定現行任務 UUID 清單，不接受備援 ID")
+            tasks = await db_controller.get(SendTask, filters={"sendtask_uuid": list(dict.fromkeys(requested))})
+            tasks = filter_tasks_by_scope(tasks, orgs)
+            if not tasks:
+                raise HTTPException(status_code=403, detail="找不到有權操作的現行任務")
+            generations = {task.sendtask_uuid: task.local_generation_id for task in tasks}
+            items = [{"sendtask_uuid": task.sendtask_uuid, "sendtask_id": task.sendtask_id} for task in tasks]
+
+            async def task_func(*, accepted_items, job_id):
+                return await reload_job_items(accepted_items, job_id, orgs=orgs, actor=username, generations=generations)
+
+            admission = await job_manager.start_job(
+                username, "備援後重新匯入任務", task_func, job_code=job_type, items=items,
+                request_params={"confirm_reload": True, "source_generations": generations},
             )
 
         elif job_type == "upsert_selected_sendtasks":

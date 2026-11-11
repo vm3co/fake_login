@@ -1,5 +1,5 @@
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from backend.repository.models import SendLogDetail, SendLogStats, SendTask, TaskBackup
+from backend.repository.task_reload_schema import task_reload_operations
 from backend.services.se2_task_reader import SE2TaskReader, TaskNotFound, TaskReadError, TaskSnapshot, normalize_timestamp
 from backend.services.task_sync import (
     ExpectedTaskVersion, TaskSyncConflict, task_lock_key, task_sync_transaction,
@@ -20,11 +21,26 @@ class TaskSyncAccessDenied(PermissionError):
 
 
 @dataclass(frozen=True)
+class TaskReloadIntent:
+    operation_id: str
+    actor: str
+    source_generation: str
+
+    def __post_init__(self):
+        for value in (self.operation_id, self.source_generation):
+            if not isinstance(value, str) or not value.strip() or len(value) > 36:
+                raise ValueError("Invalid reload operation identity")
+        if not isinstance(self.actor, str) or not self.actor.strip():
+            raise ValueError("A trusted reload actor is required")
+
+
+@dataclass(frozen=True)
 class PreparedTaskSync:
     expected: ExpectedTaskVersion
     orgs: tuple[str, ...] | None
     snapshot: TaskSnapshot | None
     archive_at: int | None = None
+    reload_intent: TaskReloadIntent | None = None
 
 
 @dataclass(frozen=True)
@@ -38,6 +54,11 @@ class TaskSyncResult:
     changed_uuids: tuple[str, ...]
     backups_changed: bool
     archive_transition: str | None = None
+    source_generation: str | None = None
+    operation_id: str | None = None
+    actor: str | None = None
+    replayed: bool = False
+    source_revision: int | None = None
 
 
 def _require_scope(owner_gids, orgs):
@@ -128,8 +149,10 @@ class TaskSyncService:
         self.reader = reader
         self.stats_calculator = stats_calculator
 
-    async def prepare(self, task_uuid: str, *, orgs, sendlog_type=None, archive_at=None) -> PreparedTaskSync:
+    async def prepare(self, task_uuid: str, *, orgs, sendlog_type=None, archive_at=None, reload_intent=None) -> PreparedTaskSync:
         task_lock_key(task_uuid)
+        if reload_intent is not None and not isinstance(reload_intent, TaskReloadIntent):
+            raise ValueError("Reload intent must be trusted service data")
         if sendlog_type is not None and sendlog_type not in {"test", "pretest"}:
             raise TaskReadError("invalid_sendlog_type")
         if orgs is not None and (
@@ -148,6 +171,8 @@ class TaskSyncService:
         else:
             _require_scope(row.sendtask_owner_gid, scope)
             expected = ExpectedTaskVersion(task_uuid, row.local_generation_id, row.sync_revision)
+        if reload_intent is not None and expected.generation != reload_intent.source_generation:
+            raise TaskSyncConflict("The confirmed task generation is no longer current")
         mode = sendlog_type or ("pretest" if row is not None and row.pre_test_enable is True else "test")
         try:
             snapshot = deepcopy(await self.reader.read_task_snapshot(task_uuid, sendlog_type=mode))
@@ -156,20 +181,71 @@ class TaskSyncService:
             snapshot = None
         if snapshot is not None:
             _require_scope(snapshot.task.get("sendtask_owner_gid"), scope)
-            if row is not None:
+            if row is not None and reload_intent is None:
                 normalize_timestamp(row.sendtask_create_ut)
             if archive_at is not None:
                 task_values, _, _ = _snapshot_records(snapshot, task_uuid)
                 should_archive_task(task_values, now=archive_at)
-        return PreparedTaskSync(expected, scope, snapshot, archive_at)
+        return PreparedTaskSync(expected, scope, snapshot, archive_at, reload_intent)
 
-    async def sync(self, task_uuid: str, *, orgs, sendlog_type=None, archive_at=None) -> TaskSyncResult:
-        return await self.apply(await self.prepare(
-            task_uuid, orgs=orgs, sendlog_type=sendlog_type, archive_at=archive_at,
-        ))
+    async def sync(self, task_uuid: str, *, orgs, sendlog_type=None, archive_at=None, reload_intent=None) -> TaskSyncResult:
+        if reload_intent is not None:
+            replay = await self._reload_receipt(task_uuid, reload_intent, orgs)
+            if replay is not None:
+                return replay
+        try:
+            return await self.apply(await self.prepare(
+                task_uuid, orgs=orgs, sendlog_type=sendlog_type, archive_at=archive_at, reload_intent=reload_intent,
+            ))
+        except TaskSyncConflict:
+            if reload_intent is not None:
+                replay = await self._reload_receipt(task_uuid, reload_intent, orgs)
+                if replay is not None:
+                    return replay
+            raise
 
     async def apply(self, prepared: PreparedTaskSync) -> TaskSyncResult:
+        intent = prepared.reload_intent
+        if intent is not None:
+            replay = await self._reload_receipt(prepared.expected.task_uuid, intent, prepared.orgs)
+            if replay is not None:
+                return replay
+        try:
+            return await self._apply(prepared)
+        except TaskSyncConflict:
+            if intent is not None:
+                replay = await self._reload_receipt(prepared.expected.task_uuid, intent, prepared.orgs)
+                if replay is not None:
+                    return replay
+            raise
+
+    async def _reload_receipt(self, task_uuid, intent, orgs):
+        if not isinstance(intent, TaskReloadIntent):
+            raise ValueError("Reload intent must be trusted service data")
+        if orgs is not None and (
+            not isinstance(orgs, (list, tuple)) or not orgs
+            or any(not isinstance(group, str) or not group for group in orgs)
+        ):
+            raise TaskSyncAccessDenied("A trusted organization scope is required")
+        async with self.session_factory() as session:
+            receipt = (await session.execute(select(task_reload_operations).where(
+                task_reload_operations.c.operation_id == intent.operation_id,
+                task_reload_operations.c.task_uuid == task_uuid,
+            ))).mappings().one_or_none()
+        if receipt is None:
+            return None
+        if receipt["actor"] != intent.actor or receipt["source_generation"] != intent.source_generation:
+            raise TaskSyncConflict("Reload operation identity was reused")
+        _require_scope(receipt["owner_gids"], orgs)
+        values = dict(receipt["result"])
+        values["changed_uuids"] = tuple(values["changed_uuids"])
+        return replace(TaskSyncResult(**values), replayed=True)
+
+    async def _apply(self, prepared: PreparedTaskSync) -> TaskSyncResult:
         expected = prepared.expected
+        intent = prepared.reload_intent
+        if intent is not None and (expected.generation is None or expected.generation != intent.source_generation):
+            raise TaskSyncConflict("Reload requires the confirmed current generation")
         snapshot = deepcopy(prepared.snapshot)
         mapped = None if snapshot is None else _snapshot_records(snapshot, expected.task_uuid)
         backup_id = None
@@ -179,6 +255,7 @@ class TaskSyncService:
             task = locked.task
             if task is not None:
                 _require_scope(task.sendtask_owner_gid, prepared.orgs)
+            owner_gids = list(task.sendtask_owner_gid) if task is not None else []
             if snapshot is None:
                 if task is None:
                     if prepared.orgs is not None:
@@ -199,12 +276,13 @@ class TaskSyncService:
                 task_values, testcase_values, logs = mapped
                 created = task is None
                 was_archived = task is not None and task.is_archived is True
-                recreated = task is not None and normalize_timestamp(task.sendtask_create_ut) != task_values["sendtask_create_ut"]
-                if recreated:
-                    transfer = await transfer_task_to_backup(locked, reason="remote_recreated")
+                reloaded = intent is not None
+                recreated = task is not None and not reloaded and normalize_timestamp(task.sendtask_create_ut) != task_values["sendtask_create_ut"]
+                if recreated or reloaded:
+                    transfer = await transfer_task_to_backup(locked, reason="manual_reload" if reloaded else "remote_recreated")
                     backup_id = transfer.backup_id
                     backups_changed = True
-                if created or recreated:
+                if created or recreated or reloaded:
                     generation, revision = str(uuid4()), 0
                     task = SendTask(
                         **task_values, **testcase_values,
@@ -243,12 +321,21 @@ class TaskSyncService:
                 backups_changed |= await self._observe_backups(
                     locked.session, expected.task_uuid, task_values["sendtask_create_ut"], prepared.orgs,
                 )
-                status = "recreated" if recreated else "added" if created else "updated"
-        changed = () if status == "unchanged" else (expected.task_uuid,)
-        return TaskSyncResult(
-            status, expected.task_uuid, generation, revision, backup_id, True,
-            changed, backups_changed, archive_transition,
-        )
+                status = "reloaded" if reloaded else "recreated" if recreated else "added" if created else "updated"
+            changed = () if status == "unchanged" else (expected.task_uuid,)
+            result = TaskSyncResult(
+                status, expected.task_uuid, generation, revision, backup_id, True,
+                changed, backups_changed, archive_transition,
+                source_generation=expected.generation if intent else None,
+                operation_id=intent.operation_id if intent else None, actor=intent.actor if intent else None,
+                source_revision=expected.revision if intent else None,
+            )
+            if intent is not None:
+                await locked.session.execute(insert(task_reload_operations).values(
+                    operation_id=intent.operation_id, task_uuid=expected.task_uuid, actor=intent.actor,
+                    owner_gids=owner_gids, source_generation=expected.generation, result=asdict(result),
+                ))
+        return result
 
     @staticmethod
     async def _observe_backups(session, task_uuid, create_ut, orgs):
