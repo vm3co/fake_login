@@ -66,6 +66,7 @@ async def list_backups(
     sort_by: Literal["backed_up_at", "source_create_ut", "sendtask_id", "last_remote_checked_at"] = "backed_up_at",
     sort: Literal["asc", "desc"] = "desc",
     recreated: bool | None = None,
+    observation: Literal["recreated", "unproven", "unchecked", "error"] | None = None,
     remote_status: Literal["unchecked", "present", "missing", "error"] | None = None,
     reason: Literal["remote_missing", "remote_recreated", "manual_reload"] | None = None,
     backed_up_from: date | None = None, backed_up_to: date | None = None,
@@ -75,6 +76,12 @@ async def list_backups(
     if backed_up_from and backed_up_to and backed_up_from > backed_up_to:
         raise HTTPException(status_code=422, detail="Invalid backup date range")
     statement = scoped_backups(scope)
+    if observation == "recreated":
+        statement = statement.where(TaskBackup.recreated_detected_at.isnot(None))
+    elif observation == "unproven":
+        statement = statement.where(TaskBackup.recreated_detected_at.is_(None))
+    elif observation in {"unchecked", "error"}:
+        statement = statement.where(TaskBackup.latest_remote_status == observation)
     if search:
         pattern = f"%{search}%"
         statement = statement.where(or_(TaskBackup.sendtask_id.ilike(pattern), TaskBackup.source_task_uuid.ilike(pattern)))

@@ -67,6 +67,15 @@ def merge_job_results(previous, latest):
         if warning not in warnings:
             warnings.append(warning)
     merged["warnings"] = warnings
+    if "backup_observations" in previous or "backup_observations" in latest:
+        observations = {row["backup_id"]: row for source in (previous, latest)
+                        for row in source.get("backup_observations", [])}
+        merged["backup_observations"] = list(observations.values())
+        merged["changed_backup_ids"] = list(dict.fromkeys(
+            previous.get("changed_backup_ids", []) + latest.get("changed_backup_ids", [])
+        ))
+        merged["checked_count"] = len(observations)
+        merged["backup_check_items"] = {**previous.get("backup_check_items", {}), **latest.get("backup_check_items", {})}
     targets = {task["sendtask_uuid"]: task for source in (previous, latest)
                for task in source.get("target_tasks", [])}
     if targets:

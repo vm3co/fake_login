@@ -144,6 +144,11 @@ class JobManager:
         await db_controller.update(JobRunItem, {"job_id": job_id, "sendtask_uuid": sendtask_uuid}, values)
 
     async def _restore_committed_items(self, job_id, result):
+        for task_uuid, outcome in result.get("backup_check_items", {}).items():
+            await db_controller.update(JobRunItem, {
+                "job_id": job_id, "sendtask_uuid": task_uuid, "status": ["pending", "running"],
+            }, {"status": "failed" if outcome == "backup_check_error" else "completed", "reason": outcome,
+                "finished_at": sql_func.now()})
         for task_uuid, committed in result.get("sync_results", {}).items():
             if committed.get("committed"):
                 await db_controller.update(JobRunItem, {

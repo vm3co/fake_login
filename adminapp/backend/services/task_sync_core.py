@@ -41,6 +41,7 @@ class PreparedTaskSync:
     snapshot: TaskSnapshot | None
     archive_at: int | None = None
     reload_intent: TaskReloadIntent | None = None
+    observed_at: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -175,6 +176,7 @@ class TaskSyncService:
         if reload_intent is not None and expected.generation != reload_intent.source_generation:
             raise TaskSyncConflict("The confirmed task generation is no longer current")
         mode = sendlog_type or ("pretest" if row is not None and row.pre_test_enable is True else "test")
+        observed_at = datetime.now(timezone.utc)
         try:
             snapshot = deepcopy(await self.reader.read_task_snapshot(task_uuid, sendlog_type=mode))
             _snapshot_records(snapshot, task_uuid)
@@ -187,7 +189,7 @@ class TaskSyncService:
             if archive_at is not None:
                 task_values, _, _ = _snapshot_records(snapshot, task_uuid)
                 should_archive_task(task_values, now=archive_at)
-        return PreparedTaskSync(expected, scope, snapshot, archive_at, reload_intent)
+        return PreparedTaskSync(expected, scope, snapshot, archive_at, reload_intent, observed_at)
 
     async def sync(self, task_uuid: str, *, orgs, sendlog_type=None, archive_at=None, reload_intent=None) -> TaskSyncResult:
         if reload_intent is not None:
@@ -289,6 +291,11 @@ class TaskSyncService:
                     backup_id = transfer.backup_id
                     backups_changed = True
                     status, generation, revision = "backed_up", None, None
+                from backend.services.backup_observation import update_backup_observations
+
+                observations = await update_backup_observations(locked.session, task_uuid=expected.task_uuid,
+                    scope=prepared.orgs, checked_at=prepared.observed_at or datetime.now(timezone.utc), status="missing")
+                backups_changed |= any(row["applied"] for row in observations)
             else:
                 _require_scope(snapshot.task.get("sendtask_owner_gid"), prepared.orgs)
                 task_values, testcase_values, logs = mapped
@@ -337,7 +344,7 @@ class TaskSyncService:
                     set_={key: getattr(statement.excluded, key) for key in stats_values if key != "sendtask_uuid"},
                 ))
                 backups_changed |= await self._observe_backups(
-                    locked.session, expected.task_uuid, task_values["sendtask_create_ut"], prepared.orgs,
+                    locked.session, expected.task_uuid, task_values["sendtask_create_ut"], prepared.orgs, prepared.observed_at,
                 )
                 status = "reloaded" if reloaded else "recreated" if recreated else "added" if created else "updated"
             changed = () if status == "unchanged" else (expected.task_uuid,)
@@ -356,22 +363,9 @@ class TaskSyncService:
         return result
 
     @staticmethod
-    async def _observe_backups(session, task_uuid, create_ut, orgs):
-        filters = [TaskBackup.source_task_uuid == task_uuid]
-        if orgs is not None:
-            filters.append(TaskBackup.owner_gids.overlap(list(orgs)))
-        backups = (await session.execute(select(TaskBackup).where(*filters).order_by(
-            TaskBackup.backup_id,
-        ).with_for_update())).scalars().all()
-        now = datetime.now(timezone.utc)
-        for backup in backups:
-            backup.latest_remote_status = "present"
-            backup.last_remote_checked_at = now
-            backup.last_remote_create_ut = create_ut
-            try:
-                old_create_ut = normalize_timestamp(backup.source_create_ut)
-            except TaskReadError:
-                continue
-            if old_create_ut != create_ut and backup.recreated_detected_at is None:
-                backup.recreated_detected_at = now
-        return bool(backups)
+    async def _observe_backups(session, task_uuid, create_ut, orgs, checked_at=None):
+        from backend.services.backup_observation import update_backup_observations
+
+        rows = await update_backup_observations(session, task_uuid=task_uuid, scope=orgs,
+            checked_at=checked_at or datetime.now(timezone.utc), status="present", create_ut=create_ut)
+        return any(row["applied"] for row in rows)

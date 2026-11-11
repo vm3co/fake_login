@@ -20,6 +20,8 @@ from backend.services.task_sync_core import TaskSyncAccessDenied, TaskReloadInte
 from backend.services.task_sync import TaskSyncConflict
 from backend.services.task_sync_progress import merge_job_results, report_targets, report_outcomes
 from backend.services.se2_task_reader import TaskNotFound
+from backend.services.backup_check import BackupCheckService, select_backup_targets
+from backend.services.task_backup_access import backup_scope
 
 logger = Logger().get_logger()
 router = APIRouter(
@@ -375,6 +377,32 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                 items=items,
                 request_params={"ignore_archived": params.get("ignore_archived", False)},
             )
+
+        elif job_type == "check_backup_recreated":
+            scope = backup_scope(current_user)
+            if set(params) != {"backup_ids"}:
+                raise HTTPException(status_code=400, detail="Only explicit backup_ids are accepted")
+            core = db_user.get_task_sync()
+            targets = await select_backup_targets(core.session_factory, params["backup_ids"], scope)
+            selected_by_source = {target["sendtask_uuid"]: target["backup_ids"] for target in targets}
+
+            async def task_func(*, accepted_items, job_id):
+                selected = [backup_id for item in accepted_items for backup_id in selected_by_source[item["sendtask_uuid"]]]
+
+                async def completed(target, rows, status):
+                    try:
+                        await job_manager.mark_item(job_id, target["sendtask_uuid"],
+                            "failed" if status == "error" else "completed", "backup_check_" + status)
+                    except Exception as exc:
+                        from backend.services.task_sync_progress import report_warning
+
+                        await report_warning(target["sendtask_uuid"], "item_reporting", str(exc))
+
+                return await BackupCheckService(core.session_factory, core.reader).check(selected, scope=scope, on_source=completed)
+
+            admission = await job_manager.start_job(username, "檢查備援來源重建狀態", task_func,
+                job_code=job_type, items=[{"sendtask_uuid": target["sendtask_uuid"], "sendtask_id": target["sendtask_id"]} for target in targets],
+                request_params={"backup_ids": list(dict.fromkeys(params["backup_ids"])), "source_backups": selected_by_source})
 
         elif job_type == "force_reload_sendtask":
             if current_user.get("user_type") == "customer":

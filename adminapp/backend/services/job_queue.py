@@ -194,6 +194,7 @@ class JobQueue:
                 ).with_for_update())
                 if job is not None:
                     job.result = merge_job_results(job.result, result)
+                    await self._finish_backup_checks(session, job_id, job.result)
                     for task_uuid, committed in job.result.get("sync_results", {}).items():
                         if committed.get("committed"):
                             await session.execute(update(JobRunItem).where(
@@ -210,6 +211,7 @@ class JobQueue:
             if status == "completed":
                 status = result.get("job_status", status)
             result["job_status"] = status
+            await self._finish_backup_checks(session, job_id, result)
             for task_uuid, committed in result.get("sync_results", {}).items():
                 if committed.get("committed"):
                     await session.execute(update(JobRunItem).where(
@@ -233,6 +235,14 @@ class JobQueue:
                 )
             )
             await session.commit()
+
+    async def _finish_backup_checks(self, session, job_id, result):
+        for task_uuid, outcome in result.get("backup_check_items", {}).items():
+            await session.execute(update(JobRunItem).where(
+                JobRunItem.job_id == job_id, JobRunItem.sendtask_uuid == task_uuid,
+                JobRunItem.status.in_(("pending", "running")),
+            ).values(status="failed" if outcome == "backup_check_error" else "completed",
+                     reason=outcome, finished_at=func.now()))
 
 
 job_queue = JobQueue()
