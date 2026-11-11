@@ -7,6 +7,7 @@ from backend.repository.models import SendTask, TaskBackup
 from backend.services.se2_task_reader import SE2TaskReader, TaskNotFound, TaskReadError, normalize_timestamp
 from backend.services.task_archive_policy import should_archive_task
 from backend.services.task_sync_core import TaskSyncAccessDenied, _require_scope
+from backend.services.task_sync import TaskSyncConflict
 
 
 class TaskListSyncService:
@@ -58,6 +59,13 @@ class TaskListSyncService:
             local = {row.sendtask_uuid: row for row in (await session.execute(tasks)).all()}
             history = {row.source_task_uuid: row for row in (await session.execute(backups)).all()}
         candidates = sorted((set(local) | set(history) | set(remote_map)) - blocked - remote_outside_scope)
+        from backend.services.task_sync_progress import report_outcomes, report_targets, report_warning
+
+        await report_targets([{
+            "sendtask_uuid": task_uuid,
+            "sendtask_id": remote_map[task_uuid]["sendtask_id"] if task_uuid in remote_map
+            else (local.get(task_uuid) or history[task_uuid]).sendtask_id,
+        } for task_uuid in candidates])
         result = {
             "versioned": True, "status": "success", "results": [], "failed_tasks": [],
             "changed_uuids": [], "backups_changed": False, "skipped": [], "notification_errors": [],
@@ -92,10 +100,12 @@ class TaskListSyncService:
                 else:
                     if not known and should_archive_task({**task, "stop_time_new": metadata["stop_time_new"]}, now=now):
                         result["skipped"].append(summary)
+                        await report_outcomes({"skipped_tasks": list(result["skipped"]), "skipped_count": len(result["skipped"])})
                         continue
                 synced = await self.core.sync(task_uuid, orgs=scope, sendlog_type=mode, archive_at=now)
             except Exception as exc:
-                result["failed_tasks"].append({**summary, "reason": str(exc)})
+                result["failed_tasks"].append({**summary, "reason": str(exc), "retryable": isinstance(exc, TaskSyncConflict)})
+                await report_outcomes({"failed_tasks": list(result["failed_tasks"])})
                 continue
             result["results"].append(synced)
             result["changed_uuids"].extend(synced.changed_uuids)
@@ -110,6 +120,7 @@ class TaskListSyncService:
                     await on_result(synced)
                 except Exception as exc:
                     result["notification_errors"].append({**summary, "reason": str(exc)})
+                    await report_warning(task_uuid, "notification", str(exc))
         result["status"] = "partial" if result["failed_tasks"] else "success"
         result["archived"] = len(result["archived_tasks"])
         result["deleted"] = 0

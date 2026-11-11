@@ -6,6 +6,7 @@ from backend.services.log_manager import Logger
 from backend.repository.db_controller import db_controller
 from backend.repository.models import JobRun, JobRunItem
 from backend.services.job_queue import job_queue
+from backend.services.task_sync_progress import current_progress_result, exception_result, merge_job_results
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.sql import func as sql_func
@@ -84,7 +85,7 @@ class JobManager:
                         result = await task_func(*args, accepted_items=accepted_items, job_id=job_id, **kwargs)
                     else:
                         result = await task_func(*args, **kwargs)
-                result = result if isinstance(result, dict) else {}
+                result = merge_job_results(current_progress_result(), result)
                 if excluded_items:
                     result.setdefault("skipped_tasks", []).extend(excluded_items)
                     result["skipped_count"] = len(result["skipped_tasks"])
@@ -92,14 +93,22 @@ class JobManager:
                 if job_status not in {"completed", "partial", "failed"}:
                     raise ValueError(f"Unsupported job status: {job_status}")
                 self.jobs[job_id].update(status=job_status, result=result, error=result.get("error_summary"))
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as error:
+                committed = merge_job_results(current_progress_result(), exception_result(error))
+                self.jobs[job_id].update(status="cancelled", result=merge_job_results(
+                    self.jobs[job_id].get("result"), committed,
+                ))
+                await self._restore_committed_items(job_id, committed)
                 await self._finish_pending_items(job_id, "cancelled", "cancelled")
-                self.jobs[job_id]["status"] = "cancelled"
                 raise
             except Exception as error:
                 logger.error(f"Job {job_id} ({job_type}) failed for {username}: {error}")
+                committed = merge_job_results(current_progress_result(), exception_result(error))
+                self.jobs[job_id].update(status="failed", error=str(error), result=merge_job_results(
+                    self.jobs[job_id].get("result"), committed,
+                ))
+                await self._restore_committed_items(job_id, committed)
                 await self._finish_pending_items(job_id, "failed", str(error))
-                self.jobs[job_id].update(status="failed", error=str(error))
                 raise
 
         async def queue_handler(_job_id: str):
@@ -133,6 +142,13 @@ class JobManager:
         if reason is not None:
             values["reason"] = reason
         await db_controller.update(JobRunItem, {"job_id": job_id, "sendtask_uuid": sendtask_uuid}, values)
+
+    async def _restore_committed_items(self, job_id, result):
+        for task_uuid, committed in result.get("sync_results", {}).items():
+            if committed.get("committed"):
+                await db_controller.update(JobRunItem, {
+                    "job_id": job_id, "sendtask_uuid": task_uuid, "status": ["pending", "running"],
+                }, {"status": "completed", "reason": committed["status"], "finished_at": sql_func.now()})
 
     async def _claim_items(self, job_id: str, items: List[Dict[str, str]]):
         accepted, excluded = [], []

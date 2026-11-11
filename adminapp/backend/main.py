@@ -167,6 +167,8 @@ def scheduler_enqueue_callback(job_code, job_type, execution_class, job_func):
 
 def tracked_scheduler_job(job_type, job_func):
     async def wrapper():
+        from backend.services.task_sync_progress import TaskSyncProgress, exception_result, merge_job_results, track_task_sync
+
         job_id = str(uuid.uuid4())
         await db_controller.create(JobRun, {
             "job_id": job_id,
@@ -176,8 +178,15 @@ def tracked_scheduler_job(job_type, job_func):
             "status": "running",
             "message": f"系統排程執行中：{job_type}",
         })
+
+        async def save(result):
+            await db_controller.update(JobRun, {"job_id": job_id}, {"result": result})
+
+        progress = TaskSyncProgress(save)
         try:
-            result = await job_func()
+            with track_task_sync(progress):
+                result = await job_func()
+            result = merge_job_results(progress.result, result)
             await db_controller.update(JobRun, {"job_id": job_id}, {
                 "status": result.get("job_status", "completed") if isinstance(result, dict) else "completed",
                 "result": result,
@@ -185,19 +194,17 @@ def tracked_scheduler_job(job_type, job_func):
             })
             return result
         except asyncio.CancelledError as error:
-            committed = getattr(error, "results", None)
             await db_controller.update(JobRun, {"job_id": job_id}, {
                 "status": "cancelled",
-                "result": summarize_task_sync(committed, []) if isinstance(committed, TaskSyncStatuses) else None,
+                "result": merge_job_results(progress.result, exception_result(error)),
                 "finished_at": func.now(),
             })
             raise
         except Exception as error:
-            committed = getattr(error, "results", None)
             await db_controller.update(JobRun, {"job_id": job_id}, {
                 "status": "failed",
                 "error": str(error),
-                "result": summarize_task_sync(committed, []) if isinstance(committed, TaskSyncStatuses) else None,
+                "result": merge_job_results(progress.result, exception_result(error)),
                 "finished_at": func.now(),
             })
             raise

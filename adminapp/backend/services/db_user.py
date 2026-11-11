@@ -186,7 +186,9 @@ class DBUser:
                 SendTask.sync_revision == result.revision,
             ))).one_or_none()
         if row is not None and (result.status in {"added", "recreated"} or (old_todaysend or 0) == 0) and (row.todaysend or 0) > 0:
-            await send_telegram_notification(f"任務開始執行：{escape_markdown_v2(row.sendtask_id)}")
+            sent = await send_telegram_notification(f"任務開始執行：{escape_markdown_v2(row.sendtask_id)}")
+            if sent is False:
+                raise RuntimeError("Telegram notification delivery failed")
 
     async def authorize_sync_candidate(self, task_uuid, *, orgs):
         from backend.services.task_sync_core import _require_scope
@@ -441,7 +443,9 @@ class DBUser:
 
         try:
             return await self.task_list_sync.sync(orgs=orgs, on_result=record)
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as exc:
+            if isinstance(getattr(exc, "results", None), TaskSyncStatuses):
+                committed.merge(exc.results)
             raise TaskSyncCancelled(committed) from None
     
     # Mtmpl model 允許的欄位名稱（來自 SE2 同步）
@@ -586,69 +590,12 @@ class DBUser:
         return await self.sync_tasks(uuids, orgs=orgs, on_result=on_result)
 
     async def get_sendlog(self, sendtask_uuid: str, need_id=True, use_cache=True):
-        
-        # 0. 嘗試從 Redis 讀取快取
-        cache_key = f"task:{sendtask_uuid}:details"
-        if use_cache:
-            try:
-                redis_client = RedisClient()
-                client = await redis_client.get_client()
-                
-                cached_data = await client.get(cache_key)
-                if cached_data:
-                    logger.debug(f"Cache Hit for {sendtask_uuid}")
-                    return json.loads(cached_data)
-            except Exception as e:
-                logger.warning(f"Redis cache miss/error for {sendtask_uuid}: {e}")
-        else:
-            # 如果不使用快取，還是需要 client 來寫入
-            try:
-                from backend.services.redis_client import RedisClient
-                redis_client = RedisClient()
-                client = await redis_client.get_client()
-            except Exception as e:
-                logger.warning(f"Failed to initialize Redis client: {e}")
+        from backend.services.task_details_cache import TaskDetailsCache
 
-        # 1. DB 查詢 send_log_details using ORM
-        # Use DBController
-        log_records = await db_controller.get(SendLogDetail, {"sendtask_uuid": sendtask_uuid})
-        
-        # Convert Query Result to list of dicts for compatibility with existing logic
-        data = []
-        for row in log_records:
-            d = {col.name: getattr(row, col.name) for col in row.__table__.columns}
-            data.append(d)
-        
-        # 資料沒變，先把 id 拿掉 (如果不需要的話)
-        if not need_id: 
-            # 注意：這裡邏輯跟原版稍微不同，原版是在 return 前 pop。
-            # 但若要寫入 Cache，通常需不需要 id? Dashboard 通常不需要 id，但需要 uuid
-            # 為了保持一致性，先複製一份處理
-            data_to_cache = [d.copy() for d in data] if data else []
-            for dd in data_to_cache:
-                dd.pop("id", None)
-            
-            # 使用 data_to_cache 做為快取來源
-            final_data = data_to_cache
-        else:
-            final_data = data
-
-        # 2. 寫回 Redis
-        try:
-            if final_data:
-                # 檢查這任務是否已封存，決定 TTL
-                task = await db_controller.get_one(SendTask, {"sendtask_uuid": sendtask_uuid})
-                is_archived = task.is_archived if task else False
-                
-                ttl = 3600 if is_archived else 86400  # 1小時 vs 1天 (Active)
-                
-                # 序列化
-                await client.set(cache_key, json.dumps(final_data, default=str), ex=ttl)
-                logger.debug(f"Cache Set for {sendtask_uuid} with TTL {ttl}")
-        except Exception as e:
-             logger.warning(f"Failed to set Redis cache for {sendtask_uuid}: {e}")
-
-        return final_data
+        factory = getattr(self.task_sync, "session_factory", None) or db_controller.get_session
+        return await TaskDetailsCache(factory, RedisClient().get_client).get(
+            sendtask_uuid, need_id=need_id, use_cache=use_cache,
+        )
 
 ## user相關操作
     async def get_registered_account(

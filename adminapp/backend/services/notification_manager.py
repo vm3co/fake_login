@@ -46,8 +46,11 @@ async def send_telegram_notification(message: str):
         
         if response.status_code == 200:
             logger.info("Telegram notification sent successfully.")
+            return True
         else:
             logger.error(f"Failed to send Telegram notification. Status: {response.status_code}, Response: {response.text}")
+            return False
             
     except httpx.RequestError as e:
         logger.error(f"An error occurred while sending Telegram notification: {e}")
+        return False

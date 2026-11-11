@@ -59,6 +59,7 @@ class TaskSyncResult:
     actor: str | None = None
     replayed: bool = False
     source_revision: int | None = None
+    warnings: tuple = ()
 
 
 def _require_scope(owner_gids, orgs):
@@ -192,7 +193,7 @@ class TaskSyncService:
         if reload_intent is not None:
             replay = await self._reload_receipt(task_uuid, reload_intent, orgs)
             if replay is not None:
-                return replay
+                return await self._complete(replay)
         try:
             return await self.apply(await self.prepare(
                 task_uuid, orgs=orgs, sendlog_type=sendlog_type, archive_at=archive_at, reload_intent=reload_intent,
@@ -201,7 +202,7 @@ class TaskSyncService:
             if reload_intent is not None:
                 replay = await self._reload_receipt(task_uuid, reload_intent, orgs)
                 if replay is not None:
-                    return replay
+                    return await self._complete(replay)
             raise
 
     async def apply(self, prepared: PreparedTaskSync) -> TaskSyncResult:
@@ -209,15 +210,32 @@ class TaskSyncService:
         if intent is not None:
             replay = await self._reload_receipt(prepared.expected.task_uuid, intent, prepared.orgs)
             if replay is not None:
-                return replay
+                return await self._complete(replay)
         try:
-            return await self._apply(prepared)
+            result = await self._apply(prepared)
         except TaskSyncConflict:
             if intent is not None:
                 replay = await self._reload_receipt(prepared.expected.task_uuid, intent, prepared.orgs)
                 if replay is not None:
-                    return replay
+                    return await self._complete(replay)
             raise
+        return await self._complete(result)
+
+    @staticmethod
+    async def _complete(result):
+        import asyncio
+        from backend.services.task_sync_progress import report_commit
+        from backend.services.task_sync_entrypoints import TaskSyncCancelled, TaskSyncStatuses
+
+        reporting = asyncio.create_task(report_commit(result, invalidate=True))
+        try:
+            return await asyncio.shield(reporting)
+        except asyncio.CancelledError:
+            result = await reporting
+            statuses = TaskSyncStatuses()
+            statuses[result.task_uuid] = result.status
+            statuses.results[result.task_uuid] = result
+            raise TaskSyncCancelled(statuses) from None
 
     async def _reload_receipt(self, task_uuid, intent, orgs):
         if not isinstance(intent, TaskReloadIntent):

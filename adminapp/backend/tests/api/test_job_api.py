@@ -130,12 +130,15 @@ async def test_partial_job_is_returned_as_history(async_client):
     partial_job.status = "partial"
     execute_scalars = AsyncMock(side_effect=[[], [partial_job]])
     try:
-        with patch("backend.api.job_api.db_controller.execute_scalars", execute_scalars):
+           with patch("backend.api.job_api.db_controller.execute_scalars", execute_scalars), \
+               patch("backend.api.job_api.db_controller.get", new=AsyncMock(return_value=[])):
             response = await async_client.get("/api/jobs?source=manual")
     finally:
         app.dependency_overrides.pop(get_current_user, None)
 
     assert response.status_code == 200
     assert response.json()[0]["status"] == "partial"
+    assert response.json()[0]["result"]["changed_uuids"] == []
+    assert response.json()[0]["result"]["updated"] == 1
     history_statement = str(execute_scalars.await_args_list[1].args[0])
     assert "NOT IN" in history_statement

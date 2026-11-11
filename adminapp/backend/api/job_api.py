@@ -17,6 +17,8 @@ from backend.services.log_manager import Logger
 from backend.services.job_queue import job_queue
 from backend.services.task_sync_entrypoints import TaskSyncStatuses, TaskSyncCancelled, summarize_task_sync
 from backend.services.task_sync_core import TaskSyncAccessDenied, TaskReloadIntent
+from backend.services.task_sync import TaskSyncConflict
+from backend.services.task_sync_progress import merge_job_results, report_targets, report_outcomes
 from backend.services.se2_task_reader import TaskNotFound
 
 logger = Logger().get_logger()
@@ -36,6 +38,7 @@ class JobRequest(BaseModel):
 
 async def sync_job_items(accepted_items, job_id, *, orgs):
     statuses = TaskSyncStatuses()
+    await report_targets(accepted_items)
     try:
         for item in accepted_items:
             task_uuid = item["sendtask_uuid"]
@@ -48,6 +51,7 @@ async def sync_job_items(accepted_items, job_id, *, orgs):
             except Exception as exc:
                 statuses[task_uuid] = "error"
                 statuses.errors[task_uuid] = str(exc)
+                statuses.retryable_errors[task_uuid] = isinstance(exc, TaskSyncConflict)
                 try:
                     await job_manager.mark_item(job_id, task_uuid, "failed", str(exc))
                 except Exception as reporting_error:
@@ -56,6 +60,7 @@ async def sync_job_items(accepted_items, job_id, *, orgs):
             statuses.update(result)
             statuses.results.update(getattr(result, "results", {}))
             statuses.errors.update(getattr(result, "errors", {}))
+            statuses.retryable_errors.update(getattr(result, "retryable_errors", {}))
             statuses.notification_errors.update(getattr(result, "notification_errors", {}))
             status = result.get(task_uuid, "error")
             try:
@@ -66,14 +71,20 @@ async def sync_job_items(accepted_items, job_id, *, orgs):
         statuses.update(exc.results)
         statuses.results.update(exc.results.results)
         statuses.errors.update(exc.results.errors)
+        statuses.retryable_errors.update(exc.results.retryable_errors)
         raise TaskSyncCancelled(statuses) from None
-    except asyncio.CancelledError:
+    except asyncio.CancelledError as exc:
+        if isinstance(getattr(exc, "results", None), TaskSyncStatuses):
+            statuses.merge(exc.results)
         raise TaskSyncCancelled(statuses) from None
-    return summarize_task_sync(statuses, accepted_items)
+    summary = summarize_task_sync(statuses, accepted_items)
+    await report_outcomes(summary)
+    return summary
 
 
 async def reload_job_items(accepted_items, job_id, *, orgs, actor, generations):
     statuses = TaskSyncStatuses()
+    await report_targets(accepted_items)
     audit = []
     archive_at = int(time.time())
     try:
@@ -91,6 +102,8 @@ async def reload_job_items(accepted_items, job_id, *, orgs, actor, generations):
             except Exception as exc:
                 statuses[task_uuid] = "error"
                 statuses.errors[task_uuid] = str(exc)
+                statuses.retryable_errors[task_uuid] = isinstance(exc, TaskSyncConflict)
+                await report_outcomes(summarize_task_sync(statuses, accepted_items))
                 try:
                     await job_manager.mark_item(job_id, task_uuid, "failed", str(exc))
                 except Exception as reporting_error:
@@ -103,10 +116,13 @@ async def reload_job_items(accepted_items, job_id, *, orgs, actor, generations):
                 await job_manager.mark_item(job_id, task_uuid, "completed", result.status)
             except Exception as exc:
                 statuses.notification_errors[task_uuid] = str(exc)
-    except asyncio.CancelledError:
+    except asyncio.CancelledError as exc:
+        if isinstance(getattr(exc, "results", None), TaskSyncStatuses):
+            statuses.merge(exc.results)
         raise TaskSyncCancelled(statuses) from None
     summary = summarize_task_sync(statuses, accepted_items)
     summary["reload_results"] = audit
+    await report_outcomes(summary)
     return summary
 
 def serialize_datetime(value: Optional[datetime]) -> Optional[str]:
@@ -129,7 +145,7 @@ def serialize_job_run(job: JobRun) -> Dict[str, Any]:
         "queue_position": job.queue_sequence,
         "cancel_requested_at": serialize_datetime(job.cancel_requested_at),
         "message": job.message,
-        "result": job.result,
+        "result": merge_job_results({}, job.result),
         "error": job.error,
         "start_time": serialize_datetime(job.started_at),
         "finished_at": serialize_datetime(job.finished_at),
@@ -189,6 +205,7 @@ async def list_jobs(source: str = "manual", current_user: dict = Depends(get_cur
             "sendtask_id": item.sendtask_id,
             "status": item.status,
             "reason": item.reason,
+            "outcome": item.reason if item.status in {"completed", "failed"} else None,
             "blocking_username": blocking_job.owner_username if blocking_job else None,
         })
     for items in items_by_job.values():
@@ -312,6 +329,21 @@ async def start_job(request: JobRequest, current_user: dict = Depends(get_curren
                         "changed_uuids": result["changed_uuids"],
                         "backups_changed": result["backups_changed"],
                     })
+                    statuses = TaskSyncStatuses()
+                    for committed in result.get("results", []):
+                        statuses[committed.task_uuid] = committed.status
+                        statuses.results[committed.task_uuid] = committed
+                    for failed in result.get("failed_tasks", []):
+                        task_uuid = failed["sendtask_uuid"]
+                        statuses[task_uuid] = "error"
+                        statuses.errors[task_uuid] = failed.get("reason", "sync_error")
+                        statuses.retryable_errors[task_uuid] = failed.get("retryable", False)
+                    if "results" in result:
+                        summary = merge_job_results(summary, summarize_task_sync(
+                            statuses, result["added"] + result["changed"] + result["recreated"] + result["backed_up"],
+                        ))
+                    else:
+                        summary = merge_job_results({}, summary)
                 return summary
 
             admission = await job_manager.start_job(username, "更新任務列表", task_func, job_code=job_type)

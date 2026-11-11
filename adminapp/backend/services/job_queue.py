@@ -8,8 +8,9 @@ from sqlalchemy import and_, exists, func, or_, select, update
 from sqlalchemy.orm import aliased
 
 from backend.repository.database import async_session
-from backend.repository.models import JobRun
+from backend.repository.models import JobRun, JobRunItem
 from backend.services.log_manager import Logger
+from backend.services.task_sync_progress import TaskSyncProgress, exception_result, merge_job_results, track_task_sync
 
 logger = Logger().get_logger()
 
@@ -63,6 +64,9 @@ class JobQueue:
             if job.status == "queued":
                 job.status = "cancelled"
                 job.finished_at = func.now()
+                await session.execute(update(JobRunItem).where(
+                    JobRunItem.job_id == job_id, JobRunItem.status.in_(("pending", "running")),
+                ).values(status="cancelled", reason="cancelled", finished_at=func.now()))
                 await session.commit()
                 self.wake()
                 return "cancelled"
@@ -157,16 +161,19 @@ class JobQueue:
             await self._finish(job_id, "failed", error=f"No handler registered for {job_code}")
             return
         async with self._semaphore:
+            progress = TaskSyncProgress(lambda result: self.save_progress(job_id, result))
             try:
                 await self._set_running(job_id)
-                result = await handler(job_id)
+                with track_task_sync(progress):
+                    result = await handler(job_id)
+                result = merge_job_results(progress.result, result)
                 status = result.get("job_status", "completed") if isinstance(result, dict) else "completed"
                 await self._finish(job_id, status, result=result)
-            except asyncio.CancelledError:
-                await self._finish(job_id, "cancelled")
+            except asyncio.CancelledError as error:
+                await self._finish(job_id, "cancelled", result=merge_job_results(progress.result, exception_result(error)))
             except Exception as error:
                 logger.error(f"Queued job {job_id} failed: {error}")
-                await self._finish(job_id, "failed", error=str(error))
+                await self._finish(job_id, "failed", result=merge_job_results(progress.result, exception_result(error)), error=str(error))
             finally:
                 self.wake()
 
@@ -179,8 +186,40 @@ class JobQueue:
             )
             await session.commit()
 
+    async def save_progress(self, job_id, result):
+        async with async_session() as session:
+            async with session.begin():
+                job = await session.scalar(select(JobRun).where(
+                    JobRun.job_id == job_id, JobRun.claimed_by == self.worker_id,
+                ).with_for_update())
+                if job is not None:
+                    job.result = merge_job_results(job.result, result)
+                    for task_uuid, committed in job.result.get("sync_results", {}).items():
+                        if committed.get("committed"):
+                            await session.execute(update(JobRunItem).where(
+                                JobRunItem.job_id == job_id, JobRunItem.sendtask_uuid == task_uuid,
+                                JobRunItem.status.in_(("pending", "running")),
+                            ).values(status="completed", reason=committed["status"], finished_at=func.now()))
+
     async def _finish(self, job_id: str, status: str, result: Optional[dict] = None, error: Optional[str] = None):
         async with async_session() as session:
+            previous = await session.scalar(select(JobRun.result).where(
+                JobRun.job_id == job_id, JobRun.claimed_by == self.worker_id,
+            ).with_for_update())
+            result = merge_job_results(previous, result)
+            if status == "completed":
+                status = result.get("job_status", status)
+            result["job_status"] = status
+            for task_uuid, committed in result.get("sync_results", {}).items():
+                if committed.get("committed"):
+                    await session.execute(update(JobRunItem).where(
+                        JobRunItem.job_id == job_id, JobRunItem.sendtask_uuid == task_uuid,
+                        JobRunItem.status.in_(("pending", "running")),
+                    ).values(status="completed", reason=committed["status"], finished_at=func.now()))
+            await session.execute(update(JobRunItem).where(
+                JobRunItem.job_id == job_id, JobRunItem.status.in_(("pending", "running")),
+            ).values(status="cancelled" if status == "cancelled" else "failed",
+                     reason="cancelled" if status == "cancelled" else "unfinished", finished_at=func.now()))
             await session.execute(
                 update(JobRun)
                 .where(JobRun.job_id == job_id, JobRun.claimed_by == self.worker_id)
