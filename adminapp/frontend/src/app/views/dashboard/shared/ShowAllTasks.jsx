@@ -35,6 +35,8 @@ import { getTaskPeriod, matchesTaskFilters } from "app/utils/todayTaskFilter";
 import { useJob } from "app/contexts/JobContext";
 import TaskDetail from './TaskDetail_new';
 import axios from "axios";
+import TaskReloadButton from 'app/components/TaskReloadButton';
+import useTaskDetailInvalidation from 'app/hooks/useTaskDetailInvalidation';
 
 
 // STYLED COMPONENT
@@ -126,6 +128,7 @@ export default function ShowAllTasks({ showSelectedOnly, setShowSelectedOnly }) 
     open: false,
     task: null
   });
+  const detailRevision = useTaskDetailInvalidation(detailDialog, setDetailDialog, tasksData);
 
   // 顯示狀況
   const [showExpiredOnly, setShowExpiredOnly] = useState(false);  // 是否只顯示已過期的任務
@@ -351,6 +354,8 @@ export default function ShowAllTasks({ showSelectedOnly, setShowSelectedOnly }) 
       open: true,
       task: {
         sendtask_uuid: taskRow.sendtask_uuid,
+        local_generation_id: taskRow.local_generation_id,
+        sync_revision: taskRow.sync_revision,
         name: taskRow.sendtask_id, // TaskDetail 使用 'name' 欄位
         ...taskStats, // 傳入統計資料，讓 TaskDetail 的標頭能顯示
         ...adminControls // 傳入所有權限旗標
@@ -385,7 +390,8 @@ export default function ShowAllTasks({ showSelectedOnly, setShowSelectedOnly }) 
   return (
     <Box width="100%" overflow="hidden">
       <SimpleCard sx={{ padding: 1 }}>
-        <Stack direction="row" spacing={2} mb={2}>
+        <Stack direction="row" spacing={2} mb={2} flexWrap="wrap" useFlexGap>
+          <TaskReloadButton tasks={tasksData.filter(task => validSelectedUuids.includes(task.sendtask_uuid))} disabled={isCheckingSends} />
           <Button
             variant="contained"
             color="warning"
@@ -733,6 +739,7 @@ export default function ShowAllTasks({ showSelectedOnly, setShowSelectedOnly }) 
                     </TableCell>
                     <TableCell align="center">
                       <Stack direction="row" spacing={1} justifyContent="center">
+                        <TaskReloadButton tasks={[row]} compact disabled={isCheckingSends} />
                         <Button
                           variant="outlined"
                           size="small"
@@ -781,7 +788,7 @@ export default function ShowAllTasks({ showSelectedOnly, setShowSelectedOnly }) 
         rowsPerPageOptions={[5, 10, 25, 50, 100]}
         onRowsPerPageChange={handleChangeRowsPerPage}
       />
-      <TaskDetail
+      <TaskDetail key={`${detailDialog.task?.sendtask_uuid}:${detailRevision}`}
         task={detailDialog.task}
         open={detailDialog.open}
         onClose={() => setDetailDialog({ open: false, task: null })}

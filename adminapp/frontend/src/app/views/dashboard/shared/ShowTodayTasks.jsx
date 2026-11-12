@@ -38,6 +38,8 @@ import formatDate from "app/utils/formatDate";
 // import { useCheckSends } from "app/hooks/useCheckSends";
 import { useJob } from "app/contexts/JobContext";
 import TaskDetail from './TaskDetail_new';
+import TaskReloadButton from 'app/components/TaskReloadButton';
+import useTaskDetailInvalidation from 'app/hooks/useTaskDetailInvalidation';
 import { matchesTodayTaskState } from "../utils/todayTaskStatus";
 import axios from "axios";
 
@@ -142,6 +144,7 @@ export default function ShowTodayTasks({ taskState, setTaskState, showSelectedOn
     open: false,
     task: null
   });
+  const detailRevision = useTaskDetailInvalidation(detailDialog, setDetailDialog, tasksData);
 
   const taskUuids = new Set((tasksData || []).map(task => task.sendtask_uuid));
   const validSelectedUuids = selectedUuids.filter(uuid => taskUuids.has(uuid));
@@ -363,6 +366,8 @@ export default function ShowTodayTasks({ taskState, setTaskState, showSelectedOn
       open: true,
       task: {
         sendtask_uuid: taskRow.sendtask_uuid,
+        local_generation_id: taskRow.local_generation_id,
+        sync_revision: taskRow.sync_revision,
         name: taskRow.sendtask_id, // TaskDetail 使用 'name' 欄位
         ...taskStats, // 傳入統計資料，讓 TaskDetail 的標頭能顯示
         ...adminControls // 傳入所有權限旗標
@@ -398,6 +403,7 @@ export default function ShowTodayTasks({ taskState, setTaskState, showSelectedOn
     <Box width="100%" overflow="hidden">
       <SimpleCard sx={{ padding: 1 }}>
         <Stack direction="row" spacing={2} mb={2} sx={{ flexWrap: 'wrap', gap: 1 }}>
+          <TaskReloadButton tasks={tasksData.filter(task => validSelectedUuids.includes(task.sendtask_uuid))} disabled={isCheckingSends} />
           <Button
             variant="contained"
             color="warning"
@@ -440,8 +446,7 @@ export default function ShowTodayTasks({ taskState, setTaskState, showSelectedOn
                 enqueueSnackbar('無今日任務可更新', { variant: 'warning' });
                 return;
               }
-              // fetchCheckSends(uuids);
-              if (window.confirm("確定要執行寄送狀態更新嗎？")) {
+              if (window.confirm(`確定更新全部 ${uuids.length} 個今日任務的寄送現況？此範圍不受搜尋、分頁或勾選限制。`)) {
                 startJob("refresh_sendlog_stats", { uuids: uuids, ignore_archived: true });
               }
             }}
@@ -714,6 +719,7 @@ export default function ShowTodayTasks({ taskState, setTaskState, showSelectedOn
                     </TableCell>
                     <TableCell align="center">
                       <Stack direction="row" spacing={1} justifyContent="center">
+                        <TaskReloadButton tasks={[row]} compact disabled={isCheckingSends} />
                         <Button
                           variant="outlined"
                           size="small"
@@ -766,7 +772,7 @@ export default function ShowTodayTasks({ taskState, setTaskState, showSelectedOn
         rowsPerPageOptions={[5, 10, 25, 50, 100]}
         onRowsPerPageChange={handleChangeRowsPerPage}
       />
-      <TaskDetail
+      <TaskDetail key={`${detailDialog.task?.sendtask_uuid}:${detailRevision}`}
         task={detailDialog.task}
         open={detailDialog.open}
         onClose={() => setDetailDialog({ open: false, task: null })}

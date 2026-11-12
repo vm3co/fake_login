@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState } f
 import axios from 'axios';
 import { useSnackbar } from 'notistack';
 import useAuth from 'app/hooks/useAuth';
+import { combineInvalidations, invalidationSignature, pollInvalidations } from 'app/utils/taskRefresh';
 
 const ACTIVE_STATUSES = new Set(['queued', 'claiming', 'running', 'cancel_requested']);
 const FAILED_STATUSES = new Set(['failed', 'interrupted']);
@@ -22,6 +23,11 @@ export const useJob = () => useContext(JobContext);
 
 const jobSummary = (job) => {
     const result = job.result || {};
+    if (result.sync_results) {
+        const label = { completed: '已完成', partial: '部分完成', failed: '失敗', cancelled: '已取消', interrupted: '已中斷' }[job.status] || job.status;
+        return [`工作${label}：更新 ${result.updated_count || 0} 筆，重建 ${result.recreated_count || 0} 筆，重新匯入 ${result.reloaded_count || 0} 筆，移入備援 ${result.backed_up_count || 0} 筆，失敗 ${result.failed_count || 0} 筆`,
+            job.status === 'completed' ? (result.warnings?.length ? 'warning' : 'success') : job.status === 'failed' ? 'error' : 'warning'];
+    }
     if (job.job_code === 'refresh_today_create_task') {
         return [
             `今日任務同步完成：新增 ${result.added_count || 0} 筆，重新同步 ${result.updated_count || 0} 筆`,
@@ -36,8 +42,8 @@ const jobSummary = (job) => {
     }
     if (job.job_code === 'check_sendtasks') {
         return [
-            `任務列表更新完成：新增 ${result.added_count || 0} 筆，更新 ${result.updated_count || 0} 筆，刪除 ${result.deleted_count || 0} 筆，封存 ${result.archived_count || 0} 筆`,
-            'success'
+            `任務列表${job.status === 'completed' ? '更新完成' : '部分變更'}：新增 ${result.added_count || 0} 筆，更新 ${result.updated_count || 0} 筆，已重建 ${result.recreated_count || 0} 筆，已移入備援 ${result.backed_up_count || 0} 筆，失敗 ${result.failed_count || 0} 筆`,
+            job.status === 'completed' ? 'success' : 'warning'
         ];
     }
     const succeeded = result.updated_count ?? result.successful_tasks?.length ?? 0;
@@ -59,6 +65,7 @@ export const JobProvider = ({ children }) => {
     const manualJobsRef = useRef([]);
     const previousItemsRef = useRef(new Map());
     const previousJobsRef = useRef(new Map());
+    const previousResultsRef = useRef(new Map());
     const initializedRef = useRef(false);
     const timeoutRef = useRef(null);
     const refreshInFlightRef = useRef(null);
@@ -75,33 +82,42 @@ export const JobProvider = ({ children }) => {
             const nextItems = new Map();
             const nextJobs = new Map();
             const completedUuids = new Set();
+            const invalidations = pollInvalidations(visibleJobs, previousResultsRef.current, initializedRef.current);
+            const nextResults = new Map();
 
             visibleJobs.forEach((job) => {
                 nextJobs.set(job.job_id, job.status);
+                const signature = invalidationSignature(job);
+                nextResults.set(job.job_id, signature);
                 (job.items || []).forEach((item) => {
                     const key = `${job.job_id}:${item.sendtask_uuid}`;
                     nextItems.set(key, item.status);
                     const previousStatus = previousItemsRef.current.get(key);
-                    if (initializedRef.current && item.status === 'completed' && previousStatus !== 'completed') {
+                    if (initializedRef.current && !job.result?.sync_results && item.status === 'completed' && previousStatus !== 'completed') {
                         completedUuids.add(item.sendtask_uuid);
                     }
                 });
 
                 const previousStatus = previousJobsRef.current.get(job.job_id);
-                if (initializedRef.current && TERMINAL_STATUSES.has(job.status) && ACTIVE_STATUSES.has(previousStatus)) {
+                if (initializedRef.current && TERMINAL_STATUSES.has(job.status) && previousStatus !== job.status
+                    && (ACTIVE_STATUSES.has(previousStatus) || !previousStatus)) {
                     const [message, variant] = jobSummary(job);
                     enqueueSnackbar(message, { variant });
                 }
             });
 
-            if (completedUuids.size) {
-                window.dispatchEvent(new CustomEvent('jobItemsCompleted', {
-                    detail: { uuids: [...completedUuids] }
-                }));
+            if (completedUuids.size) invalidations.push({ uuids: [...completedUuids], reloadList: true });
+            const invalidation = combineInvalidations(invalidations);
+            if (invalidation.uuids.length || invalidation.reloadList) {
+                window.dispatchEvent(new CustomEvent('taskDataInvalidated', { detail: invalidation }));
+            }
+            if (invalidation.backupsChanged) {
+                window.dispatchEvent(new CustomEvent('taskBackupsInvalidated', { detail: invalidation }));
             }
 
             previousItemsRef.current = nextItems;
             previousJobsRef.current = nextJobs;
+            previousResultsRef.current = nextResults;
             initializedRef.current = true;
             manualJobsRef.current = visibleJobs;
             setManualJobs(visibleJobs);
@@ -146,6 +162,7 @@ export const JobProvider = ({ children }) => {
         initializedRef.current = false;
         previousItemsRef.current = new Map();
         previousJobsRef.current = new Map();
+        previousResultsRef.current = new Map();
         refreshInFlightRef.current = null;
         refreshQueuedRef.current = false;
     }, [seenStorageKey]);

@@ -124,18 +124,26 @@ const SyncTaskResult = ({ result }) => {
   const groups = [
     ["新增任務", result.added_tasks, "success.main"],
     ["更新任務", result.updated_tasks, "info.main"],
-    ["刪除任務", result.deleted_tasks, "error.main"],
+    ["已重建任務", result.recreated_tasks, "info.main"],
+    ["已重新匯入", result.reloaded_tasks, "warning.main"],
+    ["已移入備援", result.backed_up_tasks, "warning.main"],
     ["封存任務", result.archived_tasks, "warning.main"],
+    ["解除封存", result.unarchived_tasks, "info.main"],
+    ["失敗任務", result.failed_tasks, "error.main"],
+    ["未完成任務", result.unfinished_tasks, "text.secondary"],
   ];
 
   return (
     <Box sx={{ mt: 1 }}>
       <Typography variant="caption" color="text.secondary" display="block">
-        新增 {result.added_count || 0} 筆 · 更新 {result.updated_count || 0} 筆 · 刪除 {result.deleted_count || 0} 筆 · 封存 {result.archived_count || 0} 筆
+        新增 {result.added_count || 0} 筆 · 更新 {result.updated_count || 0} 筆 · 已重建 {result.recreated_count || 0} 筆 · 已移入備援 {result.backed_up_count || 0} 筆 · 重新匯入 {result.reloaded_count || 0} 筆 · 失敗 {result.failed_count || 0} 筆
       </Typography>
       {groups.map(([title, tasks, color]) => (
         <TaskResultList key={title} title={title} tasks={tasks} color={color} />
       ))}
+      {result.warnings?.length > 0 && <Typography variant="caption" color="warning.main">
+        已提交資料不受影響；有 {result.warnings.length} 項快取、通知或進度回報告警
+      </Typography>}
     </Box>
   );
 };
@@ -424,7 +432,9 @@ export default function NotificationBar({ container }) {
                             {job.error}
                           </Typography>
                         )}
-                        {job.job_code === "refresh_today_create_task" && job.result ? (
+                        {job.result?.sync_results ? (
+                          <SyncTaskResult result={job.result} />
+                        ) : job.job_code === "refresh_today_create_task" && job.result ? (
                           <TodayTaskResult result={job.result} />
                         ) : job.job_code === "update_mtmpl" && job.result ? (
                           <TemplateSyncResult result={job.result} />

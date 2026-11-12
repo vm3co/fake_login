@@ -4,13 +4,14 @@ import useAbortOnUnmount from "app/hooks/useAbortOnUnmount";
 import useAuth from "app/hooks/useAuth";
 import { getTaipeiDayBounds, isTodayTask } from "app/utils/todayTaskFilter";
 import axios from "axios";
+import { assertStableTasks, mergeTaskSnapshot, validatedRows } from "app/utils/taskRefresh";
 
 export default function useSendtaskList() {
     const { enqueueSnackbar } = useSnackbar();
 
     const [loading, setLoading] = useState(true);
-    const [tasksData, setTasksData] = useState([]);
-    const [statsData, setStatsData] = useState({}); // 存所有統計資料
+    const [snapshot, setSnapshot] = useState({ tasks: [], stats: {} });
+    const { tasks: tasksData, stats: statsData } = snapshot;
     const [isCheckingSends, setIsCheckingSends] = useState(false); // 新增
     const { createController } = useAbortOnUnmount();  //控制網頁關閉時結束api
     const { isAuthenticated, user } = useAuth();
@@ -24,6 +25,13 @@ export default function useSendtaskList() {
     const refreshTimerRef = useRef(null);
     const refreshTasksByUuidsRef = useRef(null);
     const refreshRef = useRef(null);
+    const sequenceRef = useRef(0);
+    const pendingFullRef = useRef(false);
+    const fullInFlightRef = useRef(false);
+    const partialInFlightRef = useRef(false);
+    const scheduleRef = useRef(null);
+    const snapshotRef = useRef(snapshot);
+    snapshotRef.current = snapshot;
     const [todayBounds, setTodayBounds] = useState(() => getTaipeiDayBounds());
 
     useEffect(() => {
@@ -45,15 +53,18 @@ export default function useSendtaskList() {
             midnightTimer = window.setTimeout(checkDay, nextDay.end - now);
         };
         const handleVisibility = () => {
-            if (!document.hidden) checkDay();
+            if (!document.hidden) {
+                checkDay();
+                scheduleRef.current?.([], true);
+            }
         };
 
         checkDay();
-        window.addEventListener("focus", checkDay);
+        window.addEventListener("focus", handleVisibility);
         document.addEventListener("visibilitychange", handleVisibility);
         return () => {
             window.clearTimeout(midnightTimer);
-            window.removeEventListener("focus", checkDay);
+            window.removeEventListener("focus", handleVisibility);
             document.removeEventListener("visibilitychange", handleVisibility);
         };
     }, [isAuthenticated, isCustomer]);
@@ -61,92 +72,72 @@ export default function useSendtaskList() {
     useEffect(() => {
         if (isAuthenticated && !isCustomer) {
             setLoading(true);
-            refresh();
+            refreshRef.current?.();
         } else {
-            setTasksData([]);
-            setStatsData({});
+            sequenceRef.current += 1;
+            setSnapshot({ tasks: [], stats: {} });
             setLoading(false);
         }
-    }, [isAuthenticated, isCustomer]);
-
-    const fetchStats = async (uuids) => {
-        if (!uuids.length) return;
-        // 批次取得所有統計
-        const { data: json } = await axios.post("/api/get_sendlog_stats", {
-            sendtask_uuids: uuids,
-        });
-
-        const statsList = json.data || [];
-        // 轉成 { uuid: stats, ... }
-        const statsObj = {};
-        statsList.forEach(stats => {
-            statsObj[stats.sendtask_uuid] = stats;
-        });
-        setStatsData(statsObj);
-    };
+    }, [isAuthenticated, isCustomer, user?.name]);
 
     const refreshTasksByUuids = async (uuids) => {
         const uniqueUuids = [...new Set(uuids)].filter(Boolean);
         if (!uniqueUuids.length || isCustomer) return;
+        if (fullInFlightRef.current || partialInFlightRef.current) {
+            scheduleRef.current?.([], true);
+            return;
+        }
 
+        const sequence = ++sequenceRef.current;
+        partialInFlightRef.current = true;
         try {
-            const [tasksResponse, statsResponse] = await Promise.all([
-                axios.post("/api/customer_get_sendtasks", { sendtask_uuids: uniqueUuids }),
-                axios.post("/api/get_sendlog_stats", { sendtask_uuids: uniqueUuids }),
-            ]);
-            const updatedTasks = tasksResponse.data?.data || [];
-            const updatedStats = statsResponse.data?.data || [];
-            const taskMap = new Map(updatedTasks.map((task) => [task.sendtask_uuid, task]));
-
-            setTasksData((current) => {
-                const existingUuids = new Set(current.map((task) => task.sendtask_uuid));
-                const merged = current.map((task) => taskMap.get(task.sendtask_uuid) || task);
-                updatedTasks.forEach((task) => {
-                    if (!existingUuids.has(task.sendtask_uuid)) merged.push(task);
-                });
-                return merged;
-            });
-            setStatsData((current) => {
-                const next = { ...current };
-                updatedStats.forEach((stats) => {
-                    next[stats.sendtask_uuid] = stats;
-                });
-                return next;
-            });
+            const tasksResponse = await axios.post('/api/customer_get_sendtasks', { sendtask_uuids: uniqueUuids });
+            validatedRows(tasksResponse.data);
+            const statsResponse = await axios.post('/api/get_sendlog_stats', { sendtask_uuids: uniqueUuids });
+            const verified = await axios.post('/api/customer_get_sendtasks', { sendtask_uuids: uniqueUuids });
+            assertStableTasks(tasksResponse.data, verified.data);
+            const next = mergeTaskSnapshot(snapshotRef.current.tasks, snapshotRef.current.stats,
+                tasksResponse.data, statsResponse.data, uniqueUuids);
+            if (sequence === sequenceRef.current) setSnapshot(next);
         } catch (error) {
             console.error("局部更新 Dashboard 任務失敗", error);
+            if (sequence === sequenceRef.current) enqueueSnackbar(`任務刷新失敗：${error.message}`, { variant: 'error' });
+        } finally {
+            partialInFlightRef.current = false;
         }
     };
     refreshTasksByUuidsRef.current = refreshTasksByUuids;
 
     const fetchData = async (controller) => {
+        const sequence = ++sequenceRef.current;
+        fullInFlightRef.current = true;
         try {
             const { data: json } = await axios.post("/api/get_sendtasks",
                 {},
                 { signal: controller.signal }
             );
 
-            if (json.status === "success") {
-                setTasksData(json.data);
-
-                const uuidsToFetch = json.data.map(task => task.sendtask_uuid);
-
-                if (uuidsToFetch.length === 0) {
-                    setLoading(false);
-                    setStatsData({});
-                    return;
-                }
-
-                await fetchStats(uuidsToFetch);
-            }
+            const tasks = validatedRows(json);
+            const stats = tasks.length ? (await axios.post('/api/get_sendlog_stats', {
+                sendtask_uuids: tasks.map(task => task.sendtask_uuid),
+            }, { signal: controller.signal })).data : { status: 'success', data: [] };
+            const verified = (await axios.post('/api/get_sendtasks', {}, { signal: controller.signal })).data;
+            assertStableTasks(json, verified);
+            const next = mergeTaskSnapshot([], {}, json, stats);
+            if (sequence === sequenceRef.current) setSnapshot(next);
         } catch (error) {
             if (error.name === "AbortError") {
                 // 請求被中斷，不需要顯示錯誤
             } else {
-                // console.error("取得任務列表失敗", error);
+                if (!axios.isCancel(error) && sequence === sequenceRef.current) {
+                    enqueueSnackbar(`任務刷新失敗：${error.message}`, { variant: 'error' });
+                }
             }
         } finally {
-            setLoading(false);
+            if (sequence === sequenceRef.current) {
+                fullInFlightRef.current = false;
+                setLoading(false);
+            }
         }
     };
 
@@ -184,10 +175,31 @@ export default function useSendtaskList() {
 
     // 提供 refresh 方法
     function refresh() {
+        if (!isAuthenticated || isCustomer) return;
+        if (partialInFlightRef.current || fullInFlightRef.current) {
+            scheduleRef.current?.([], true);
+            return;
+        }
         const controller = createController();
-        fetchData(controller);
+        return fetchData(controller);
     }
     refreshRef.current = refresh;
+
+    function scheduleRefresh(uuids, full = false) {
+        if (!isAuthenticated || isCustomer) return;
+        uuids.forEach(uuid => pendingRefreshUuidsRef.current.add(uuid));
+        pendingFullRef.current ||= full;
+        if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = window.setTimeout(() => {
+            const requested = [...pendingRefreshUuidsRef.current];
+            const reload = pendingFullRef.current;
+            pendingRefreshUuidsRef.current.clear();
+            pendingFullRef.current = false;
+            if (reload) refreshRef.current?.();
+            else refreshTasksByUuidsRef.current?.(requested);
+        }, 250);
+    }
+    scheduleRef.current = scheduleRefresh;
 
     // 註冊請求控制器
     const registerRequest = (controller) => {
@@ -262,23 +274,20 @@ export default function useSendtaskList() {
         return () => {
             // 組件卸載時中止所有請求
             abortAllRequests();
+            sequenceRef.current += 1;
+            fullInFlightRef.current = false;
+            partialInFlightRef.current = false;
         };
     }, []);
 
     useEffect(() => {
         const handleItemsCompleted = (event) => {
-            (event.detail?.uuids || []).forEach((uuid) => pendingRefreshUuidsRef.current.add(uuid));
-            if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
-            refreshTimerRef.current = window.setTimeout(() => {
-                const uuids = [...pendingRefreshUuidsRef.current];
-                pendingRefreshUuidsRef.current.clear();
-                refreshTasksByUuidsRef.current?.(uuids);
-            }, 250);
+            scheduleRef.current?.(event.detail?.uuids || [], event.detail?.reloadList === true);
         };
 
-        window.addEventListener('jobItemsCompleted', handleItemsCompleted);
+        window.addEventListener('taskDataInvalidated', handleItemsCompleted);
         return () => {
-            window.removeEventListener('jobItemsCompleted', handleItemsCompleted);
+            window.removeEventListener('taskDataInvalidated', handleItemsCompleted);
             if (refreshTimerRef.current) window.clearTimeout(refreshTimerRef.current);
         };
     }, [isAuthenticated, isCustomer]);
