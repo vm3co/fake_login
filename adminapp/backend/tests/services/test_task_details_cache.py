@@ -1,16 +1,19 @@
 import json
+import os
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy import delete, update
+from sqlalchemy import delete, update, select, func
+from redis.asyncio import Redis
 
-from backend.repository.models import SendTask
+from backend.repository.models import SendTask, SendLogDetail, TaskBackup, TaskBackupDetail
 from backend.services.task_details_cache import TaskDetailsCache
 from backend.services.task_sync_core import TaskSyncService
 from backend.services.task_sync import TaskSyncConflict
 from backend.tests.repository.test_task_backup_schema import schema_engine
 from backend.tests.services.test_task_backup_transfer import setup_transfer
 from backend.tests.services.test_task_sync_core import snapshot
+from backend.services.se2_task_reader import TaskNotFound
 
 
 class MemoryRedis:
@@ -26,6 +29,64 @@ class MemoryRedis:
     async def delete(self, *keys):
         for key in keys:
             self.values.pop(key, None)
+
+
+@pytest.mark.asyncio
+async def test_multiversion_pipeline_with_real_redis_and_independent_history(schema_engine):
+    url = os.environ.get('TSB_TEST_REDIS_URL')
+    if not url:
+        pytest.skip('TSB_TEST_REDIS_URL must target dedicated tsb016-redis')
+    from urllib.parse import urlparse
+    target = urlparse(url)
+    if target.hostname != 'tsb016-redis' or target.path != '/15':
+        raise RuntimeError('Pipeline test requires isolated tsb016-redis database 15')
+    redis = Redis.from_url(url, decode_responses=True)
+    factory, _, _ = await setup_transfer(schema_engine)
+    cache = TaskDetailsCache(factory, AsyncMock(return_value=redis))
+    key = 'task:task-1:details'
+    await redis.delete(key)
+    try:
+        assert await redis.ping()
+        original = await cache.get('task-1')
+        assert len(original) == 2
+        stale = await redis.get(key)
+        reader = AsyncMock(read_task_snapshot=AsyncMock(side_effect=TaskNotFound('missing')))
+        core = TaskSyncService(factory, reader)
+        with patch('backend.services.redis_client.RedisClient.get_client', AsyncMock(return_value=redis)):
+            removed = await core.sync('task-1', orgs=['org-1'])
+            assert removed.status == 'backed_up'
+            await redis.set(key, stale)
+            assert await cache.get('task-1') == []
+            reader.read_task_snapshot.side_effect = None
+            reader.read_task_snapshot.return_value = snapshot(200, 5)
+            imported = await core.sync('task-1', orgs=['org-1'])
+            assert imported.status == 'added'
+            assert len(await cache.get('task-1')) == 5
+            reader.read_task_snapshot.return_value = snapshot(300, 3)
+            recreated = await core.sync('task-1', orgs=['org-1'])
+            assert recreated.status == 'recreated'
+        await redis.set(key, stale)
+        latest = await cache.get('task-1')
+        assert len(latest) == 3
+        assert all(row['second_input_time'] is None for row in latest)
+        async with factory() as session:
+            backups = (await session.scalars(select(TaskBackup).order_by(TaskBackup.source_create_ut))).all()
+            assert [backup.source_create_ut for backup in backups] == [100, 200]
+            assert len({backup.source_local_generation_id for backup in backups} | {recreated.generation}) == 3
+            first_rows = (await session.scalars(select(TaskBackupDetail).where(TaskBackupDetail.backup_id == removed.backup_id))).all()
+            assert len(first_rows) == 2 and all(row.second_input_time == [70, 80] for row in first_rows)
+            second_rows = (await session.scalars(select(TaskBackupDetail).where(TaskBackupDetail.backup_id == recreated.backup_id))).all()
+            assert len(second_rows) == 5
+            assert {row.uuid for row in second_rows} >= {row['uuid'] for row in latest}
+            await session.execute(delete(TaskBackup).where(TaskBackup.backup_id == removed.backup_id))
+            await session.commit()
+            assert await session.scalar(select(func.count()).select_from(TaskBackup)) == 1
+            assert await session.scalar(select(func.count()).select_from(TaskBackupDetail)) == 5
+            assert await session.scalar(select(func.count()).select_from(SendLogDetail)) == 3
+        assert len(await cache.get('task-1')) == 3
+    finally:
+        await redis.delete(key)
+        await redis.aclose()
 
 
 @pytest.mark.asyncio
