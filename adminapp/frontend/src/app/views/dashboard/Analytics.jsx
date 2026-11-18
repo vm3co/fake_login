@@ -7,6 +7,8 @@ import Grid from "@mui/material/Grid2";
 import StatCards from "./shared/StatCards";
 import ShowTodayTasks from "./shared/ShowTodayTasks";
 import ShowAllTasks from "./shared/ShowAllTasks";
+import ShowBackupTasks from "./shared/ShowBackupTasks";
+import useAuth from 'app/hooks/useAuth';
 
 
 // STYLED COMPONENTS
@@ -16,13 +18,15 @@ const ContentBox = styled("div")(({ theme }) => ({
 }));
 
 export default function Analytics() {
-  const [showTodayOnly, setShowTodayOnly] = useState(true);
+  const [viewMode, setViewMode] = useState('today');
+  const { user } = useAuth();
+  const canManageBackups = user?.user_type === 'user' || user?.admin_role === true;
   const [taskState, setTaskState] = useState("all");
   const [showSelectedOnly, setShowSelectedOnly] = useState(false);
 
-  const handleTaskListChange = (showToday) => {
+  const handleTaskListChange = (mode) => {
     setShowSelectedOnly(false);
-    setShowTodayOnly(showToday);
+    setViewMode(mode);
   };
 
   return (
@@ -31,32 +35,34 @@ export default function Analytics() {
         <Grid container spacing={3}>
           <Grid size={{ md: 12, xs: 12 }} >
             <StatCards
-              setShowTodayOnly={setShowTodayOnly}
+              setShowTodayOnly={() => setViewMode('today')}
               taskState={taskState}
               setTaskState={setTaskState}
-              filtersDisabled={showSelectedOnly}
+              filtersDisabled={showSelectedOnly || viewMode === 'backups'}
             />
           </Grid>
           <Grid size={{ md: 12, xs: 12 }}>
-            <Box display="flex" justifyContent="center" mb={2}>
+            <Box display="flex" justifyContent="center" flexWrap="wrap" gap={1} mb={2}>
               <Button
-                variant={showTodayOnly ? "outlined" : "contained"}
+                variant={viewMode === 'all' ? "contained" : "outlined"}
                 color="primary"
-                onClick={() => handleTaskListChange(false)}
+                onClick={() => handleTaskListChange('all')}
                 sx={{ mx: 1 }}
               >
                 全部任務
               </Button>
               <Button
-                variant={showTodayOnly ? "contained" : "outlined"}
+                variant={viewMode === 'today' ? "contained" : "outlined"}
                 color="primary"
-                onClick={() => handleTaskListChange(true)}
+                onClick={() => handleTaskListChange('today')}
                 sx={{ mx: 1 }}
               >
                 今日任務
               </Button>
+              {canManageBackups && user?.user_type !== 'customer' && <Button variant={viewMode === 'backups' ? 'contained' : 'outlined'}
+                onClick={() => handleTaskListChange('backups')}>備援任務</Button>}
             </Box>
-            {showTodayOnly ? (
+            {viewMode === 'backups' && canManageBackups && user?.user_type !== 'customer' ? <ShowBackupTasks /> : viewMode === 'today' ? (
               <ShowTodayTasks
                 taskState={taskState}
                 setTaskState={setTaskState}

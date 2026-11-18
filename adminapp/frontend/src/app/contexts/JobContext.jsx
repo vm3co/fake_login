@@ -23,6 +23,11 @@ export const useJob = () => useContext(JobContext);
 
 const jobSummary = (job) => {
     const result = job.result || {};
+    if (job.job_code === 'check_backup_recreated') {
+        const label = { completed: '已完成', partial: '部分完成', failed: '失敗', cancelled: '已取消', interrupted: '已中斷' }[job.status] || job.status;
+        return [`備援檢查${label}：已查 ${result.checked_count || 0} 份，失敗 ${result.failed_count || 0} 個來源`,
+            job.status === 'completed' ? 'success' : job.status === 'failed' ? 'error' : 'warning'];
+    }
     if (result.sync_results) {
         const label = { completed: '已完成', partial: '部分完成', failed: '失敗', cancelled: '已取消', interrupted: '已中斷' }[job.status] || job.status;
         return [`工作${label}：更新 ${result.updated_count || 0} 筆，重建 ${result.recreated_count || 0} 筆，重新匯入 ${result.reloaded_count || 0} 筆，移入備援 ${result.backed_up_count || 0} 筆，失敗 ${result.failed_count || 0} 筆`,
