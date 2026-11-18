@@ -8,6 +8,7 @@ import StatCards from "./shared/StatCards";
 import ShowTodayTasks from "./shared/ShowTodayTasks";
 import ShowAllTasks from "./shared/ShowAllTasks";
 import ShowBackupTasks from "./shared/ShowBackupTasks";
+import TaskDetail from './shared/TaskDetail_new';
 import useAuth from 'app/hooks/useAuth';
 
 
@@ -19,12 +20,14 @@ const ContentBox = styled("div")(({ theme }) => ({
 
 export default function Analytics() {
   const [viewMode, setViewMode] = useState('today');
+  const [backupDetail, setBackupDetail] = useState(null);
   const { user } = useAuth();
   const canManageBackups = user?.user_type === 'user' || user?.admin_role === true;
   const [taskState, setTaskState] = useState("all");
   const [showSelectedOnly, setShowSelectedOnly] = useState(false);
 
   const handleTaskListChange = (mode) => {
+    setBackupDetail(null);
     setShowSelectedOnly(false);
     setViewMode(mode);
   };
@@ -62,7 +65,7 @@ export default function Analytics() {
               {canManageBackups && user?.user_type !== 'customer' && <Button variant={viewMode === 'backups' ? 'contained' : 'outlined'}
                 onClick={() => handleTaskListChange('backups')}>備援任務</Button>}
             </Box>
-            {viewMode === 'backups' && canManageBackups && user?.user_type !== 'customer' ? <ShowBackupTasks /> : viewMode === 'today' ? (
+            {viewMode === 'backups' && canManageBackups && user?.user_type !== 'customer' ? <ShowBackupTasks onOpenBackup={setBackupDetail} /> : viewMode === 'today' ? (
               <ShowTodayTasks
                 taskState={taskState}
                 setTaskState={setTaskState}
@@ -78,6 +81,8 @@ export default function Analytics() {
           </Grid>
         </Grid>
       </ContentBox>
+      {viewMode === 'backups' && canManageBackups && user?.user_type !== 'customer' && <TaskDetail task={backupDetail}
+        open={!!backupDetail} onClose={() => setBackupDetail(null)} />}
     </Fragment>
   );
 }

@@ -1,4 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
+import { detailSource, detailRequest, backupHeader, detailRows } from 'app/utils/taskDetailSource';
+import { backupTime } from 'app/utils/backupList';
 import axios from 'axios';
 import { jwtDecode } from 'jwt-decode';
 import {
@@ -38,7 +40,6 @@ import {
   Download,
   Search,
   ExpandMore as ExpandMoreIcon,
-  Delete,
 } from '@mui/icons-material';
 
 const MainContainer = styled(Box)(() => ({
@@ -168,7 +169,7 @@ const formatInputInfo = (info) => {
     }
 
     return info; // 回傳原始字串
-  } catch (e) {
+  } catch {
     return info; // 解析失敗，回傳原始字串
   }
 };
@@ -225,7 +226,32 @@ const getFilterIpStorageKey = (uuid = '') => {
   }
 };
 
-export default function TaskDetail({ task, open, onClose }) {
+const defaultFiltersBase = {
+  searchText: '', dateFrom: '', dateTo: '', resultType: 'all',
+  showAccessed: false, showClicked: false, showFiled: false,
+  sortBy: 'target_email', rowsPerPage: 20, sort: 'asc', filterIp: ''
+};
+
+export default function TaskDetail(props) {
+  if (!props.open || !props.task) return null;
+  try {
+    const source = detailSource(props.task);
+    return <TaskDetailContent key={source.key} {...props} source={source} />;
+  } catch (failure) {
+    return <Drawer anchor="right" open onClose={props.onClose}><Alert severity="error">{failure.message}</Alert><Button onClick={props.onClose}>關閉</Button></Drawer>;
+  }
+}
+
+function TaskDetailContent({ task, open, onClose, source }) {
+  const storageId = source.key;
+  const alive = useRef(true);
+  const logRequest = useRef(null);
+  const [snapshot, setSnapshot] = useState(null);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    alive.current = true;
+    return () => { alive.current = false; logRequest.current?.abort(); };
+  }, []);
   const [taskData, setTaskData] = useState(null);
   const [mailTemplates, setMailTemplates] = useState([]);
   const [logs, setLogs] = useState([]);
@@ -241,68 +267,46 @@ export default function TaskDetail({ task, open, onClose }) {
   const [selectAllAcrossPages, setSelectAllAcrossPages] = useState(false); // 是否選取所有頁面所有資料
   const [acctControl, setAcctControl] = useState([false, false, false, false, false]);
 
+
   // 篩選條件（filterIp 在 Dialog 開啟時再從 localStorage 讀取）
-  const defaultFiltersBase = {
-    searchText: '',
-    dateFrom: '',
-    dateTo: '',
-    resultType: 'all',
-    showAccessed: false,
-    showClicked: false,
-    showFiled: false,
-    sortBy: 'target_email',
-    rowsPerPage: 20,
-    sort: 'asc',
-    filterIp: ''
-  };
   const [filters, setFilters] = useState(defaultFiltersBase);
   const [pendingFilters, setPendingFilters] = useState(defaultFiltersBase);
 
   // 載入任務詳細資料
-  const fetchTaskLogs = async () => {
-    if (!task?.sendtask_uuid) return;
-    console.log(task.send, task.failed, task.notyet, task.notTriggered, task.triggered)
-    const acctControlArr = [
-      !!task.send,
-      !!task.failed,
-      !!task.notyet,
-      !!task.notTriggered,
-      !!task.triggered
-    ];
+  const fetchTaskLogs = useCallback(async () => {
+    if (!ready) return;
+    logRequest.current?.abort();
+    const controller = new AbortController();
+    logRequest.current = controller;
 
     try {
       setLoading(true);
       setError(null);
       // 獲取詳細日誌 (帶上所有參數)
-      const response = await axios.post("/api/get_sendlog_detail", {
-        sendtask_uuid: task.sendtask_uuid,
-        page: page + 1, // 後端頁碼從 1 開始
-        acctControl: acctControlArr,
-        ...filters
-      });
-
-      const logsResult = response.data;
-      if (logsResult.status === "success") {
-        setLogs(logsResult.data || []);
-        setTotalLogs(logsResult.total_count || 0);
-      } else {
-        throw new Error(logsResult.message || "獲取日誌資料失敗");
-      }
+      const request = detailRequest(source, task, page, filters);
+      const response = await axios.post(request.url, request.body, { signal: controller.signal });
+      const result = detailRows(response.data, source.backup);
+      if (!alive.current || controller.signal.aborted) return;
+      setLogs(result.rows);
+      setTotalLogs(result.total);
     } catch (err) {
-      console.error("獲取任務日誌失敗:", err);
+      if (!alive.current || controller.signal.aborted) return;
       setError(err.response?.data?.detail || err.message || "獲取日誌資料失敗");
       setLogs([]);
       setTotalLogs(0);
     } finally {
-      setLoading(false);
+      if (alive.current && !controller.signal.aborted) setLoading(false);
     }
-  };
+  }, [ready, source, task, page, filters]);
 
   // 首次載入或任務變更時，載入固定資訊
   useEffect(() => {
+    const controller = new AbortController();
     const fetchInitialData = async () => {
-      if (!task?.sendtask_uuid) return;
-      setAcctControl([
+      setReady(false);
+      setLoading(true);
+      setError(null);
+      setAcctControl(source.backup ? [true, true, true, true, true] : [
         !!task.send,
         !!task.failed,
         !!task.notyet,
@@ -311,7 +315,7 @@ export default function TaskDetail({ task, open, onClose }) {
       ]);
 
       // 從 localStorage 讀取該任務專屬的排除 IP
-      const taskSavedIp = window.localStorage.getItem(getFilterIpStorageKey(task.sendtask_uuid)) || '';
+      const taskSavedIp = window.localStorage.getItem(getFilterIpStorageKey(storageId)) || '';
       const taskFilters = { ...defaultFiltersBase, filterIp: taskSavedIp };
       setFilters(taskFilters);
       setPendingFilters(taskFilters);
@@ -323,12 +327,23 @@ export default function TaskDetail({ task, open, onClose }) {
       setTaskData(null);
 
       try {
+        if (source.backup) {
+          const response = await axios.get(source.base, { signal: controller.signal });
+          const data = backupHeader(response.data, task.backup_id);
+          if (controller.signal.aborted) return;
+          setSnapshot(data);
+          setTaskData(data.stats_snapshot || {});
+          setMailTemplates(data.templates);
+          setReady(true);
+          return;
+        }
         const [taskResponse, mtmplResponse] = await Promise.all([
           axios.post("/api/get_sendlog_stats", {
             sendtask_uuids: [task.sendtask_uuid]
-          }),
-          axios.get("/api/get_mtmpl")
+          }, { signal: controller.signal }),
+          axios.get("/api/get_mtmpl", { signal: controller.signal })
         ]);
+        if (controller.signal.aborted) return;
 
         const taskResult = taskResponse.data;
         if (taskResult.status === "success" && taskResult.data.length > 0) {
@@ -339,23 +354,29 @@ export default function TaskDetail({ task, open, onClose }) {
         if (mtmplResult.status === "success") {
           setMailTemplates(mtmplResult.data || []);
         }
+        setReady(true);
       } catch (error) {
-        console.error("獲取初始資料失敗:", error);
+        if (!controller.signal.aborted) {
+          setError(error.response?.data?.detail || error.message || '獲取初始資料失敗');
+          setLoading(false);
+        }
       }
     };
     if (open && task) {
       fetchInitialData();
     };
-  }, [open, task]);
+    return () => controller.abort();
+  }, [open, task, source.backup, source.base, storageId]);
 
   // 當分頁、篩選條件改變時，重新獲取日誌資料
   useEffect(() => {
-    if (open && task) {
+    if (open && task && ready) {
       setSelectedUuids([]);
       setSelectAllAcrossPages(false);
       fetchTaskLogs();
     }
-  }, [open, task, page, filters]); // 依賴保持不變  
+    return () => logRequest.current?.abort();
+  }, [open, task, ready, fetchTaskLogs]);
 
   // 當 Drawer 關閉時 (open 變為 false)，重置所有狀態
   useEffect(() => {
@@ -377,7 +398,7 @@ export default function TaskDetail({ task, open, onClose }) {
   }, [open]);
 
   const handleDownloadXlsx = async (includeEventUrls = false) => {
-    if (!task?.sendtask_uuid) {
+    if (!source.backup && !task?.sendtask_uuid) {
       console.error("沒有 task uuid，無法下載");
       alert("沒有任務 UUID，無法下載");
       return;
@@ -391,13 +412,14 @@ export default function TaskDetail({ task, open, onClose }) {
         name: task.name
       };
 
-      const response = await axios.post(
+      const response = source.backup ? await axios.get(`${source.base}/export.xlsx`, { responseType: 'blob' }) : await axios.post(
         includeEventUrls ? "/api/download_sendlog_links_xlsx" : "/api/download_sendlog_xlsx",
         body,
         {
           responseType: 'blob', // 告訴 axios 預期接收的是二進位檔案資料
         }
       );
+      if (!alive.current) return;
 
       if (response.status !== 200) {
         throw new Error(`下載失敗: ${response.statusText}`);
@@ -408,13 +430,14 @@ export default function TaskDetail({ task, open, onClose }) {
       const a = document.createElement("a");
       a.style.display = "none";
       a.href = url;
-      a.download = `${task.name}${includeEventUrls ? '_含觸發網址' : ''}.xlsx`;
+      a.download = source.backup ? `task-backup-${task.backup_id}.xlsx` : `${task.name}${includeEventUrls ? '_含觸發網址' : ''}.xlsx`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
       document.body.removeChild(a);
 
     } catch (err) {
+      if (!alive.current) return;
       console.error("下載 XLSX 失敗:", err);
       let errorMessage = err.message || "發生未知錯誤";
       if (err.response?.data instanceof Blob) {
@@ -432,11 +455,12 @@ export default function TaskDetail({ task, open, onClose }) {
       }
       alert(`下載失敗: ${errorMessage}`);
     } finally {
-      setDownloadState(false);
+      if (alive.current) setDownloadState(false);
     }
   };
 
   const handleDeleteTriggerData = async (uuid, sendtask_uuid) => {
+    if (source.backup) return;
     if (!uuid || !sendtask_uuid) return;
     if (!window.confirm("確定要刪除這位受測者的所有觸發紀錄嗎？此動作無法復原。")) return;
 
@@ -476,7 +500,7 @@ export default function TaskDetail({ task, open, onClose }) {
           // 關鍵：使用 '& .MuiDrawer-paper' 選擇器
           // 來鎖定 Drawer 內部的 Paper 元件
           '& .MuiDrawer-paper': {
-            width: '90%', // 佔螢幕 85%
+            width: { xs: '100%', md: '90%' },
             maxWidth: '1900px', // 'xl' 的寬度
           }
         }}
@@ -495,9 +519,9 @@ export default function TaskDetail({ task, open, onClose }) {
           zIndex: 10 // 確保在內容之上
         }}>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
-            <Typography variant="h6">任務詳細資訊</Typography>
+            <Typography variant="h6">{source.backup ? '備援明細（唯讀）' : '任務詳細資訊'}</Typography>
           </Box>
-          <IconButton onClick={onClose}>
+          <IconButton onClick={onClose} aria-label="關閉明細">
             <Close />
           </IconButton>
         </Box>
@@ -511,18 +535,26 @@ export default function TaskDetail({ task, open, onClose }) {
             {/* 任務基本資訊 */}
             {task && taskData && (
               <HeaderCard>
-                <HeaderContent>
+                <HeaderContent sx={{ flexWrap: 'wrap', minWidth: 0 }}>
                   <Avatar sx={{ bgcolor: '#3b82f6', width: 56, height: 56 }}>
                     <Assignment />
                   </Avatar>
-                  <Box sx={{ flex: 1 }}>
+                  <Box sx={{ flex: 1, minWidth: 180, overflowWrap: 'anywhere' }}>
                     <Typography variant="h6" sx={{ fontWeight: 600, mb: 1 }}>
-                      {task.name}
+                      {source.backup ? snapshot?.task_snapshot?.sendtask_id || snapshot?.sendtask_id : task.name}
                     </Typography>
                     <Typography variant="body2" color="text.secondary" sx={{ mb: 1 }}>
-                      {task.sendtask_uuid}
+                      {source.backup ? snapshot?.source_task_uuid : task.sendtask_uuid}
                     </Typography>
-                    <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
+                    {source.backup && snapshot && <Box sx={{ mb: 1 }}>
+                      <Typography variant="body2">備援識別：{snapshot.backup_id}</Typography>
+                      <Typography variant="body2">原版本建立：{backupTime(snapshot.source_create_ut, true)}</Typography>
+                      <Typography variant="body2">備援時間：{backupTime(snapshot.backed_up_at)}</Typography>
+                      <Typography variant="body2">統計快照基準：{snapshot.stats_snapshot_at ? backupTime(snapshot.stats_snapshot_at) : '未記錄；數值為備援時保存的統計'}（非現在今日統計）</Typography>
+                      {!snapshot.stats_snapshot && <Alert severity="warning">此備援未保存統計</Alert>}
+                      <Chip label="唯讀快照" size="small" />
+                    </Box>}
+                    {(!source.backup || snapshot?.stats_snapshot) && <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
                       <Chip
                         label={`觸發率: ${taskData.totalsuccess > 0 ? ((taskData.totaltriggered / taskData.totalplanned) * 100).toFixed(1) : 0}%`}
                         color="warning"
@@ -543,7 +575,7 @@ export default function TaskDetail({ task, open, onClose }) {
                         color="error"
                         size="small"
                       />
-                    </Box>
+                    </Box>}
                   </Box>
                   <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
                     <Button
@@ -551,13 +583,13 @@ export default function TaskDetail({ task, open, onClose }) {
                       size="small"
                       startIcon={downloading ? <CircularProgress size={20} color="inherit" /> : <Download />}
                       onClick={() => handleDownloadXlsx()}
-                      disabled={downloading}
+                      disabled={downloading || loading || !!error || !ready}
                     >
-                      {downloading ? '下載中...' :
+                      {downloading ? '下載中...' : source.backup ? '匯出完整備援' :
                         (selectedUuids.length > 0 || selectAllAcrossPages) ? '下載選取資料' : '下載全部資料'
                       }
                     </Button>
-                    <Button
+                    {!source.backup && <Button
                       variant="outlined"
                       size="small"
                       startIcon={downloadingLinks ? <CircularProgress size={20} color="inherit" /> : <Download />}
@@ -565,7 +597,7 @@ export default function TaskDetail({ task, open, onClose }) {
                       disabled={downloadingLinks}
                     >
                       {downloadingLinks ? '下載中...' : '下載全部資料(含觸發網址)'}
-                    </Button>
+                    </Button>}
                   </Box>
                 </HeaderContent>
               </HeaderCard>
@@ -637,7 +669,7 @@ export default function TaskDetail({ task, open, onClose }) {
                           setPendingFilters({ ...pendingFilters, filterIp: sanitized });
                         }}
                         InputLabelProps={{ shrink: true }}
-                        sx={{ minWidth: 500 }}
+                        sx={{ width: { xs: '100%', md: 500 }, maxWidth: '100%' }}
                       />
                     </Box>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
@@ -724,7 +756,7 @@ export default function TaskDetail({ task, open, onClose }) {
                       color="secondary"
                       onClick={() => {
                         // 清除該任務專屬的 localStorage 排除 IP
-                        window.localStorage.removeItem(getFilterIpStorageKey(task?.sendtask_uuid));
+                        window.localStorage.removeItem(getFilterIpStorageKey(storageId));
                         setPendingFilters(defaultFiltersBase);
                       }}>
                       清空
@@ -734,7 +766,7 @@ export default function TaskDetail({ task, open, onClose }) {
                       size="small"
                       onClick={() => {
                         // 儲存 filterIp 到 localStorage（以帳號 + 任務 uuid 為 key）
-                        const storageKey = getFilterIpStorageKey(task?.sendtask_uuid);
+                        const storageKey = getFilterIpStorageKey(storageId);
                         if (pendingFilters.filterIp) {
                           window.localStorage.setItem(storageKey, pendingFilters.filterIp);
                         } else {
@@ -860,16 +892,17 @@ export default function TaskDetail({ task, open, onClose }) {
                     <TableBody>
                       {logs.map((log, index) => {
                         const globalIndex = page * nowRowsPerPage + index + 1;
-                        const templateTitle = mailTemplates.find(
+                        const template = mailTemplates.find(
                           (tmpl) => tmpl.mtmpl_uuid === log.template_uuid
-                        )?.mtmpl_title;
+                        );
+                        const templateTitle = template?.mtmpl_title;
 
                         return (
                           <TableRow key={log.id || index}>
                             <TableCell>
                               <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5 }}>
                                 {globalIndex}
-                                <Button
+                                {!source.backup && <Button
                                   variant="outlined"
                                   color="error"
                                   size="small"
@@ -882,7 +915,7 @@ export default function TaskDetail({ task, open, onClose }) {
                                   }}
                                 >
                                   重置
-                                </Button>
+                                </Button>}
                               </Box>
                             </TableCell>
                             <TableCell>
