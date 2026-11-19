@@ -50,7 +50,9 @@ async def test_sync_accts_rejects_non_platform_admin(async_client: AsyncClient):
         "user_type": "user",
     })
 
-    account = SimpleNamespace(acct_id="user@example.com", is_active=True)
+    account = SimpleNamespace(
+        acct_id="user@example.com", is_active=True, admin_role=False, orgs=[]
+    )
     with patch(
         "backend.api.user_api.db_controller.execute_scalars",
         new=AsyncMock(return_value=[account]),

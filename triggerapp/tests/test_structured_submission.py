@@ -22,7 +22,7 @@ SPEC = {
             "label": "密碼",
             "type": "password",
             "required": True,
-            "mask_mode": "password_status",
+            "mask_mode": "full",
             "keep_chars": None,
         },
     ]
@@ -37,17 +37,18 @@ def test_parse_trigger_url_supports_proxy_prefix():
 def test_submission_accepts_masked_values_in_spec_order():
     result = validate_submission(SPEC, 2, [
         {"id": "phone", "value": "*******789"},
-        {"id": "password", "value": "[password:filled]"},
+        {"id": "password", "value": "********"},
     ], 2)
-    assert result == "*******789 | [password:filled]"
+    assert result == "*******789 | ********"
 
 
 @pytest.mark.parametrize(
     "fields",
     [
-        [{"id": "password", "value": "[password:filled]"}, {"id": "phone", "value": "*******789"}],
-        [{"id": "phone", "value": "0912345678"}, {"id": "password", "value": "[password:filled]"}],
+        [{"id": "password", "value": "********"}, {"id": "phone", "value": "*******789"}],
+        [{"id": "phone", "value": "0912345678"}, {"id": "password", "value": "********"}],
         [{"id": "phone", "value": "*******789"}, {"id": "password", "value": "secret"}],
+        [{"id": "phone", "value": "*******789"}, {"id": "password", "value": "[password:filled]"}],
     ],
 )
 def test_submission_rejects_contract_violations(fields):
@@ -59,7 +60,7 @@ def test_submission_rejects_stale_revision():
     with pytest.raises(StructuredSubmissionError, match="已更新"):
         validate_submission(SPEC, 1, [
             {"id": "phone", "value": "*******789"},
-            {"id": "password", "value": "[password:filled]"},
+            {"id": "password", "value": "********"},
         ], 2)
 
 

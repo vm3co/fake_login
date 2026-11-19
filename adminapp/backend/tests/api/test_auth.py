@@ -12,7 +12,8 @@ async def test_admin_login_success(async_client: AsyncClient):
         "username": "admin@example.com",
         "password": "password123"
     }
-    response = await async_client.post("/api/auth/login", json=payload)
+    with patch("backend.api.user_api.db_controller.get_one", new=AsyncMock(return_value=None)):
+        response = await async_client.post("/api/auth/login", json=payload)
     
     assert response.status_code == 200
     data = response.json()

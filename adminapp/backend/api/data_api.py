@@ -1073,6 +1073,65 @@ def get_router(db_user):
 
     ## mtmpl 相關的 API
     @router.get(
+        "/get_mtmpl_task_filters",
+        tags=["data"]
+        )
+    async def get_mtmpl_task_filters(current_user: dict = Depends(get_current_user)):
+        """
+        供 MtmplListPage「依任務名稱篩選信件」使用的最小資料 API。
+
+        僅回傳 [{ "sendtask_id": str, "mail_template": [mtmpl_uuid, ...] }]，
+        以聚合去重後的信件清單供前端做 client-side 篩選。
+        可見任務範圍完全依「已驗證 JWT 的 current_user」決定，不信任前端傳入的
+        orgs / cookie / uuid：
+          - admin_role=true：全部任務
+          - user：admin_role=false 時以可信任的 Acct.orgs 取交集
+          - 其他身分：403
+        只採用 SendTask.mail_template（刻意不使用 SendLogDetail.template_uuid 後備）。
+        """
+        try:
+            if current_user.get("user_type") == "customer":
+                customer = await db_controller.get_one(
+                    CustomerAcct, {"customer_name": current_user.get("username")}
+                )
+                allowed_uuids = {
+                    item["uuid"]
+                    for item in (customer.sendtasks or [])
+                    if isinstance(item, dict) and item.get("uuid")
+                } if customer else set()
+                if not allowed_uuids:
+                    return {"status": "success", "data": []}
+                tasks = await db_controller.get(SendTask, filters={"sendtask_uuid": list(allowed_uuids)})
+            else:
+                orgs = get_sendtask_scope(current_user)
+                if orgs == []:
+                    return {"status": "success", "data": []}
+                tasks = filter_tasks_by_scope(await db_controller.get(SendTask), orgs)
+
+            # --- 依 sendtask_id 聚合 mail_template（同名任務去重取聯集）---
+            grouped: Dict[str, set] = {}
+            for t in tasks:
+                sid = getattr(t, "sendtask_id", None)
+                if not sid:
+                    continue
+                bucket = grouped.setdefault(sid, set())
+                for uuid in (getattr(t, "mail_template", None) or []):
+                    if uuid:
+                        bucket.add(uuid)
+
+            data = [
+                {"sendtask_id": sid, "mail_template": sorted(bucket)}
+                for sid, bucket in sorted(grouped.items())
+            ]
+            return {"status": "success", "data": data}
+        except HTTPException:
+            # 授權失敗需維持 4xx，不可被下方通用 except 轉成 HTTP 200 error payload
+            raise
+        except Exception as e:
+            logger.error(f"Error in get_mtmpl_task_filters: {str(e)}")
+            return {"status": "error", "message": str(e), "data": []}
+
+    @router.get(
         "/get_mtmpl",
         tags=["data"]
         )

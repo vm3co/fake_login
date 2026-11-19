@@ -18,6 +18,40 @@ def outcome(task_uuid, status="recreated"):
 
 
 @pytest.mark.asyncio
+async def test_manual_scheduler_warming_race_preserves_single_backup(schema_engine):
+    from backend import main
+    from backend.api import job_api
+    from backend.services.task_sync_core import TaskSyncService
+
+    factory, _, _ = await setup_transfer(schema_engine)
+    ready = asyncio.Event()
+    arrivals = 0
+
+    async def read_snapshot(*args, **kwargs):
+        nonlocal arrivals
+        arrivals += 1
+        if arrivals == 3:
+            ready.set()
+        await asyncio.wait_for(ready.wait(), timeout=10)
+        return snapshot(200, 5)
+
+    reader = AsyncMock(read_task_snapshot=AsyncMock(side_effect=read_snapshot))
+    user = DBUser(task_sync=TaskSyncService(factory, reader))
+    tasks = [SimpleNamespace(sendtask_uuid='task-1')]
+    with patch.object(main, 'db_user', user), patch.object(job_api, 'db_user', user), \
+         patch.object(main.db_controller, 'get', AsyncMock(return_value=tasks)), \
+         patch.object(job_api.job_manager, 'mark_item', AsyncMock()):
+        results = await asyncio.wait_for(asyncio.gather(
+            main.refresh_sendlog_stats_job(), main.run_cache_warming(),
+            job_api.sync_job_items([{'sendtask_uuid': 'task-1', 'sendtask_id': 'Original'}], 'race', orgs=['org-1']),
+        ), timeout=20)
+    assert arrivals == 3
+    assert await current_counts(factory) == (1, 5, 1, 1, 2)
+    assert sum(result['recreated_count'] for result in results) == 1
+    assert sum(result['failed_count'] for result in results) == 2
+
+
+@pytest.mark.asyncio
 async def test_batch_only_delegates_to_core_and_deduplicates():
     core = AsyncMock(session_factory=None)
     core.sync.return_value = outcome("task-1")
