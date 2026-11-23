@@ -21,6 +21,7 @@ from backend.core.security import verify_password, hash_password
 from backend.services.notification_manager import send_telegram_notification, escape_markdown_v2
 from backend.repository.models import User, Acct, CustomerAcct, SendTask, SendLogDetail, SendLogStats, Mtmpl, LoginLog
 from backend.services.redis_client import RedisClient
+from backend.services.task_sync_window import automatic_task_sync
 
 logger = Logger().get_logger()
 
@@ -202,6 +203,7 @@ class DBUser:
         _require_scope(task.get("sendtask_owner_gid"), orgs)
         return task
         
+    @automatic_task_sync
     async def table_initialize(self):
         """
         初始化資料表

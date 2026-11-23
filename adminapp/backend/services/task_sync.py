@@ -190,7 +190,7 @@ def _sqlstate(error):
 
 
 @asynccontextmanager
-async def task_sync_transaction(session_factory, expected: ExpectedTaskVersion, *, lock_timeout_ms=5000):
+async def task_sync_transaction(session_factory, expected: ExpectedTaskVersion, *, lock_timeout_ms=5000, advance_revision=True):
     """Own a fresh transaction; callers must use its session and never commit it.
 
     Prepare remote data before entering. All future sync writers must use this
@@ -200,6 +200,8 @@ async def task_sync_transaction(session_factory, expected: ExpectedTaskVersion, 
     """
     if type(lock_timeout_ms) is not int or not 1 <= lock_timeout_ms <= 60000:
         raise ValueError("lock_timeout_ms must be between 1 and 60000")
+    if advance_revision is not True and advance_revision is not False and advance_revision != 'if_dirty':
+        raise ValueError('Invalid revision advancement policy')
     try:
         async with session_factory() as session:
             async with session.begin():
@@ -225,6 +227,7 @@ async def task_sync_transaction(session_factory, expected: ExpectedTaskVersion, 
                     locked._active = False
                 if task is not None and task.sendtask_uuid != expected.task_uuid:
                     raise TaskSyncConflict("Task identity must not change inside apply")
+                dirty = task is not None and session.is_modified(task, include_collections=False)
                 await session.flush()
                 current = (await session.execute(select(
                     SendTask.local_generation_id, SendTask.sync_revision,
@@ -233,9 +236,10 @@ async def task_sync_transaction(session_factory, expected: ExpectedTaskVersion, 
                     if current[0] == expected.generation:
                         if current[1] != expected.revision:
                             raise TaskSyncConflict("Caller must not change the retained revision")
-                        await session.execute(update(SendTask).where(
-                            SendTask.sendtask_uuid == expected.task_uuid,
-                        ).values(sync_revision=expected.revision + 1))
+                        if advance_revision is True or (advance_revision == 'if_dirty' and dirty):
+                            await session.execute(update(SendTask).where(
+                                SendTask.sendtask_uuid == expected.task_uuid,
+                            ).values(sync_revision=expected.revision + 1))
                     elif current[1] != 0:
                         raise TaskSyncConflict("New generations must start at revision zero")
     except DBAPIError as error:

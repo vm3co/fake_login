@@ -36,6 +36,7 @@ async def test_manual_scheduler_warming_race_preserves_single_backup(schema_engi
         return snapshot(200, 5)
 
     reader = AsyncMock(read_task_snapshot=AsyncMock(side_effect=read_snapshot))
+    reader.read_sendtask.return_value = {'data': snapshot(200, 5).task, 'metadata': snapshot(200, 5).metadata}
     user = DBUser(task_sync=TaskSyncService(factory, reader))
     tasks = [SimpleNamespace(sendtask_uuid='task-1')]
     with patch.object(main, 'db_user', user), patch.object(job_api, 'db_user', user), \
@@ -283,7 +284,10 @@ async def test_real_postgres_entrypoints_replace_or_backup_atomically(schema_eng
         else:
             await main.refresh_notyet_today_tasks_job()
     assert await current_counts(factory) == ((0, 0, 0, 1, 2) if missing else (1, 5, 1, 1, 2))
-    reader.read_task_snapshot.assert_awaited_once()
+    if missing and entry in {'today', 'warming', 'nightly', 'notyet'}:
+        reader.read_task_snapshot.assert_not_awaited()
+    else:
+        reader.read_task_snapshot.assert_awaited_once()
 
 
 @pytest.mark.asyncio

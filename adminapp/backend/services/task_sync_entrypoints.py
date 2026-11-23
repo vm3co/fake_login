@@ -94,7 +94,13 @@ def summarize_task_sync(statuses, tasks):
         if result is not None and result.archive_transition in {"archived", "unarchived"}:
             groups[result.archive_transition].append(task)
     failed = bool(groups["failed"])
+    window_skipped = [
+        {"sendtask_uuid": task_uuid, "sendtask_id": names.get(task_uuid, task_uuid),
+         "reason": result.skip_reason}
+        for task_uuid, result in statuses.results.items() if result.skip_reason
+    ]
     return {
+        "window_skipped_count": len(window_skipped), "window_skipped_tasks": window_skipped,
         **{key + "_tasks": value for key, value in groups.items()},
         **{key + "_count": len(value) for key, value in groups.items()},
         "job_status": "partial" if failed and groups["successful"] else "failed" if failed else "completed",

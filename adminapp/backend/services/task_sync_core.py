@@ -2,6 +2,7 @@ from copy import deepcopy
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 from uuid import uuid4
+import time
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
@@ -14,6 +15,7 @@ from backend.services.task_sync import (
     transfer_task_to_backup,
 )
 from backend.services.task_archive_policy import should_archive_task
+from backend.services.task_sync_window import automatic_sync, sync_window_closed
 
 
 class TaskSyncAccessDenied(PermissionError):
@@ -42,6 +44,7 @@ class PreparedTaskSync:
     archive_at: int | None = None
     reload_intent: TaskReloadIntent | None = None
     observed_at: datetime | None = None
+    skipped_task: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -61,6 +64,7 @@ class TaskSyncResult:
     replayed: bool = False
     source_revision: int | None = None
     warnings: tuple = ()
+    skip_reason: str | None = None
 
 
 def _require_scope(owner_gids, orgs):
@@ -178,6 +182,17 @@ class TaskSyncService:
         mode = sendlog_type or ("pretest" if row is not None and row.pre_test_enable is True else "test")
         observed_at = datetime.now(timezone.utc)
         try:
+            if automatic_sync.get() and row is not None and reload_intent is None:
+                header = await self.reader.read_sendtask(task_uuid, sendlog_type=mode)
+                remote_task = SE2TaskReader._task_record(header['data'], task_uuid)
+                metadata = SE2TaskReader._metadata(header.get('metadata'))
+                _require_scope(remote_task['sendtask_owner_gid'], scope)
+                same_version = normalize_timestamp(row.sendtask_create_ut) == remote_task['sendtask_create_ut']
+                if same_version and sync_window_closed(remote_task, metadata, time.time()):
+                    light_task = {**remote_task, 'stop_time_new': metadata['stop_time_new']}
+                    if archive_at is not None:
+                        should_archive_task(light_task, now=archive_at)
+                    return PreparedTaskSync(expected, scope, None, archive_at, None, observed_at, light_task)
             snapshot = deepcopy(await self.reader.read_task_snapshot(task_uuid, sendlog_type=mode))
             _snapshot_records(snapshot, task_uuid)
         except TaskNotFound:
@@ -262,6 +277,26 @@ class TaskSyncService:
         return replace(TaskSyncResult(**values), replayed=True)
 
     async def _apply(self, prepared: PreparedTaskSync) -> TaskSyncResult:
+        if prepared.skipped_task is not None:
+            task_values = prepared.skipped_task
+            _require_scope(task_values['sendtask_owner_gid'], prepared.orgs)
+            async with task_sync_transaction(self.session_factory, prepared.expected, advance_revision='if_dirty') as locked:
+                task = locked.task
+                if task is None:
+                    raise TaskSyncConflict('Task disappeared before window check')
+                _require_scope(task.sendtask_owner_gid, prepared.orgs)
+                if normalize_timestamp(task.sendtask_create_ut) != task_values['sendtask_create_ut']:
+                    raise TaskSyncConflict('Task version changed before window check')
+                transition = None
+                if prepared.archive_at is not None:
+                    archived = should_archive_task(task_values, now=prepared.archive_at)
+                    if archived != (task.is_archived is True):
+                        task.is_archived = archived
+                        transition = 'archived' if archived else 'unarchived'
+                result = TaskSyncResult('unchanged', task.sendtask_uuid, task.local_generation_id,
+                    task.sync_revision + (1 if transition else 0), None, True, (task.sendtask_uuid,) if transition else (), False,
+                    archive_transition=transition, skip_reason='automatic_sync_window_closed')
+            return result
         expected = prepared.expected
         intent = prepared.reload_intent
         if intent is not None and (expected.generation is None or expected.generation != intent.source_generation):

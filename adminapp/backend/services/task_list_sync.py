@@ -69,6 +69,7 @@ class TaskListSyncService:
         result = {
             "versioned": True, "status": "success", "results": [], "failed_tasks": [],
             "changed_uuids": [], "backups_changed": False, "skipped": [], "notification_errors": [],
+            "window_skipped_count": 0, "window_skipped_tasks": [],
             **{key: [] for key in ("added", "changed", "recreated", "backed_up", "archived_tasks", "unarchived_tasks")},
         }
         for index, task_uuid in enumerate(candidates):
@@ -108,6 +109,9 @@ class TaskListSyncService:
                 await report_outcomes({"failed_tasks": list(result["failed_tasks"])})
                 continue
             result["results"].append(synced)
+            if synced.skip_reason:
+                result['window_skipped_tasks'].append({**summary, 'reason': synced.skip_reason})
+                result['window_skipped_count'] += 1
             result["changed_uuids"].extend(synced.changed_uuids)
             result["backups_changed"] |= synced.backups_changed
             key = {"added": "added", "updated": "changed", "recreated": "recreated", "backed_up": "backed_up"}.get(synced.status)

@@ -24,6 +24,7 @@ from backend.services.db_user import DBUser
 from backend.services.get_token import get_token
 from backend.services.log_manager import Logger
 from backend.services.job_queue import job_queue
+from backend.services.task_sync_window import automatic_task_sync
 
 # 引入分離的路由模組
 from backend.api.data_api import get_router as log_router
@@ -55,12 +56,14 @@ async def refresh_token_job():
     # logger.info("refresh_token_job 執行")
     await get_token.refresh()
 
+@automatic_task_sync
 async def refresh_sendlog_stats_job():
     logger.info("refresh_sendlog_stats_job 執行")
     # 刷新所有 sendlog_stats 資料
     statuses = await db_user.refresh_sendlog_stats(orgs=None)
     return summarize_task_sync(statuses, [])
 
+@automatic_task_sync
 async def refresh_today_create_task_job():
     """
     定時執行 refresh_today_create_task 任務，並更新 sendlog_stats
@@ -72,6 +75,7 @@ async def refresh_today_create_task_job():
         logger.error(f"refresh_today_create_task_job 執行失敗: {str(e)}")
         raise
 
+@automatic_task_sync
 async def refresh_notyet_today_tasks_job():
     """
     在今天有排程的任務中，刷新那些尚未完成或有失敗的任務
@@ -122,6 +126,7 @@ async def check_sendtasks_job():
         logger.error(f"check_sendtasks_job 執行失敗: {str(e)}")
         raise
 
+@automatic_task_sync
 async def nightly_sync_job():
     """每日凌晨統一執行：先同步任務清單，再刷新統計"""
     logger.info("nightly_sync_job 開始")
@@ -131,6 +136,7 @@ async def nightly_sync_job():
         logger.error(f"nightly_sync_job 失敗: {e}")
         raise
 
+@automatic_task_sync
 async def run_cache_warming():
     tasks = await db_controller.get(SendTask, {"is_archived": False})
     statuses = await db_user.refresh_sendlog_stats([task.sendtask_uuid for task in tasks], orgs=None)
