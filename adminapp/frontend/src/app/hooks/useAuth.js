@@ -11,6 +11,10 @@ export default function useAuth() {
   const userType = context.user?.user_type;
 
   const filteredNavigations = navigations.filter((nav) => {
+    if (nav.taskHistory) {
+      return userType !== 'customer' && userType !== 'platform_admin' &&
+        (userType === 'user' || context.user?.admin_role === true);
+    }
     // platform_admin：只看平台設定
     if (userType === "platform_admin") {
       return nav.auth === "platform_admin";

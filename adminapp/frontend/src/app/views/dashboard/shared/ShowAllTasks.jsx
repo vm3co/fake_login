@@ -35,7 +35,6 @@ import { getTaskPeriod, matchesTaskFilters } from "app/utils/todayTaskFilter";
 import { useJob } from "app/contexts/JobContext";
 import TaskDetail from './TaskDetail_new';
 import axios from "axios";
-import TaskReloadButton from 'app/components/TaskReloadButton';
 import useTaskDetailInvalidation from 'app/hooks/useTaskDetailInvalidation';
 
 
@@ -391,7 +390,6 @@ export default function ShowAllTasks({ showSelectedOnly, setShowSelectedOnly }) 
     <Box width="100%" overflow="hidden">
       <SimpleCard sx={{ padding: 1 }}>
         <Stack direction="row" spacing={2} mb={2} flexWrap="wrap" useFlexGap>
-          <TaskReloadButton tasks={tasksData.filter(task => validSelectedUuids.includes(task.sendtask_uuid))} disabled={isCheckingSends} />
           <Button
             variant="contained"
             color="warning"
@@ -739,7 +737,6 @@ export default function ShowAllTasks({ showSelectedOnly, setShowSelectedOnly }) 
                     </TableCell>
                     <TableCell align="center">
                       <Stack direction="row" spacing={1} justifyContent="center">
-                        <TaskReloadButton tasks={[row]} compact disabled={isCheckingSends} />
                         <Button
                           variant="outlined"
                           size="small"

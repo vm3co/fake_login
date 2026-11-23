@@ -1,5 +1,6 @@
 const navigations = [
   { name: "Dashboard", path: "/dashboard/default", icon: "dashboard" },
+  { name: "任務歷史版本", path: "/dashboard/task-history", icon: "history", taskHistory: true },
   { name: "郵件範本權重", path: "/mtmpl", icon: "email" },
   { name: "客戶帳號", path: "/customers", icon: "perm_contact_calendar", disabled: true },
   { name: "網頁生成", path: "/qrcode", icon: "list", disabled: true },

@@ -38,7 +38,6 @@ import formatDate from "app/utils/formatDate";
 // import { useCheckSends } from "app/hooks/useCheckSends";
 import { useJob } from "app/contexts/JobContext";
 import TaskDetail from './TaskDetail_new';
-import TaskReloadButton from 'app/components/TaskReloadButton';
 import useTaskDetailInvalidation from 'app/hooks/useTaskDetailInvalidation';
 import { matchesTodayTaskState } from "../utils/todayTaskStatus";
 import axios from "axios";
@@ -403,7 +402,6 @@ export default function ShowTodayTasks({ taskState, setTaskState, showSelectedOn
     <Box width="100%" overflow="hidden">
       <SimpleCard sx={{ padding: 1 }}>
         <Stack direction="row" spacing={2} mb={2} sx={{ flexWrap: 'wrap', gap: 1 }}>
-          <TaskReloadButton tasks={tasksData.filter(task => validSelectedUuids.includes(task.sendtask_uuid))} disabled={isCheckingSends} />
           <Button
             variant="contained"
             color="warning"
@@ -719,7 +717,6 @@ export default function ShowTodayTasks({ taskState, setTaskState, showSelectedOn
                     </TableCell>
                     <TableCell align="center">
                       <Stack direction="row" spacing={1} justifyContent="center">
-                        <TaskReloadButton tasks={[row]} compact disabled={isCheckingSends} />
                         <Button
                           variant="outlined"
                           size="small"

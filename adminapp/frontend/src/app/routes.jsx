@@ -12,6 +12,7 @@ import materialRoutes from "app/views/material-kit/MaterialRoutes";
 
 // DASHBOARD PAGE
 const Analytics = Loadable(lazy(() => import("app/views/dashboard/Analytics")));
+const TaskHistory = Loadable(lazy(() => import("app/views/dashboard/TaskHistory")));
 // CUSTOMERS PAGE
 const Customers = Loadable(lazy(() => import("app/views/customers/Customers")));
 // CHANGE PASSWORD PAGE
@@ -42,6 +43,7 @@ const routes = [
       ...materialRoutes,
       // dashboard route
       { path: "/dashboard/default", element: <Analytics />, auth: authRoles.admin },
+      { path: "/dashboard/task-history", element: <TaskHistory />, auth: authRoles.admin },
       // customers route
       { path: "/customers", element: <Customers />, auth: authRoles.admin },
       // change password route

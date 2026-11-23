@@ -142,7 +142,7 @@ export default function ShowBackupTasks({ onOpenBackup }) {
 
   return <Box aria-label="備援任務列表" sx={{ minWidth: 0 }}>
     <Stack direction="row" useFlexGap flexWrap="wrap" spacing={1} sx={{ mb: 2, alignItems: 'center' }}>
-      <TextField label="搜尋備援名稱或來源 UUID" value={search} onChange={event => setSearch(event.target.value)} size="small" sx={{ width: { xs: '100%', sm: 300 } }} />
+      <TextField label="搜尋任務名稱或來源 UUID" value={search} onChange={event => setSearch(event.target.value)} size="small" sx={{ width: { xs: '100%', sm: 300 } }} />
       <TextField select label="觀測狀態" size="small" value={observation} sx={{ minWidth: 140 }} onChange={event => {
         setObservation(event.target.value); setPage(0); setSelected({});
       }}>{FILTERS.map(([value, label]) => <MenuItem key={value} value={value}>{label}</MenuItem>)}</TextField>
@@ -153,7 +153,7 @@ export default function ShowBackupTasks({ onOpenBackup }) {
       <Tooltip title="重新整理"><span><IconButton aria-label="重新整理備援" disabled={loading} onClick={() => setRefresh(value => value + 1)}><RefreshIcon /></IconButton></span></Tooltip>
     </Stack>
     <Stack direction="row" useFlexGap flexWrap="wrap" spacing={1} sx={{ mb: 1, alignItems: 'center' }}>
-      <Typography variant="body2">已選 {selectedRows.length} 份備援</Typography>
+      <Typography variant="body2">已選 {selectedRows.length} 份歷史版本</Typography>
       <Button size="small" startIcon={<FactCheckIcon />} disabled={!selectedRows.length || loading || Boolean(error) || busy || activeChecks.length > 0}
         onClick={() => setConfirm({ type: 'check', rows: selectedRows })}>檢查是否重建</Button>
       <Tooltip title="清除選取"><span><IconButton aria-label="清除備援選取" size="small" disabled={!selectedRows.length} onClick={() => setSelected({})}><ClearIcon /></IconButton></span></Tooltip>
@@ -162,28 +162,38 @@ export default function ShowBackupTasks({ onOpenBackup }) {
     </Stack>
     {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
     <TableContainer sx={{ overflowX: 'auto', width: '100%' }}>
-      <Table size="small" sx={{ minWidth: 1180 }}>
+      <Table size="small" sx={{ minWidth: 1380, tableLayout: 'fixed',
+        '& th, & td': { textAlign: 'center', verticalAlign: 'middle', lineHeight: 1.4, px: 1.5, py: 1.5,
+          borderRight: '1px solid #e0e0e0', overflowWrap: 'anywhere' },
+        '& th:last-child, & td:last-child': { borderRight: 'none' },
+        '& th': { backgroundColor: '#f1f1f1', fontWeight: 600 },
+        '& tbody tr:nth-of-type(even)': { backgroundColor: 'rgba(25, 118, 210, 0.14)' },
+        '& tbody tr:hover': { backgroundColor: 'rgba(0, 0, 0, 0.08)' },
+        '& th:first-of-type, & td:first-of-type': { width: 60, minWidth: 60, px: 0 },
+        '& .MuiCheckbox-root': { padding: '9px' }
+      }}>
+        <colgroup>{[60, 220, 270, 150, 150, 110, 80, 220, 160].map((width, index) => <col key={index} style={{ width }} />)}</colgroup>
         <TableHead><TableRow>
           <TableCell padding="checkbox"><Checkbox inputProps={{ 'aria-label': '選取本頁備援' }} disabled={loading || !actionableRows.length}
             checked={actionableRows.length > 0 && pageSelected === actionableRows.length} indeterminate={pageSelected > 0 && pageSelected < actionableRows.length}
             onChange={event => setSelected(current => selectBackupPage(current, actionableRows, event.target.checked))} /></TableCell>
-          {['任務／備援版本', '原始 UUID', '原版本建立時間', '備援時間', '原因', '明細數', '重建證據／最近觀測', '操作'].map(label => <TableCell key={label}>{label}</TableCell>)}
+          {['任務／歷史版本', '原始 UUID', '原版本建立時間', '保存時間', '保存原因', '明細數', '重建證據／最近觀測', '操作'].map(label => <TableCell key={label}>{label}</TableCell>)}
         </TableRow></TableHead>
         <TableBody>{rows.map(row => <TableRow key={row.backup_id} selected={Boolean(selected[row.backup_id])}>
           <TableCell padding="checkbox"><Checkbox inputProps={{ 'aria-label': `選取備援 ${row.backup_id}` }} checked={Boolean(selected[row.backup_id])}
             disabled={loading || !row.actions?.read} onChange={event => setSelected(current => selectBackupPage(current, [row], event.target.checked))} /></TableCell>
           <TableCell sx={{ maxWidth: 230, overflowWrap: 'anywhere' }}><Typography variant="body2">{row.sendtask_id}</Typography>
-            <Tooltip title={row.backup_id}><Typography variant="caption">備援 {row.backup_id.slice(0, 8)}</Typography></Tooltip></TableCell>
-          <TableCell sx={{ maxWidth: 170, overflowWrap: 'anywhere' }}>{row.source_task_uuid}</TableCell>
+            <Tooltip title={row.backup_id}><Typography variant="caption">版本 {row.backup_id.slice(0, 8)}</Typography></Tooltip></TableCell>
+          <TableCell sx={{ whiteSpace: 'nowrap', overflowWrap: 'normal' }}>{row.source_task_uuid}</TableCell>
           <TableCell sx={{ whiteSpace: 'nowrap' }}>{backupTime(row.source_create_ut, true)}</TableCell>
           <TableCell sx={{ whiteSpace: 'nowrap' }}>{backupTime(row.backed_up_at)}</TableCell>
           <TableCell>{REASONS[row.reason] || row.reason}</TableCell><TableCell>{row.detail_count}</TableCell>
-          <TableCell><Stack spacing={0.5} alignItems="flex-start">
+          <TableCell><Stack spacing={0.5} alignItems="center">
             <Chip size="small" color={row.recreated_detected_at ? 'success' : 'default'} label={row.recreated_detected_at ? '曾證實重建' : '尚未證實'} />
             <Typography variant="caption" color={row.latest_remote_status === 'error' ? 'error' : 'text.secondary'}>{REMOTE[row.latest_remote_status] || row.latest_remote_status}</Typography>
             <Typography variant="caption">{row.last_remote_checked_at ? backupTime(row.last_remote_checked_at) : '尚無檢查時間'}</Typography>
           </Stack></TableCell>
-          <TableCell><Stack direction="row" spacing={0.5}>
+          <TableCell><Stack direction="row" spacing={0.5} justifyContent="center">
             {onOpenBackup && row.actions?.read && <Tooltip title="唯讀備援明細"><IconButton aria-label={`備援明細 ${row.backup_id}`} onClick={() => onOpenBackup({ ...row, source: 'backup', readOnly: true })}><VisibilityIcon /></IconButton></Tooltip>}
             <Tooltip title="匯出整份備援 Excel"><span><IconButton aria-label={`匯出備援 ${row.backup_id}`} disabled={loading || Boolean(error) || !row.actions?.export || downloads[row.backup_id]} onClick={() => download(row)}><DownloadIcon /></IconButton></span></Tooltip>
             <Tooltip title="永久刪除此份備援"><span><IconButton color="error" aria-label={`刪除備援 ${row.backup_id}`} disabled={loading || Boolean(error) || !row.actions?.delete || busy}

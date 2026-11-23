@@ -7,9 +7,6 @@ import Grid from "@mui/material/Grid2";
 import StatCards from "./shared/StatCards";
 import ShowTodayTasks from "./shared/ShowTodayTasks";
 import ShowAllTasks from "./shared/ShowAllTasks";
-import ShowBackupTasks from "./shared/ShowBackupTasks";
-import TaskDetail from './shared/TaskDetail_new';
-import useAuth from 'app/hooks/useAuth';
 
 
 // STYLED COMPONENTS
@@ -20,14 +17,10 @@ const ContentBox = styled("div")(({ theme }) => ({
 
 export default function Analytics() {
   const [viewMode, setViewMode] = useState('today');
-  const [backupDetail, setBackupDetail] = useState(null);
-  const { user } = useAuth();
-  const canManageBackups = user?.user_type === 'user' || user?.admin_role === true;
   const [taskState, setTaskState] = useState("all");
   const [showSelectedOnly, setShowSelectedOnly] = useState(false);
 
   const handleTaskListChange = (mode) => {
-    setBackupDetail(null);
     setShowSelectedOnly(false);
     setViewMode(mode);
   };
@@ -41,7 +34,7 @@ export default function Analytics() {
               setShowTodayOnly={() => setViewMode('today')}
               taskState={taskState}
               setTaskState={setTaskState}
-              filtersDisabled={showSelectedOnly || viewMode === 'backups'}
+              filtersDisabled={showSelectedOnly}
             />
           </Grid>
           <Grid size={{ md: 12, xs: 12 }}>
@@ -62,10 +55,8 @@ export default function Analytics() {
               >
                 今日任務
               </Button>
-              {canManageBackups && user?.user_type !== 'customer' && <Button variant={viewMode === 'backups' ? 'contained' : 'outlined'}
-                onClick={() => handleTaskListChange('backups')}>備援任務</Button>}
             </Box>
-            {viewMode === 'backups' && canManageBackups && user?.user_type !== 'customer' ? <ShowBackupTasks onOpenBackup={setBackupDetail} /> : viewMode === 'today' ? (
+            {viewMode === 'today' ? (
               <ShowTodayTasks
                 taskState={taskState}
                 setTaskState={setTaskState}
@@ -81,8 +72,6 @@ export default function Analytics() {
           </Grid>
         </Grid>
       </ContentBox>
-      {viewMode === 'backups' && canManageBackups && user?.user_type !== 'customer' && <TaskDetail task={backupDetail}
-        open={!!backupDetail} onClose={() => setBackupDetail(null)} />}
     </Fragment>
   );
 }
