@@ -172,3 +172,22 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+
+# cookie
+cookie.txt
+*.crt
+
+#data
+data/db/
+triggerapp/data
+triggerapp/app/templates
+
+# docker compose override
+docker-compose.override.yml
+
+# pytest
+test_log.txt
+
+test_llm_api.py
+tools/

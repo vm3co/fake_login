@@ -1,46 +1,113 @@
-# 啟動說明
+# 社交工程演練與管理系統 (Social Engineering & Dashboard)
 
-docker-compose up --build
+這是一個用於社交工程演練的模擬系統，包含受測者觸發端 (Trigger App) 與管理者儀表板 (Admin App)。系統採用微服務架構，透過 Docker Compose 進行部署，並使用 Nginx 作為反向代理。
 
-# 初始網址
+## 核心功能
 
-- login: http://localhost:8090/
-- admin: http://localhost:8091/
+- **Trigger App (受測者端)**：
+  - 模擬登入頁面，記錄受測者的 IP 與輸入資料 (如 Email)。
+  - 支援 QRCode 生成與追蹤。
+  - 記錄使用者行為流程：開啟信件 -> 掃描 QRCode -> 點擊連結 -> 提交資料。
 
-# 用途
+- **Admin App (管理端)**：
+  - 提供視覺化儀表板 (Dashboard)。
+  - 顯示任務列表與詳細統計數據 (寄送數、開啟數、點擊數、提交數等)。
+  - 支援資料匯出 (CSV)。
 
-- login:
-  - 進到/login時紀錄一次ip
-  - 輸入資料後點擊登入後，紀錄一次ip及資料(目前只有email)
+## 技術架構
 
-- admin:
-  - 顯示紀錄資料列表(資料格式為csv檔)
+本專案使用以下技術堆疊：
 
+- **Frontend (Admin)**: React (Vite), Material UI (MUI), ECharts
+- **Backend (Admin & Trigger)**: Python FastAPI
+- **Database**: PostgreSQL 16
+- **Infrastructure**: Docker, Docker Compose, Nginx
 
-# 製作login網頁
-- clone好一個網頁後設定：
-  1. 設置form id="recordingLogin"
-  2. 確認input的id="recordingLoginIdentifierId"
-  3. 設置js <script src="/static/js/recordingLogin.js"></script>
-  4. 拔掉base
+## 專案結構
 
-# 插入qrcode (20250509更新(branch：create_qrcode))
-- 信件中設定：
-  1. 插入/編輯 圖片
-  2. 設定： 
-       - 圖片網址： http://localhost:8090/qrcode/uuid?uuid=99999_99999
-       - 替代說明： qrcode
-       - 寬度&高度：300(把右邊的鎖頭點開)
-       - 送出並儲存
-- 寄送後會自動生成qrcode，該qrocde會自動生成，網址為"https://se2.link.cc/a/l/{link_uuid}?reurlreurl=http://localhost:8090/login/{link_uuid}"，
-- {link_uuid}的部分為jess系統自動帶入的link_uuid值
-  - task_uuid = link_uuid[16:48]
-  - email_uuid = link_uuid[48:] + link_uuid[0:16]
-- 記錄流程：
-  1. 開啟信件：jess系統記錄開啟
-  2. 掃描qrcode：jess系統記錄點擊連結，接著導向到login頁面
-  3. 導向到login頁面：adminapp記錄visit(記錄網址、ip)
-  4. 登入：adminapp記錄login(記錄網址、ip、輸入內容)
+```
+.
+├── adminapp/       # 管理者後台 (包含 Frontend 與 Backend)
+│   ├── frontend/   # React 前端原始碼
+│   └── ...         # Python Backend 原始碼
+├── triggerapp/     # 受測者觸發端 (Python FastAPI)
+├── nginx/          # Nginx 設定檔
+├── data/           # 資料庫資料 (Docker Volume)
+├── pg_backup/      # 資料庫備份
+├── docker-compose.yaml # Docker 編排檔
+└── start.bat / start.sh # 啟動腳本
+```
 
-# 新增db以及後台紀錄頁面(react)(20250521更新)
-- bug：googledrive網頁無法記錄登入login
+## 快速開始
+
+### 任務版本同步與備援區（尚未正式上線）
+
+- Dashboard 提供今日任務、全部任務；左側選單「任務歷史版本」提供獨立歷史快照列表與唯讀明細，客戶現行任務管理不混入歷史版本。歷史頁支援重建觀測檢查、整份Excel匯出及單份永久刪除，不代表全系統災難備份。
+- 相同來源 UUID 的建立時間變更，會先保存固定舊版快照，再匯入乾淨新版；同版本更新保留本地事件。每份歷史使用獨立 backup_id，不能用來源 UUID 代替。
+- 自動同步（每日清單／統計、今日建立／未完成排程、startup 初始化及 warming）只在任務結束當天與隔天下載同版本明細及更新統計，按 Asia/Taipei 日曆日判斷。例如 11/19 15:00 結束，11/20 01:00 仍更新，11/21 起略過。有效提前停止時間優先，否則依預演／正式模式採用結束時間；缺少有效時間維持同步，格式錯誤回報失敗。
+- 超期後仍輕量檢查存在、建立版本與延期；刪除仍備援、重建仍完整匯入、延期重新進入時間窗可恢復同步。人工更新／重匯不受期限限制，十四天封存及陌生過期任務略過匯入政策不變。這不是成功補同步保證：隔天停機或同步失敗，過期後需人工補更新。略過不刷新統計（包括歷史 today 欄位），結果以 window_skipped_count／window_skipped_tasks 及 skip_reason=automatic_sync_window_closed 記錄；純略過不遞增 revision，僅封存狀態改變會通知刷新。
+- 備援列表、唯讀明細、統計、樣板 metadata 與完整 Excel 都依該份快照讀取，不回退讀取同 UUID 現行資料。授權依備援當時的組織，不因現行任務換組織而改變。
+- 今日／全部任務已移除「備援後重新匯入」操作入口；後端修復能力保留，不依 email 去重、不自動修復全庫。人工同版本重匯若沿用明細 UUID，晚到事件仍可能對應現行資料，不提供郵件世代辨識保證。
+- 備援是同一 PostgreSQL 內的歷史資料，不是獨立災難備份；沒有因此新增定期備份或自動刪除政策。
+- 正式切換前必須完成一次受控完整備份及獨立還原驗證，安排停寫／事件 queue 邊界及回復點。不可直接用下方啟動／重啟腳本當作版本升級程序，尤其不得選刪除 volume 的選項。
+
+操作要求見 [TSB-017](大型修改計畫/任務同步版本化與獨立備援區/17_TSB-017_上線與回復作業.md)。僅合成資料的準備演練可從專案目錄執行：
+
+```sh
+bash adminapp/backend/scripts/tsb017_drill.sh
+```
+
+需要 Docker 與本機已有的 `fake_login-admin-app:latest`、`postgres:16-bookworm` 映像。工具使用已提交 HEAD 的程式，拒絕占用既有同名容器／網路，建立專用 tmpfs 資料庫，不讀 `.env`、不啟動 admin-app，也不操作 Compose。輸出位於限制權限的暫存目錄，僅含合成資料。這不替代正式資料庫的備份／還原驗證。
+
+### 前置需求
+
+- [Docker](https://www.docker.com/)
+- [Docker Compose](https://docs.docker.com/compose/)
+
+### 啟動服務
+
+請依據您的作業系統執行對應的啟動腳本：
+
+**Windows:**
+```cmd
+start.bat
+```
+
+**Linux / Mac:**
+```bash
+./start.sh
+```
+
+### 存取服務
+
+啟動後，您可以透過瀏覽器存取以下服務 (預設使用 Port 80)：
+
+- **管理後台 (Admin Dashboard)**: [http://localhost/](http://localhost/)
+- **受測者觸發頁面 (Trigger App)**: [http://localhost/trigger/](http://localhost/trigger/)
+  - *注意：Trigger App 通常需要配合特定的 UUID 參數使用，例如信件中的連結。*
+
+## 開發說明
+
+### 環境變數 (.env)
+專案根目錄下的 `.env` 檔案包含資料庫連線資訊與其他設定，請確保該檔案存在並設定正確。
+
+### 重新啟動
+若修改了程式碼或設定，可使用以下腳本重新啟動服務：
+
+**Windows:**
+```cmd
+restart.bat
+```
+
+**Linux / Mac:**
+```bash
+./restart.sh
+```
+
+## 路由規則 (Nginx)
+
+Nginx 負責將請求分派至不同的服務：
+
+- `/` -> **Admin Frontend** (靜態檔案)
+- `/api/` -> **Admin Backend** (API 請求)
+- `/trigger/` -> **Trigger App**
